@@ -1,0 +1,23 @@
+.{
+    .name = .pek_zdsmallui,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.17.0",
+    .fingerprint = 0x9414acd2f66beb34,
+    // zzig 是 Zig 侧公共基础库（对齐 Rust 侧 dhrust / C# 侧 DH.NCore）：
+    // 本库只依赖它的 http（server/router/controller/view/static_files/web）、
+    // value（视图模型）、logs、file/fsio、DateTime、Http（出网）、crypto。
+    .dependencies = .{
+        .zzig = .{ .path = "../zzig" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "Views",
+        "assets",
+        "examples",
+        "docs",
+        "tools",
+        "README.md",
+    },
+}

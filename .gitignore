@@ -1,0 +1,16 @@
+# Zig 构建产物
+.zig-cache/
+zig-out/
+
+# 回归/冒烟产物
+artifacts/
+
+# 运行期资源（业务系统自行部署；第三方前端资产由 tools/sync-wwwroot.ps1 同步）
+wwwroot/
+
+# 编辑器
+.vscode/*
+!.vscode/tasks.json
+!.vscode/settings.json
+*.swp
+*.tmp
