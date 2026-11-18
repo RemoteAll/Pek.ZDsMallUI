@@ -16,7 +16,7 @@ param(
     [switch]$SkipSmoke,
     [int]$Port = 18099,
     # 测试数基线（只能抬高；降低必须在 docs/决策记录.md 写明依据）
-    [int]$MinTests = 82
+    [int]$MinTests = 90
 )
 
 $ErrorActionPreference = 'Continue'
@@ -105,6 +105,30 @@ if ($SkipSmoke) {
         $workDir = Join-Path $root '.zig-cache/regression'
         New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 
+        # 示例程序把视图落地到 `.zig-cache/zdsmallui-example`（只补缺失、不覆盖），
+        # 回归前先清掉，保证本次断言比对的是**当前内置模板**而不是上一轮的旧副本。
+        $exampleBase = Join-Path $root '.zig-cache/zdsmallui-example'
+        foreach ($sub in @('Views', 'Areas')) {
+            $target = Join-Path $exampleBase $sub
+            if (Test-Path $target) { Remove-Item -Path $target -Recurse -Force }
+        }
+
+        $proc = $null
+        $portBusy = $false
+        try {
+            $probe = New-Object System.Net.Sockets.TcpClient
+            $probe.Connect('127.0.0.1', $Port)
+            $probe.Close()
+            $portBusy = $true
+        }
+        catch {
+            $portBusy = $false
+        }
+
+        if ($portBusy) {
+            Fail 'HTTP 冒烟' "端口 127.0.0.1:$Port 已被占用（很可能是上一次的 zdsmallui-admin 还在跑）：先停掉它或改 -Port，本次冒烟未执行"
+        }
+        else {
         $proc = Start-Process -FilePath $exe -ArgumentList @("$Port", 'Biz') -WorkingDirectory $root -PassThru -WindowStyle Hidden
         $ready = $false
         for ($i = 0; $i -lt 60; $i++) {
@@ -130,6 +154,7 @@ if ($SkipSmoke) {
                 # 3.1 页面与配置
                 foreach ($item in @(
                         @{ Name = 'GET /biz/home/index'; Url = "$base/biz/home/index"; Must = '快捷入口' },
+                        @{ Name = 'GET /biz/home/index（退出链接）'; Url = "$base/biz/home/index"; Must = '/biz/login/logout' },
                         @{ Name = 'GET /biz/config/index'; Url = "$base/biz/config/index"; Must = '站点设置' },
                         @{ Name = 'GET /biz/login/index'; Url = "$base/biz/login/index"; Must = '密码' },
                         @{ Name = 'GET /fileuploader?action=config'; Url = "$base/fileuploader?action=config"; Must = 'imageActionName' }
@@ -194,7 +219,31 @@ if ($SkipSmoke) {
                 if ($loginBad.Output -match '200') { Pass 'POST /biz/login/login（错误口令）' }
                 else { Fail 'POST /biz/login/login（错误口令）' "http=$($loginBad.Output)" }
 
-                # 3.6 未支持动作（按 UTF-8 解码后断言，终端编码不影响结论）
+                # 3.6 登录签发 JWT（Ajax）+ 两条通道都能验 + 登出立即失效
+                $ajax = Invoke-External 'curl.exe' @('-s', '-D', '-', '-H', 'X-Requested-With: XMLHttpRequest', '-d', 'UserName=admin&Password=admin123', "$base/biz/login/login")
+                $token = [regex]::Match($ajax.Output, '"token":"([^"]+)"').Groups[1].Value
+                if ($token.Length -gt 20 -and $ajax.Output -match 'set-cookie: biz_token=') {
+                    Pass 'POST /biz/login/login（下发 JWT）' "token=$($token.Length) 字符 + Set-Cookie"
+                }
+                else { Fail 'POST /biz/login/login（下发 JWT）' $ajax.Output }
+
+                $statusBearer = Invoke-External 'curl.exe' @('-s', '-H', "Authorization: Bearer $token", "$base/biz/login/status")
+                if ($statusBearer.Output.Contains('"authenticated":true')) { Pass 'GET /biz/login/status（Bearer）' }
+                else { Fail 'GET /biz/login/status（Bearer）' $statusBearer.Output }
+
+                $statusCookie = Invoke-External 'curl.exe' @('-s', '-H', "Cookie: biz_token=$token", "$base/biz/login/status")
+                if ($statusCookie.Output.Contains('"authenticated":true')) { Pass 'GET /biz/login/status（Cookie）' }
+                else { Fail 'GET /biz/login/status（Cookie）' $statusCookie.Output }
+
+                $logout = Invoke-External 'curl.exe' @('-s', '-D', '-', '-o', 'NUL', '-H', "Authorization: Bearer $token", "$base/biz/login/logout")
+                if ($logout.Output -match 'Max-Age=0') { Pass 'GET /biz/login/logout（清 Cookie）' }
+                else { Fail 'GET /biz/login/logout（清 Cookie）' $logout.Output }
+
+                $statusAfter = Invoke-External 'curl.exe' @('-s', '-H', "Authorization: Bearer $token", "$base/biz/login/status")
+                if ($statusAfter.Output.Contains('"authenticated":false')) { Pass 'GET /biz/login/status（登出后令牌失效）' }
+                else { Fail 'GET /biz/login/status（登出后令牌失效）' $statusAfter.Output }
+
+                # 3.7 未支持动作（按 UTF-8 解码后断言，终端编码不影响结论）
                 try {
                     $unknownBytes = (New-Object System.Net.WebClient).DownloadData("$base/fileuploader?action=nope")
                     $unknownText = [Text.Encoding]::UTF8.GetString($unknownBytes)
@@ -206,9 +255,10 @@ if ($SkipSmoke) {
                 }
             }
             finally {
-                if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+                if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
                 Start-Sleep -Milliseconds 200
             }
+        }
         }
     }
 }

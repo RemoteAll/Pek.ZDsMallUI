@@ -22,6 +22,7 @@ const std = @import("std");
 const zzig = @import("zzig");
 
 const area_mod = @import("area.zig");
+const auth_mod = @import("auth.zig");
 const backend_mod = @import("backend.zig");
 const controllers = struct {
     const admin_area = @import("../Areas/Admin/Controllers/AdminArea.zig");
@@ -188,6 +189,18 @@ pub const Builder = struct {
     ueditor_config_path: ?[]const u8 = null,
     max_upload_bytes: u64 = DEFAULT_MAX_UPLOAD_BYTES,
     external_backend: ?backend_mod.AdminBackend = null,
+    /// JWT 密钥（`HS256:...`；空 = 进程内随机，仅开发用）
+    jwt_secret: []const u8 = "",
+    /// JWT 签发者
+    jwt_issuer: []const u8 = "Pek.ZDsMallUI",
+    /// JWT 有效期（分钟）
+    jwt_expire_minutes: i64 = 120,
+    /// 是否强制后台页面登录
+    require_login: bool = false,
+    /// Cookie 是否加 `Secure`（HTTPS 部署时应为 `true`）
+    cookie_secure: bool = false,
+    /// 会话存储（默认内存；可选 `SqliteStore` / `FileStore` / `RedisStore`）
+    external_session_store: ?auth_mod.SessionStore = null,
 
     /// 站点物理根（默认 `wwwroot`；**业务系统按自己的配置改成任意路径**）。
     pub fn webRoot(self: Builder, root: []const u8) Builder {
@@ -244,6 +257,50 @@ pub const Builder = struct {
     pub fn backend(self: Builder, value: backend_mod.AdminBackend) Builder {
         var copy = self;
         copy.external_backend = value;
+        return copy;
+    }
+
+    /// JWT 密钥（`算法:密钥`，如 `HS256:xxxxxxxx`）。
+    ///
+    /// 不填 = 进程内随机（重启后旧令牌失效，**仅适合开发**）。
+    pub fn jwtSecret(self: Builder, secret: []const u8) Builder {
+        var copy = self;
+        copy.jwt_secret = secret;
+        return copy;
+    }
+
+    /// JWT 签发者（`iss`，默认 `Pek.ZDsMallUI`；多系统共用密钥时用它区分）。
+    pub fn jwtIssuer(self: Builder, issuer: []const u8) Builder {
+        var copy = self;
+        copy.jwt_issuer = issuer;
+        return copy;
+    }
+
+    /// JWT 有效期（分钟；默认 120，对齐 NewLife `JwtBuilder`）。
+    pub fn jwtExpireMinutes(self: Builder, minutes: i64) Builder {
+        var copy = self;
+        copy.jwt_expire_minutes = if (minutes > 0) minutes else 120;
+        return copy;
+    }
+
+    /// 是否强制后台页面登录（默认 `false`：只解析身份不拦截，与 C#/Rust 版现状一致）。
+    pub fn requireLogin(self: Builder, required: bool) Builder {
+        var copy = self;
+        copy.require_login = required;
+        return copy;
+    }
+
+    /// Cookie 是否加 `Secure`（面板走 HTTPS 时必须开）。
+    pub fn cookieSecure(self: Builder, secure: bool) Builder {
+        var copy = self;
+        copy.cookie_secure = secure;
+        return copy;
+    }
+
+    /// 会话存储（默认内存：重启后吊销表清空，令牌仍可凭 JWT 签名校验通过）。
+    pub fn sessionStore(self: Builder, store: auth_mod.SessionStore) Builder {
+        var copy = self;
+        copy.external_session_store = store;
         return copy;
     }
 
@@ -308,6 +365,16 @@ pub const Builder = struct {
         errdefer ui.admin_area.deinit();
         try ui.admin_area.setAreaName(normalized_area);
         try ui.admin_area.setUploadPrefix(upload_prefix);
+
+        // 登录鉴权（JWT + 会话吊销）：装配即生效，登录/登出由 LoginController 使用
+        const auth = try auth_mod.Auth.init(self.allocator, self.io, normalized_area, .{
+            .secret = self.jwt_secret,
+            .issuer = self.jwt_issuer,
+            .expire_minutes = self.jwt_expire_minutes,
+            .cookie_secure = self.cookie_secure,
+            .require_login = self.require_login,
+        }, self.external_session_store);
+        ui.admin_area.setAuth(auth);
 
         ui.upload_controller = try controllers.upload.UploadController.init(self.allocator, self.io, service, upload_root);
         errdefer ui.upload_controller.deinit();

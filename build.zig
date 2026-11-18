@@ -19,6 +19,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const perms_dep = b.dependency("pek_zpermissions", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const mod = b.addModule("pek_zdsmallui", .{
         .root_source_file = b.path("pek_zdsmallui.zig"),
@@ -26,6 +30,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zzig", .module = zzig_dep.module("zzig") },
+            .{ .name = "pek_zpermissions", .module = perms_dep.module("pek_zpermissions") },
         },
     });
 
@@ -43,7 +48,6 @@ pub fn build(b: *std.Build) void {
     });
     exe_mod.addImport("zzig", zzig_dep.module("zzig"));
     exe_mod.addImport("pek_zdsmallui", mod);
-
     const exe = b.addExecutable(.{ .name = "zdsmallui-admin", .root_module = exe_mod });
     b.installArtifact(exe);
 

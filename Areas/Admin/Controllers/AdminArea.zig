@@ -16,6 +16,7 @@ const std = @import("std");
 const zzig = @import("zzig");
 
 const area_mod = @import("../../../src/area.zig");
+const auth_mod = @import("../../../src/auth.zig");
 const backend_mod = @import("../../../src/backend.zig");
 const views_mod = @import("../../../src/views.zig");
 
@@ -51,6 +52,8 @@ pub const AdminArea = struct {
     home: []const u8,
     /// 上传 URL 前缀（首页展示用）
     upload_prefix: []const u8,
+    /// 登录鉴权（JWT 签发 / 校验 / 登出吊销）；`null` = 未启用（不签令牌）
+    auth: ?*auth_mod.Auth = null,
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
 
@@ -90,10 +93,24 @@ pub const AdminArea = struct {
             self.allocator.destroy(ctrl);
         }
         self.controllers.deinit(self.allocator);
+        if (self.auth) |auth| auth.deinit();
         self.allocator.free(self.area);
         self.allocator.free(self.home);
         self.allocator.free(self.upload_prefix);
         self.allocator.destroy(self);
+    }
+
+    /// 接管登录鉴权器（生命周期转归本对象；登出时一并释放）。
+    pub fn setAuth(self: *AdminArea, auth: *auth_mod.Auth) void {
+        if (self.auth) |existing| existing.deinit();
+        self.auth = auth;
+    }
+
+    /// 登录页路径（`/{area}/login/index`）。
+    pub fn loginPath(self: *const AdminArea, allocator: std.mem.Allocator) ![]u8 {
+        const prefix = try area_mod.routePrefix(allocator, self.area);
+        defer allocator.free(prefix);
+        return std.fmt.allocPrint(allocator, "{s}/login/index", .{prefix});
     }
 
     /// 更换区域名（`Biz` / `biz` 等价；非法字符直接报错）。首页路由随区域名重算。
@@ -149,9 +166,13 @@ pub const AdminArea = struct {
     /// | `GET /{area}/home/index` | [`home_controller.HomeController`] |
     /// | `GET /{area}/config/index`、`POST /{area}/config/updatebase` | [`config_controller.ConfigController`] |
     /// | `GET /{area}/login/index`、`POST /{area}/login/login` | [`login_controller.LoginController`] |
+    /// | `POST|GET /{area}/login/logout`、`GET /{area}/login/status` | [`login_controller.LoginController`] |
     pub fn mount(self: *AdminArea, app: *zzig.web.App) !void {
         const segment = try area_mod.routeSegment(self.allocator, self.area);
         defer self.allocator.free(segment);
+
+        // 鉴权中间件先于控制器生效：解析 Cookie / Bearer 写入链路状态（`auth.uid` / `user`）
+        if (self.auth) |auth| try app.useMiddleware(auth.middleware());
 
         {
             const prefix = try std.fmt.allocPrint(self.allocator, "{s}/home", .{segment});
@@ -174,6 +195,10 @@ pub const AdminArea = struct {
             const ctrl = try self.newController(prefix);
             try ctrl.mapWithContext("GET", "index", @ptrCast(self), login_controller.LoginController.index);
             try ctrl.mapWithContext("POST", "login", @ptrCast(self), login_controller.LoginController.login);
+            // 登出同时开 POST（表单/接口）与 GET（页面上的退出链接）
+            try ctrl.mapWithContext("POST", "logout", @ptrCast(self), login_controller.LoginController.logout);
+            try ctrl.mapWithContext("GET", "logout", @ptrCast(self), login_controller.LoginController.logout);
+            try ctrl.mapWithContext("GET", "status", @ptrCast(self), login_controller.LoginController.status);
             try ctrl.mount(&app.router);
         }
     }

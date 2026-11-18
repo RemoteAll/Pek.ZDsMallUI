@@ -12,6 +12,7 @@
     <div class="admin-header">
         <span class="admin-header-title">@Model.displayName</span>
         <span class="admin-header-user">@Model.userName</span>
+        <a class="admin-header-logout" href="@Model.areaRoute/login/logout" data-logout="1">退出</a>
     </div>
     <div class="admin-main">
         @RenderBody()

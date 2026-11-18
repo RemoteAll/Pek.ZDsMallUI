@@ -8,11 +8,16 @@
     // value（视图模型）、logs、file/fsio、DateTime、Http（出网）、crypto。
     .dependencies = .{
         .zzig = .{ .path = "../zzig" },
+        // JWT / 会话吊销（与 C# `NewLife.Web.JwtBuilder`、Rust `Pek.RPermissions` 字节级互通）
+        .pek_zpermissions = .{ .path = "../Pek.ZPermissions" },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        "pek_zdsmallui.zig",
         "src",
+        "Areas",
+        "Controllers",
         "Views",
         "assets",
         "examples",

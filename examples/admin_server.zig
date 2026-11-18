@@ -14,7 +14,9 @@
 //! | `GET /{area}/config/index` | 站点设置页（Razor 子集渲染，套 `Views/Shared/_Layout.cshtml`） |
 //! | `POST /{area}/config/updatebase` | 保存设置（字段名与 C# `ConfigController.UpdateBase` 一致） |
 //! | `GET /{area}/login/index` | 登录页 |
-//! | `POST /{area}/login/login` | 登录（示例账号 `admin` / `admin123`） |
+//! | `POST /{area}/login/login` | 登录（示例账号 `admin` / `admin123`；成功下发 JWT Cookie，Ajax 额外返回 `token`） |
+//! | `POST|GET /{area}/login/logout` | 退出登录（吊销 JWT + 清 Cookie） |
+//! | `GET /{area}/login/status` | 当前登录状态（JSON） |
 //! | `GET /fileuploader?action=config` | UEditor 配置（原样回吐 `ueconfig.json`） |
 //! | `POST /fileuploader?action=uploadimage` | 图片上传（multipart，字段 `upfile`） |
 //! | `POST /fileuploader?action=uploadscrawl` | 涂鸦（base64 data URL） |
@@ -51,6 +53,9 @@ pub fn main(init: std.process.Init) !u8 {
         .viewsRoot(views_root)
         .areasRoot(areas_root)
         .adminArea(area)
+        // 示例密钥：生产必须从配置/环境变量取；不配则每次启动随机（旧令牌失效）
+        .jwtSecret("HS256:zdsmallui-example-secret")
+        .jwtExpireMinutes(120)
         .build();
     defer ui.deinit();
 
@@ -70,6 +75,8 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("[dsmallui] 首页      {s}{s}/home/index\n", .{ site, prefix });
     std.debug.print("[dsmallui] 站点设置  {s}{s}/config/index\n", .{ site, prefix });
     std.debug.print("[dsmallui] 登录      {s}{s}/login/index （admin / admin123）\n", .{ site, prefix });
+    std.debug.print("[dsmallui] 登录状态  {s}{s}/login/status\n", .{ site, prefix });
+    std.debug.print("[dsmallui] 退出登录  {s}{s}/login/logout\n", .{ site, prefix });
     std.debug.print("[dsmallui] UEditor   {s}/fileuploader?action=config\n", .{site});
 
     try app.run("127.0.0.1", port, .{

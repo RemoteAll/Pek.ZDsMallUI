@@ -38,6 +38,7 @@ const std = @import("std");
 
 // ————— Zig 侧基础设施 —————
 pub const area = @import("src/area.zig");
+pub const auth = @import("src/auth.zig");
 pub const backend = @import("src/backend.zig");
 pub const models = @import("src/models.zig");
 pub const multipart = @import("src/multipart.zig");
@@ -85,6 +86,9 @@ pub const Uploader = ueditor.Uploader;
 pub const Views = views.Views;
 pub const DsMallUi = options.DsMallUi;
 pub const Builder = options.Builder;
+pub const Auth = auth.Auth;
+pub const AuthOptions = auth.Options;
+pub const SessionStore = auth.SessionStore;
 pub const Hierarchy = models.Hierarchy;
 
 /// 库版本（与 `build.zig.zon` 同步）。
@@ -97,6 +101,7 @@ const testing = std.testing;
 test "所有子模块可编译（含其测试）" {
     std.testing.refAllDecls(@This());
     testing.refAllDecls(area);
+    testing.refAllDecls(auth);
     testing.refAllDecls(backend);
     testing.refAllDecls(models);
     testing.refAllDecls(multipart);
