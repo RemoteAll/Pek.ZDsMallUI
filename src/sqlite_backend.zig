@@ -54,15 +54,34 @@ pub const SqliteBackend = struct {
         };
         errdefer self.lib.deinit();
 
-        self.db = sqlite.Db.open(&self.lib, path) catch |e| {
+        self.db = sqlite.Db.openWithOptions(&self.lib, path, .{
+            // **WAL + NORMAL**：面板类是「读多写少 + 写时还要能读」的场景，这两个 PRAGMA 是量级差距。
+            // 实测（`Pek.ZCode` 的 `zig build bench`，SQLite 文件库，ReleaseFast）：
+            //   - 单次写：WAL+NORMAL **94.76 µs** / DELETE+FULL **3086.89 µs** / DELETE+NORMAL **4731.96 µs**
+            //     → 默认的 DELETE 模式慢 **32 倍**；
+            //   - 写事务进行中的并发读：WAL 能读 **3047** 次（单次 3.92 µs），
+            //     DELETE 只能读 **25** 次且单次 **36 ms** —— 写期间读被整体阻塞，这是线上最致命的。
+            //
+            // 不用 WAL 的唯二场景：① 库文件在网络盘（SMB/NFS，`-shm` 共享内存不可靠）；
+            // ② 备份/打包时必须把 `-wal`、`-shm` 一并带上（只看 `.db` 会丢最近写入）。
+            // 需要关掉时把 `journal_mode` 设成 `"delete"` 即可（`Options` 支持显式覆盖）。
+            .journal_mode = "WAL",
+            .synchronous = "NORMAL",
+            // 撞锁等待上限（ZCode 建表连接已关，但外部工具仍可能占用）
+            .busy_timeout_ms = 8000,
+        }) catch |e| {
             zzig.Logger.err("[ZDsMallUI] 打开 SQLite 数据库失败（{s}，路径 {s}）", .{ @errorName(e), path });
             return e;
         };
         errdefer self.db.close();
-        // 双连接（ZCode 建表连接已关）仍可能撞锁，给个等待上限
-        _ = self.db.exec(allocator, "PRAGMA busy_timeout = 8000") catch {};
 
         try self.seedDefaultUser();
+        // 把**实际生效**的 journal_mode 打出来：WAL 在部分环境（网络盘 / 某些构建）会静默失败，
+        // 而它是 32 倍写吞吐与「写时还能读」的关键，运维需要一眼能确认。
+        var mode_buf: [32]u8 = undefined;
+        if (self.queryScalarText("PRAGMA journal_mode", &.{}, &mode_buf)) |mode| {
+            zzig.Logger.info("[ZDsMallUI] SQLite journal_mode = {s}", .{mode});
+        } else |_| {}
         zzig.Logger.info("[ZDsMallUI] SQLite 就绪：{s}（驱动 {s}）", .{ path, self.lib.version() });
         return self;
     }
@@ -83,7 +102,7 @@ pub const SqliteBackend = struct {
             zzig.Logger.err("[ZDsMallUI] 解析内置 Model.xml 失败：{s}", .{@errorName(e)});
             return e;
         };
-        const conn = try std.fmt.allocPrint(allocator, "Data Source={s};Provider=SQLite", .{path});
+        const conn = try std.fmt.allocPrint(allocator, "Data Source={s};Provider=SQLite;JournalMode=WAL;Synchronous=NORMAL", .{path});
         defer allocator.free(conn);
 
         var dal = zcode.Dal.initWithModel(allocator, conn, model) catch |e| {
@@ -125,6 +144,22 @@ pub const SqliteBackend = struct {
             .boolean => |b| if (b) 1 else 0,
             else => 0,
         };
+    }
+
+    /// 读单列文本写进调用方提供的缓冲（典型用法：`PRAGMA journal_mode` 的回读）。
+    /// 写进 `buf` 而不是分配：日志这类短命文本不必占堆，也不会漏。
+    fn queryScalarText(self: *SqliteBackend, sql: []const u8, params: []const Value, buf: []u8) ![]const u8 {
+        var arena_state = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena_state.deinit();
+        const row = try self.queryOne(arena_state.allocator(), sql, params);
+        const v = row.at(0) orelse return "";
+        const text = switch (v) {
+            .text => |t| t,
+            else => return "",
+        };
+        const n = @min(text.len, buf.len);
+        @memcpy(buf[0..n], text[0..n]);
+        return buf[0..n];
     }
 
     /// 查询并读**第一行**（无行返回空 Row）。`arena` 由调用方提供：`readRow` 的文本借用它。
