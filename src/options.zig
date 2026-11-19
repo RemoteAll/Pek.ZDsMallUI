@@ -47,9 +47,6 @@ pub const ADMIN_CONFIG_JS = @embedFile("../assets/admin-config.js");
 /// 登录页前端 MD5 脚本（部署时落地到 `wwwroot/static/admin/js/login-md5.js`）。
 pub const LOGIN_MD5_JS = @embedFile("../assets/login-md5.js");
 
-/// 后台内置样式（第三方 `admin.css` 里没有本仓库视图的 `admin-*` 类，靠它补齐）。
-pub const ADMIN_UI_CSS = @embedFile("../assets/admin-ui.css");
-
 /// DsMallUI 门面（**必须堆分配且挂载后不得移动**：控制器持有指向本对象的指针）。
 pub const DsMallUi = struct {
     allocator: std.mem.Allocator,
@@ -64,6 +61,8 @@ pub const DsMallUi = struct {
     service: ueditor_mod.UeditorService,
     admin_area: *controllers.admin_area.AdminArea,
     upload_controller: *controllers.upload.UploadController,
+    /// 伪静态后缀（由 Builder 传入；挂在 `app.router` 上）
+    pseudo_suffixes: []const []const u8 = &.{},
     /// 内置内存数据源（未指定外部 backend 时由本对象拥有）
     memory_backend: ?*backend_mod.MemoryBackend = null,
 
@@ -130,6 +129,9 @@ pub const DsMallUi = struct {
 
     /// 把路由挂到应用：`/fileuploader`、`/Upload/*`、`/{area}/home|config|login/*`。
     pub fn mount(self: *DsMallUi, app: *zzig.web.App) !void {
+        // 伪静态后缀（官网类）：`/x.html` → `/x`，精确路由优先、参数路由次之
+        try app.router.addSuffixes(self.pseudo_suffixes);
+
         try self.upload_controller.mount(app);
         try self.admin_area.mount(app);
     }
@@ -175,10 +177,9 @@ pub const DsMallUi = struct {
 
         const style_path = try std.fmt.allocPrint(self.allocator, "{s}/static/admin/css/admin-ui.css", .{self.web_root});
         defer self.allocator.free(style_path);
-        if (!zzig.fsio.exists(self.io, style_path)) {
-            if (std.fs.path.dirname(style_path)) |parent| try zzig.fsio.makePath(self.io, parent);
-            try zzig.fsio.writeFile(self.io, style_path, ADMIN_UI_CSS);
-            written += 1;
+        if (zzig.fsio.exists(self.io, style_path)) {
+            // 旧版本曾落地过自造样式；版式已改为复用参考 `admin.css`，清掉避免干扰
+            std.Io.Dir.cwd().deleteFile(self.io, style_path) catch {};
         }
 
         return written;
@@ -223,6 +224,8 @@ pub const Builder = struct {
     cookie_secure: bool = false,
     /// 会话存储（默认内存；可选 `SqliteStore` / `FileStore` / `RedisStore`）
     external_session_store: ?auth_mod.SessionStore = null,
+    /// 伪静态后缀（默认 `.html`：`/biz/home/index.html` 命中 `/biz/home/index`；空数组 = 关闭）
+    pseudo_suffixes: []const []const u8 = &.{".html"},
 
     /// 站点物理根（默认 `wwwroot`；**业务系统按自己的配置改成任意路径**）。
     pub fn webRoot(self: Builder, root: []const u8) Builder {
@@ -326,6 +329,17 @@ pub const Builder = struct {
         return copy;
     }
 
+    /// 伪静态后缀（默认 `.{ ".html" }`）。
+    ///
+    /// 官网/门户类站点的诉求：`/biz/home/index.html` 命中 `/biz/home/index`、
+    /// 带参数的 `/news/123.html` 拿到 `id=123`（后缀不进参数值）。
+    /// 传空数组即关闭（保持纯动态路由）。
+    pub fn pseudoStaticSuffixes(self: Builder, suffixes: []const []const u8) Builder {
+        var copy = self;
+        copy.pseudo_suffixes = suffixes;
+        return copy;
+    }
+
     /// 组装（失败时已分配的资源全部回滚）。
     pub fn build(self: Builder) !*DsMallUi {
         const normalized_area = try area_mod.normalize(self.allocator, self.admin_area);
@@ -379,6 +393,7 @@ pub const Builder = struct {
             .service = service,
             .admin_area = undefined,
             .upload_controller = undefined,
+            .pseudo_suffixes = self.pseudo_suffixes,
             .memory_backend = memory,
         };
         errdefer ui.ui_views.deinit();
@@ -500,7 +515,8 @@ test "门面：落地默认视图与配置是幂等的" {
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/ueconfig.json", .{web_root})));
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/js/admin-config.js", .{web_root})));
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/js/login-md5.js", .{web_root})));
-    try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/css/admin-ui.css", .{web_root})));
+    // 自造样式已废弃：不再落地（旧版本留下的会被清理）
+    try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/css/admin-ui.css", .{web_root})));
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Config/Index.cshtml", .{areas_root})));
 
     const second = try ui.materializeDefaults();
@@ -547,4 +563,41 @@ test "门面：起服务后四个入口都可访问（端到端冒烟）" {
     const ue = try app.dispatch(arena, .{ .method = "GET", .path = "/fileuploader", .query = "action=config" });
     try testing.expectEqual(std.http.Status.ok, ue.status);
     try testing.expect(std.mem.indexOf(u8, ue.body, "imageActionName") != null);
+}
+
+test "门面：伪静态 .html 后缀命中动态路由（官网类站点）" {
+    var fixture = try Fixture.init("pseudo");
+    defer fixture.deinit();
+    const arena = fixture.arena_state.allocator();
+
+    const web_root = try std.fmt.allocPrint(arena, "{s}/wwwroot", .{fixture.dir});
+    const views_root = try std.fmt.allocPrint(arena, "{s}/Views", .{fixture.dir});
+    const areas_root = try std.fmt.allocPrint(arena, "{s}/Areas", .{fixture.dir});
+
+    const ui = try DsMallUi.builder(testing.allocator, testing.io)
+        .webRoot(web_root)
+        .viewsRoot(views_root)
+        .areasRoot(areas_root)
+        .adminArea("Biz")
+        .build();
+    defer ui.deinit();
+    _ = try ui.materializeDefaults();
+
+    var app = try zzig.web.App.init(testing.allocator, testing.io, .{ .wwwroot = web_root });
+    defer app.deinit();
+    try ui.mount(&app);
+
+    // `/biz/home/index.html` → `/biz/home/index`
+    const home = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/home/index.html" });
+    try testing.expectEqual(std.http.Status.ok, home.status);
+    try testing.expect(std.mem.indexOf(u8, home.body, "快捷入口") != null);
+
+    // 登录页同样可加后缀
+    const login = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/login/index.html" });
+    try testing.expectEqual(std.http.Status.ok, login.status);
+    try testing.expect(std.mem.indexOf(u8, login.body, "密码") != null);
+
+    // 不存在的页面仍是 404（不会因为加后缀就"命中一切"）
+    const missing = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/home/nope.html" });
+    try testing.expectEqual(std.http.Status.not_found, missing.status);
 }

@@ -88,7 +88,8 @@
             // 只哈希一次：脚本重复触发（回车 + 点击）不再二次散列
             if (input.dataset.md5 === '1') return;
             if (!input.value) return;
-            input.value = md5Hex(input.value);
+            // 大写 hex：与参考工程 C# 登录页 `CryptoJS.MD5(...).toUpperCase()` 完全一致
+            input.value = md5Hex(input.value).toUpperCase();
             input.dataset.md5 = '1';
         }, true);
     }

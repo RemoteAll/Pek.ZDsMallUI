@@ -131,12 +131,40 @@ curl.exe -s -H "Authorization: Bearer $token" http://127.0.0.1:18080/biz/login/s
 curl.exe -s -i -H "Authorization: Bearer $token" http://127.0.0.1:18080/biz/login/logout
 ```
 
-## 内置样式（`admin-ui.css`）
+## 版式：直接复用参考工程 `admin.css`
 
-第三方 `wwwroot/static/admin/css/admin.css` 是 C# 参考工程的资产，里没有本仓库视图使用的
-`admin-*` 类；本仓库自带 `assets/admin-ui.css`（主色 `#1677ff`、卡片/表单/顶栏/提示条），
-由 `materializeDefaults()` 落地到 `wwwroot/static/admin/css/admin-ui.css`，`_Layout.cshtml` 在第三方样式之后引用。
-只补不盖：不写 `!important`，也不修改第三方文件。
+**不自造皮肤**。后台页面的 DOM 结构与类名与 C# 参考工程保持一致，样式全部来自
+`wwwroot/static/admin/css/admin.css`（C# 工程同一份文件，`tools/sync-wwwroot.ps1` 同步）：
+
+| 页面 | 复用的类（来自参考工程） |
+|---|---|
+| 内容页头部 | `.page > .fixed-bar > .item-title > .subject(h3+h5) + ul.tab-base.ds-row > li > a` |
+| 表单页 | `.ncap-form-default > dl > dt + dd > input.input-txt / textarea + span.err`；页签用 `.layui-tab` |
+| 提示条 | `.explanation > .title > h4` |
+| 登录页 | `.login > .login_body > .login_header(img logo) + .login_content > .form-group > input.text` + `.btn`，背景 `/static/admin/images/wallpage/bg_1.jpg` |
+
+- 登录页前端 MD5 与参考一致：`CryptoJS.MD5(明文).toUpperCase()` → 提交 32 位**大写** hex
+  （本库用零依赖的 `assets/login-md5.js` 实现，后端明文/大写/小写都收）；
+- 视图布局：`_Layout.cshtml` 对应参考的 `_AdminLayout.cshtml`（`admin.css` + `layui.css` + jquery + layer + admin.js）；
+- 新增页面时**先看参考工程对应视图用了哪些类**，沿用同一套，不要再写一套 `admin-*` 自定义皮肤。
+
+## 伪静态后缀（`.html`）
+
+官网/门户类站点常用 `/about.html`、`/news/123.html` 这种地址。由 **zzig 路由**提供，本库默认开启 `.{ ".html" }`：
+
+```zig
+const ui = try pek_zdsmallui.DsMallUi.builder(gpa, io)
+    .adminArea("Biz")
+    .pseudoStaticSuffixes(&.{ ".html", ".htm" })   // 默认 .{ ".html" }；传空数组关闭
+    .build();
+```
+
+- `/biz/home/index.html` → 命中 `/biz/home/index`；`/news/123.html` → 命中 `/news/{id}` 且 `id = "123"`（后缀不进参数值）；
+- **优先级三阶段**：① 原路径的**字面量**路由（`/exact.html` 这类精确路由永远优先）→ ② 去掉已注册后缀再完整匹配 → ③ 原路径完整匹配（未注册后缀时保持旧行为）；
+- 配置：`builder.pseudoStaticSuffixes(&.{ ".html", ".htm" })`；传空数组即关闭；
+- 处理函数里可用 `c.suffix()` 判断本次是否伪静态访问（做 canonical / 301 规范化）；
+- 生成链接用 `zzig.web.router.withSuffix(arena, "/about", ".html")` → `/about.html`（幂等、保留 query）；
+- 磁盘上真实存在的同名静态文件不受影响：路由未命中时仍会回落到 `wwwroot` 静态资源。
 
 ## 区域（Area）
 

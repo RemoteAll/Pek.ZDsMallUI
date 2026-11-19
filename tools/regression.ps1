@@ -16,7 +16,7 @@ param(
     [switch]$SkipSmoke,
     [int]$Port = 18099,
     # 测试数基线（只能抬高；降低必须在 docs/决策记录.md 写明依据）
-    [int]$MinTests = 93
+    [int]$MinTests = 94
 )
 
 $ErrorActionPreference = 'Continue'
@@ -165,7 +165,10 @@ if ($SkipSmoke) {
                         @{ Name = 'GET /biz/login/index'; Url = "$base/biz/login/index"; Must = '密码' },
                         @{ Name = 'GET /biz/login/index（前端 MD5 脚本）'; Url = "$base/biz/login/index"; Must = '/static/admin/js/login-md5.js' },
                         @{ Name = 'GET /biz/login/index（回填 returnUrl）'; Url = "$base/biz/login/index?returnUrl=%2Fbiz%2Fconfig%2Findex"; Must = 'value="/biz/config/index"' },
-                        @{ Name = 'GET /static/admin/css/admin-ui.css'; Url = "$base/static/admin/css/admin-ui.css"; Must = '.admin-form-row' },
+                        @{ Name = 'GET /biz/home/index.html（伪静态）'; Url = "$base/biz/home/index.html"; Must = '快捷入口' },
+                        @{ Name = 'GET /biz/config/index.html（伪静态）'; Url = "$base/biz/config/index.html"; Must = '站点设置' },
+                        @{ Name = 'GET /biz/login/index（参考版式）'; Url = "$base/biz/login/index"; Must = 'login_body' },
+                        @{ Name = 'GET /static/admin/css/admin.css（参考皮肤）'; Url = "$base/static/admin/css/admin.css"; Must = 'ncap-form-default' },
                         @{ Name = 'GET /static/admin/js/login-md5.js'; Url = "$base/static/admin/js/login-md5.js"; Must = 'dsmalluiMd5' },
                         @{ Name = 'GET /fileuploader?action=config'; Url = "$base/fileuploader?action=config"; Must = 'imageActionName' }
                     )) {
@@ -179,6 +182,11 @@ if ($SkipSmoke) {
                         Fail $item.Name $_.Exception.Message
                     }
                 }
+
+                # 伪静态不得“命中一切”：不存在的页面加后缀仍然 404
+                $pseudoMissing = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', "$base/biz/home/nope.html")
+                if ($pseudoMissing.Output -match '404') { Pass 'GET /biz/home/nope.html（伪静态未命中→404）' }
+                else { Fail 'GET /biz/home/nope.html（伪静态未命中→404）' "http=$($pseudoMissing.Output)" }
 
                 # 3.2 multipart 上传（curl 10 自带；-F 走标准多段表单）
                 $png = Join-Path $workDir 'regression.png'
@@ -217,8 +225,10 @@ if ($SkipSmoke) {
                     $configText = [Text.Encoding]::UTF8.GetString($configBytes)
                     if ($configText.Contains('RegressionShop')) { Pass 'POST /biz/config/updatebase' '回读命中' }
                     else { Fail 'POST /biz/config/updatebase' '回读未命中 RegressionShop' }
-                    if ($configText.Contains('/static/admin/css/admin-ui.css')) { Pass 'GET /biz/config/index（内置样式引用）' }
-                    else { Fail 'GET /biz/config/index（内置样式引用）' '未引用 admin-ui.css' }
+                    if ($configText.Contains('/static/admin/css/admin.css')) { Pass 'GET /biz/config/index（复用参考样式）' }
+                    else { Fail 'GET /biz/config/index（复用参考样式）' '未引用 admin.css' }
+                    if ($configText.Contains('ncap-form-default')) { Pass 'GET /biz/config/index（参考版式类）' }
+                    else { Fail 'GET /biz/config/index（参考版式类）' '未使用 ncap-form-default' }
                 }
                 else { Fail 'POST /biz/config/updatebase' "http=$($save.Output)" }
 

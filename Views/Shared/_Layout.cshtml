@@ -2,29 +2,28 @@
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport">
     <title>@Model.title</title>
+    @* 版式复用参考工程 C# `Areas/Admin/Views/Shared/_AdminLayout.cshtml`：
+       直接用 `admin.css`（后台皮肤）+ `layui.css`；本库**不自造样式**，页面只用 admin.css 里的类名。 *@
     <link rel="stylesheet" href="/static/admin/css/admin.css">
-    <link rel="stylesheet" href="/static/admin/css/admin-ui.css">
     <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
     @await RenderSectionAsync("Head", false)
 </head>
-<body class="admin-body">
-    <div class="admin-header">
-        <span class="admin-header-title">@Model.displayName</span>
-        <span class="admin-header-user">@Model.userName</span>
-        <a class="admin-header-logout" href="@Model.areaRoute/login/logout" data-logout="1">退出</a>
-    </div>
-    <div class="admin-main">
-        @RenderBody()
-    </div>
+<body>
+    <div id="append_parent"></div>
+    <div id="ajaxwaitid"></div>
+
+    @RenderBody()
+
     <script src="/static/plugins/jquery214.min.js"></script>
     <script src="/static/plugins/layer/layer.js"></script>
+    <script src="/static/admin/js/admin.js"></script>
     <script type="text/javascript">
-        var ADMINSITEURL = "/admin";
+        // 参考工程用 layer 做提示；原生 confirm 已被全局「面板前端交互规范」禁用。
+        var ADMINSITEURL = "@Model.areaRoute";
         function dsmalluiConfirm(form, message) {
-            // 原生 confirm 已被全局「面板前端交互规范」禁用：有 layer 就用 layer，
-            // 没有 layer 时不再弹窗（表单照常提交，服务端仍有同名校验）。
             if (window.layer) {
                 layer.confirm(message, { btn: ['确定', '取消'] }, function (index) {
                     form.submit();

@@ -1,51 +1,57 @@
 @{
     Layout = "Shared/_Layout";
 }
-<div class="admin-dashboard">
-    <div class="admin-hero">
-        <h1>@Model.displayName</h1>
-        <p class="admin-sub">
-            当前区域：<code>@Model.areaName</code>
-            （路由前缀 <code>@Model.areaRoute</code>，可随配置改名）
-        </p>
-    </div>
-
-    <div class="admin-metrics">
-        <div class="admin-metric">
-            <span class="admin-metric-label">站点名称</span>
-            <span class="admin-metric-value">@Model.siteName</span>
-        </div>
-        <div class="admin-metric">
-            <span class="admin-metric-label">上传目录</span>
-            <span class="admin-metric-value">@Model.uploadPrefix</span>
-        </div>
-        <div class="admin-metric">
-            <span class="admin-metric-label">当前用户</span>
-            <span class="admin-metric-value">@Model.userName</span>
-        </div>
-        <div class="admin-metric">
-            <span class="admin-metric-label">版本</span>
-            <span class="admin-metric-value">@Model.version</span>
+@* 后台首页：参考工程没有对应页（C# 用框架页 + iframe 菜单），
+   这里沿用同一套 admin.css 版式（`.page > .fixed-bar > .item-title > .subject + ul.tab-base`
+   + `.ncap-form-default` 的 `dl > dt/dd`），不自造皮肤。 *@
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>@Model.displayName</h3>
+                <h5>当前用户：@Model.userName</h5>
+            </div>
+            <ul class="tab-base ds-row">
+                <li><a href="@Model.areaRoute/home/index" class="current"><span>后台首页</span></a></li>
+                <li><a href="@Model.areaRoute/config/index"><span>站点设置</span></a></li>
+                <li><a href="@Model.areaRoute/login/index"><span>登录页</span></a></li>
+                <li><a href="@Model.areaRoute/login/logout"><span>退出</span></a></li>
+            </ul>
         </div>
     </div>
 
-    <h2 class="admin-section-title">快捷入口</h2>
-    @if (Model.hasMenus) {
-    <div class="admin-cards">
-        @foreach (var menu in Model.menus) {
-        <a class="admin-card" href="@menu.url">
-            <span class="admin-card-name">@menu.name</span>
-            <span class="admin-card-desc">@menu.desc</span>
-        </a>
+    <div class="explanation">
+        @* 注意：Razor 子集里 `@expr` 后面**不能紧跟全角标点**（如 `（`），会被解析器吞掉，
+           这里用 `<code>` 明确终止表达式。 *@
+        <div class="title"><h4>当前区域 <code>@Model.areaName</code>（路由前缀 <code>@Model.areaRoute</code>，可随配置改名）</h4></div>
+    </div>
+
+    <div class="ncap-form-default">
+        <dl>
+            <dt>站点名称</dt>
+            <dd>@Model.siteName</dd>
+        </dl>
+        <dl>
+            <dt>上传目录</dt>
+            <dd>@Model.uploadPrefix</dd>
+        </dl>
+        <dl>
+            <dt>当前用户</dt>
+            <dd>@Model.userName</dd>
+        </dl>
+        <dl>
+            <dt>版本</dt>
+            <dd>@Model.version</dd>
+        </dl>
+        @if (Model.hasMenus) {
+        <dl>
+            <dt>快捷入口</dt>
+            <dd>
+                @foreach (var menu in Model.menus) {
+                <a href="@menu.url" class="btn" title="@menu.desc" style="margin:0 8px 8px 0;">@menu.name</a>
+                }
+            </dd>
+        </dl>
         }
     </div>
-    } else {
-    <p class="admin-tip">当前没有可用的后台页面。</p>
-    }
 </div>
-
-@section Scripts {
-<script type="text/javascript">
-    // 首页只做展示，不轮询、不占用资源
-</script>
-}
