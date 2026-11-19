@@ -18,9 +18,10 @@
             .url = "git+https://github.com/lalinsky/zio?ref=v0.20.1#53ed3c3773179a5c34aeca6b7e61aa5817accaee",
             .hash = "zio-0.20.1-xHbVVHZrLwDgu_C5K7zM6If_GttrcgX8_lhwwnml3s-N",
         },
-        // lighting：Zig 高性能 Web 框架（**自写 HTTP/1.1 解析，不依赖 std.http**）。
-        // 仅作「每连接内存」对照实验用，不作为生产依赖（本库生产走 zzig + std.http）。
-        .lighting = .{ .path = "../lighting" },
+        // 注：曾用 ../lighting 作「每连接内存」对照实验（自写 HTTP/1.1 解析，不依赖 std.http）。
+        // 对照结论已固化：zzig 把它的解析器收编进 src/http/{head_parser,body_reader}.zig 后，
+        // 吞吐与原版持平略优、每连接内存一致，故对照工程连同该依赖一并移除
+        // （见 zzig/docs/决策记录.md 2026-11-19（十一））。
     },
     .paths = .{
         "build.zig",

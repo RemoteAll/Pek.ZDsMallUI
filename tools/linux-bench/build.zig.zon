@@ -4,7 +4,7 @@
     .minimum_zig_version = "0.17.1",
     .fingerprint = 0xbb819b3cc0d453ea,
     .dependencies = .{
-        // 与 zzig 的 build 同源：zzig 自己再解析 ../lighting
+        // zzig 已是零外部依赖（HTTP 解析器已收编进它自己的 src/http/），此处只需路径
         .zzig = .{ .path = "../zzig" },
         .zio = .{ .path = "../zio" },
     },

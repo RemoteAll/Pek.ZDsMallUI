@@ -42,11 +42,11 @@ pub fn main(init: std.process.Init) !void {
     // 用小数值可以在大机器上**模拟 2 核 / 4 核服务器**，验证小规格下的连接承载。
     const executors: u8 = if (args.items.len > 2) std.fmt.parseInt(u8, args.items[2], 10) catch 0 else 0;
 
-    // 协程栈：2026-11-19 起 zzig 的 HTTP 层改用 lighting 的自写解析（不再走 `std.http`），
-    // 连接协程的栈需求从 >64 KiB 掉到 32 KiB 以内 —— 之前那个「64 KiB 就 Stack overflow」的
-    // 硬下限随之一并消失。实测（5000 空闲连接 / 2 executor / 4 KiB 收发缓冲）：
+    // 协程栈：2026-11-19 起 zzig 的 HTTP 层换成自写的零分配解析（收编 lighting / MIT，
+    // 不再走 `std.http`），连接协程的栈需求从 >64 KiB 掉到 32 KiB 以内 —— 之前那个
+    // 「64 KiB 就 Stack overflow」的硬下限随之一并消失。实测（5000 空闲连接 / 2 executor / 4 KiB 收发缓冲）：
     //   std.http + 128 KiB 栈 → 302.7 MB（59.3 KB/连接）
-    //   lighting 解析 + 32 KiB 栈 → 见 docs/决策记录.md 2026-11-19（十一）
+    //   自写解析 + 32 KiB 栈 → 20.5 KB/连接（见 zzig/docs/决策记录.md 2026-11-19（十一））
     const rt = try zio.Runtime.init(gpa, .{
         // `ExecutorCount` 是非穷尽枚举（`auto = 0, _`），用 `@fromBackingInt` 构造具体值
         .executors = if (executors > 0) @fromBackingInt(executors) else .auto,
