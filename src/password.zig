@@ -480,3 +480,62 @@ test "口令：损坏的散列不会 panic，只判失败" {
     try testing.expect(!verify("x", "$$$"));
     try testing.expect(!verify("x", "$nope$salt$hash"));
 }
+
+// ————— C# / Rust 互通黄金样本（跨端对拍，别改这些常量）—————
+//
+// 来源：`G:\Code\Rust\DH.RustBase\tools\csharp\DHRustDemo`（引用 `NewLife.Security.SaltPasswordProvider`）
+// 实测命令：
+//   DHRustDemo.exe password-hash-fixed <算法> "New#life" "abCD12./xyZ9012Q"
+// 同款脚本：`DH.RustBase\scripts\password-interop.ps1`（Rust 侧 `matches_csharp_golden_hashes` 用的同一批值）。
+// 任一侧改动算法 / 编码 / 大小写，这里立刻报警。
+const GOLDEN_PASSWORD = "New#life";
+const GOLDEN_SALT = "abCD12./xyZ9012Q";
+const CSharpGolden = struct { algorithm: Algorithm, stored: []const u8 };
+const CSHARP_GOLDEN = [_]CSharpGolden{
+    .{ .algorithm = .md5, .stored = "$md5$abCD12./xyZ9012Q$F66328434CFAEF3EC9B394358D6D9C36" },
+    .{ .algorithm = .sha1, .stored = "$sha1$abCD12./xyZ9012Q$fNkn6u3ykPZM4OPL/y6r6Jof2mY=" },
+    .{ .algorithm = .sha512, .stored = "$sha512$abCD12./xyZ9012Q$ctlLR2xz3b1a9ARbpCkOZEFLvc6A2pLG/BMTVq99TR1pr9JIMs70qKj/OMjohcBvU0+XAyRh6CsExEMfvybOKg==" },
+    .{ .algorithm = .md5_sha1, .stored = "$md5+sha1$abCD12./xyZ9012Q$FAXHeXyCpOSOPugOqcHia+ZVMOw=" },
+    .{ .algorithm = .md5_sha512, .stored = "$md5+sha512$abCD12./xyZ9012Q$pO5mQ5rFhoYeCn+a6s1GhcvwqSgzbgWOuK3fC2VSaNQ1SGk5TSErph0jK5ThlAfkAbzdr9UM6Pe/xQ17Zk24Kw==" },
+};
+
+test "口令互通：五种算法与 C# 固定盐散列逐字一致" {
+    for (CSHARP_GOLDEN) |golden| {
+        const stored = try hashWithSalt(testing.allocator, golden.algorithm, GOLDEN_PASSWORD, GOLDEN_SALT);
+        defer testing.allocator.free(stored);
+        try testing.expectEqualStrings(golden.stored, stored);
+        // 反向：C# 生成的值，Zig 必须能验证
+        try testing.expect(verify(GOLDEN_PASSWORD, golden.stored));
+        try testing.expect(!verify("wrong", golden.stored));
+        try testing.expect(!needsUpgrade(golden.algorithm, golden.stored));
+    }
+}
+
+test "口令互通：中文口令（UTF-8）与 C# 一致" {
+    // C#: DHRustDemo.exe password-hash-fixed md5+sha1 "中文口令123" "abCD12./xyZ9012Q"
+    const stored_md5_sha1 = "$md5+sha1$abCD12./xyZ9012Q$dR3AqHU3Uo0CBl7waSUoerv2fMc=";
+    const stored_md5 = "$md5$abCD12./xyZ9012Q$BD5AD3872AB26F331056B0CB80328826";
+    try testing.expect(verify("中文口令123", stored_md5_sha1));
+    try testing.expect(verify("中文口令123", stored_md5));
+
+    const computed = try hashWithSalt(testing.allocator, .md5_sha1, "中文口令123", GOLDEN_SALT);
+    defer testing.allocator.free(computed);
+    try testing.expectEqualStrings(stored_md5_sha1, computed);
+}
+
+test "口令互通：C# 生成的 md5+sha1 接受前端 MD5 传输（大小写都认）" {
+    // C# 侧实测（DHRustDemo.exe password-verify-alg md5+sha1 <md5hex> <stored>）：
+    //   明文 / 小写 MD5 / 大写 MD5 都是 OK，错误 MD5 是 FAIL。
+    var hex_buffer: [32]u8 = undefined;
+    const lower = md5HexLower(GOLDEN_PASSWORD, &hex_buffer);
+    const golden = CSHARP_GOLDEN[3].stored; // $md5+sha1$…
+    try testing.expect(verify(lower, golden));
+
+    var upper: [32]u8 = undefined;
+    for (lower, 0..) |c, index| upper[index] = std.ascii.toUpper(c);
+    try testing.expect(verify(&upper, golden));
+
+    // 另一个口令的 MD5 必须被拒
+    var other: [32]u8 = undefined;
+    try testing.expect(!verify(md5HexLower("admin123", &other), golden));
+}

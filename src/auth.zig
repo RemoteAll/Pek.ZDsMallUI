@@ -238,6 +238,9 @@ pub const Auth = struct {
     }
 
     /// 校验并返回主体（签名 / 过期由 JWT 负责，登出状态由会话吊销表负责）。
+    ///
+    /// **返回的切片一律复制到调用方 `arena`**：`Decoded` 自带 arena，`deinit` 之后
+    /// 原切片会变成悬垂指针（踩过：首页「当前用户」显示成二进制垃圾）。
     pub fn principal(self: *Auth, arena: std.mem.Allocator, req: router.Request, now_ts: i64) ?Principal {
         const token = self.tokenOf(req) orelse return null;
         const now = if (now_ts > 0) now_ts else zzig.DateTime.nowUnix();
@@ -254,11 +257,14 @@ pub const Auth = struct {
         if (!self.keeper.authorize(token, now)) return null;
 
         const payload = decoded.payload;
-        const uid = claimText(payload, "sub") orelse return null;
+        const uid_raw = claimText(payload, "sub") orelse return null;
+        const uid = arena.dupe(u8, uid_raw) catch return null;
+        const user_name = arena.dupe(u8, claimText(payload, "name") orelse "") catch return null;
+        const display_name = arena.dupe(u8, claimText(payload, "displayName") orelse "") catch return null;
         return .{
             .uid = uid,
-            .user_name = claimText(payload, "name") orelse "",
-            .display_name = claimText(payload, "displayName") orelse "",
+            .user_name = user_name,
+            .display_name = display_name,
             .is_admin = claimBool(payload, "isAdmin") orelse false,
             .token = token,
             .expires_at = claimInt(payload, "exp") orelse 0,

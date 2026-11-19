@@ -44,6 +44,12 @@ pub const UE_CONFIG_JSON = @embedFile("../assets/ueconfig.json");
 /// 内置后台客户端校验脚本（部署时落地到 `wwwroot/static/admin/js/admin-config.js`）。
 pub const ADMIN_CONFIG_JS = @embedFile("../assets/admin-config.js");
 
+/// 登录页前端 MD5 脚本（部署时落地到 `wwwroot/static/admin/js/login-md5.js`）。
+pub const LOGIN_MD5_JS = @embedFile("../assets/login-md5.js");
+
+/// 后台内置样式（第三方 `admin.css` 里没有本仓库视图的 `admin-*` 类，靠它补齐）。
+pub const ADMIN_UI_CSS = @embedFile("../assets/admin-ui.css");
+
 /// DsMallUI 门面（**必须堆分配且挂载后不得移动**：控制器持有指向本对象的指针）。
 pub const DsMallUi = struct {
     allocator: std.mem.Allocator,
@@ -156,6 +162,22 @@ pub const DsMallUi = struct {
         if (!zzig.fsio.exists(self.io, script_path)) {
             if (std.fs.path.dirname(script_path)) |parent| try zzig.fsio.makePath(self.io, parent);
             try zzig.fsio.writeFile(self.io, script_path, ADMIN_CONFIG_JS);
+            written += 1;
+        }
+
+        const login_script_path = try std.fmt.allocPrint(self.allocator, "{s}/static/admin/js/login-md5.js", .{self.web_root});
+        defer self.allocator.free(login_script_path);
+        if (!zzig.fsio.exists(self.io, login_script_path)) {
+            if (std.fs.path.dirname(login_script_path)) |parent| try zzig.fsio.makePath(self.io, parent);
+            try zzig.fsio.writeFile(self.io, login_script_path, LOGIN_MD5_JS);
+            written += 1;
+        }
+
+        const style_path = try std.fmt.allocPrint(self.allocator, "{s}/static/admin/css/admin-ui.css", .{self.web_root});
+        defer self.allocator.free(style_path);
+        if (!zzig.fsio.exists(self.io, style_path)) {
+            if (std.fs.path.dirname(style_path)) |parent| try zzig.fsio.makePath(self.io, parent);
+            try zzig.fsio.writeFile(self.io, style_path, ADMIN_UI_CSS);
             written += 1;
         }
 
@@ -477,6 +499,8 @@ test "门面：落地默认视图与配置是幂等的" {
     try testing.expect(first >= views_mod.DEFAULT_VIEWS.len + 1);
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/ueconfig.json", .{web_root})));
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/js/admin-config.js", .{web_root})));
+    try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/js/login-md5.js", .{web_root})));
+    try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/css/admin-ui.css", .{web_root})));
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Config/Index.cshtml", .{areas_root})));
 
     const second = try ui.materializeDefaults();

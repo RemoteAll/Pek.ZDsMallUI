@@ -38,5 +38,7 @@
             <button type="submit" class="login-btn">登录</button>
         </form>
     </div>
+    @* 前端把口令先 MD5（32 位小写）再提交，后端同时接受明文与 MD5（见 src/password.zig） *@
+    <script src="/static/admin/js/login-md5.js"></script>
 </body>
 </html>

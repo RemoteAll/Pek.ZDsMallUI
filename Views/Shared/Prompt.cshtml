@@ -4,6 +4,11 @@
 <head>
     <meta charset="utf-8">
     <title>@Model.title</title>
+    @* 自动返回用 meta refresh：`@if` 块内不能出现 `}`（Razor 子集遇 `}` 即结束块，
+       内联 `function () { … }` 会被截断，页面上会漏出孤立的 `}`）。 *@
+    @if (Model.autoBack) {
+    <meta http-equiv="refresh" content="1;url=@Model.backUrl">
+    }
     <style>
         body { background: #fff; font-family: "Microsoft Yahei", Arial, sans-serif; color: #333; }
         .system-message { margin: 100px auto; width: 420px; border: 1px solid #d4d4d4; border-radius: 5px; overflow: hidden; }
@@ -22,10 +27,5 @@
             }
         </div>
     </div>
-    @if (Model.autoBack) {
-    <script type="text/javascript">
-        setTimeout(function () { window.location.href = "@Model.backUrl"; }, 1500);
-    </script>
-    }
 </body>
 </html>

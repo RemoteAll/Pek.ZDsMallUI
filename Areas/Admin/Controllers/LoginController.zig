@@ -24,10 +24,11 @@ const ActionResult = zzig.web.controller.ActionResult;
 
 /// 后台登录控制器。
 pub const LoginController = struct {
-    /// `GET /{area}/login/index`：渲染登录页。
+    /// `GET /{area}/login/index`：渲染登录页（回填 `?returnUrl=`）。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);
-        const model = try buildModel(self, c.arena, admin_area.currentUser(c), null);
+        const return_url = admin_area.safeRedirect(c.queryValue("returnUrl") orelse "") orelse "";
+        const model = try buildModel(self, c.arena, admin_area.currentUser(c), null, return_url);
         return admin_area.renderView(self, c, "Login", "Index", model);
     }
 
@@ -93,7 +94,7 @@ pub const LoginController = struct {
                 if (admin_area.isAjax(c)) {
                     return .{ .response = try controller_mod.jsonResult(c.arena, 401, message, null) };
                 }
-                const model = try buildModel(self, c.arena, admin_area.currentUser(c), message);
+                const model = try buildModel(self, c.arena, admin_area.currentUser(c), message, admin_area.safeRedirect(return_url) orelse "");
                 return admin_area.renderView(self, c, "Login", "Index", model);
             },
         }
@@ -159,6 +160,7 @@ pub const LoginController = struct {
         arena: std.mem.Allocator,
         user: []const u8,
         error_message: ?[]const u8,
+        return_url: []const u8,
     ) !zzig.web.Value {
         const display_name = try self.backend.displayName(arena);
         const route = try area_mod.routePrefix(arena, self.area);
@@ -169,6 +171,7 @@ pub const LoginController = struct {
         try builder.str("areaName", self.area);
         try builder.str("areaRoute", route);
         try builder.str("userName", user);
+        try builder.str("returnUrl", return_url);
         try builder.boolean("hasError", error_message != null);
         try builder.str("error", error_message orelse "");
         return builder.finish();

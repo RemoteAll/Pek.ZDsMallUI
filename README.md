@@ -110,6 +110,8 @@ zig build run -- 18081 Admin        # 指定端口 + 区域名
 （与 C# `NewLife.Web.JwtBuilder`、Rust `Pek.RPermissions` 字节级互通），**不自己写 HMAC**。
 
 - **声明**：`sub`（用户 id）、`name`（登录名）、`displayName`、`isAdmin`，库注入 `iss` / `exp` / `iat` / `jti`；
+- **登录口令**：存储 `$md5+sha1$盐$Base64`（与 C# `SaltPasswordProvider` / Rust `dhrust::sign::password` 一致）；
+  前端先 `md5(明文)`（32 位小写）再提交，**后端同时接受明文与 MD5**，登录成功自动把旧格式升级成 `$md5+sha1$…`；
 - **两条通道**：浏览器走 Cookie `{area}_token`（`HttpOnly; SameSite=Lax`），脚本走 `Authorization: Bearer <token>`；
   取令牌顺序 **Cookie 优先 → Bearer**；
 - **登出即失效**：`SessionKeeper.revoke(token)` 写吊销表（默认内存实现；
@@ -128,6 +130,13 @@ $token = [regex]::Match($r, '"token":"([^"]+)"').Groups[1].Value
 curl.exe -s -H "Authorization: Bearer $token" http://127.0.0.1:18080/biz/login/status
 curl.exe -s -i -H "Authorization: Bearer $token" http://127.0.0.1:18080/biz/login/logout
 ```
+
+## 内置样式（`admin-ui.css`）
+
+第三方 `wwwroot/static/admin/css/admin.css` 是 C# 参考工程的资产，里没有本仓库视图使用的
+`admin-*` 类；本仓库自带 `assets/admin-ui.css`（主色 `#1677ff`、卡片/表单/顶栏/提示条），
+由 `materializeDefaults()` 落地到 `wwwroot/static/admin/css/admin-ui.css`，`_Layout.cshtml` 在第三方样式之后引用。
+只补不盖：不写 `!important`，也不修改第三方文件。
 
 ## 区域（Area）
 
@@ -167,6 +176,10 @@ curl.exe -s -i -H "Authorization: Bearer $token" http://127.0.0.1:18080/biz/logi
 4. 文件名清洗把非法字符替换为 `_`、`..` 折叠为 `__`，并额外做落盘路径越界校验。
 5. 后台持久化通过 `AdminBackend`（vtable）注入，不绑定任何 ORM；C# 版直接写 XCode 实体。
 6. 口令存储/校验走 `password.zig`（默认 `md5+sha1`，与 C# `SaltPasswordProvider` 字节级互通）。
+   **与 C# / Rust 三方对拍**：`src/password.zig` 里的 `CSHARP_GOLDEN` 是 C# 实测生成的固定盐向量
+   （五种算法 + 中文口令），任一侧改算法/编码/大小写就括包。
+7. 登录页前端先 `md5(明文)` 再提交（`assets/login-md5.js` → `wwwroot/static/admin/js/login-md5.js`）；
+   后端同时接受明文与 MD5（`verify` 兼容分支），脚本未加载也能登录。
 7. 登录/退出与 JWT 走 `auth.zig`（复用 `Pek.ZPermissions`）；C# 参考工程只在动作上打了 `[EntityAuthorize]`，
    本仓库把「签发 / 校验 / 吊销」做完整，并同时支持 Cookie 与 Bearer。
 8. 远程抓取扩展名按 URL 推断（`zzig.Http` 不回响应头），无扩展名时 `.jpg` 兜底。

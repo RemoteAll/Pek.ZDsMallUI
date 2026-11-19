@@ -16,7 +16,7 @@ param(
     [switch]$SkipSmoke,
     [int]$Port = 18099,
     # 测试数基线（只能抬高；降低必须在 docs/决策记录.md 写明依据）
-    [int]$MinTests = 90
+    [int]$MinTests = 93
 )
 
 $ErrorActionPreference = 'Continue'
@@ -107,10 +107,16 @@ if ($SkipSmoke) {
 
         # 示例程序把视图落地到 `.zig-cache/zdsmallui-example`（只补缺失、不覆盖），
         # 回归前先清掉，保证本次断言比对的是**当前内置模板**而不是上一轮的旧副本。
+        # 示例程序把视图落地到 `.zig-cache/zdsmallui-example`（只补缺失、不覆盖），
+        # 回归前先清掉，保证本次断言比对的是**当前内置视图/静态文件**而不是上一轮的旧副本。
         $exampleBase = Join-Path $root '.zig-cache/zdsmallui-example'
         foreach ($sub in @('Views', 'Areas')) {
             $target = Join-Path $exampleBase $sub
             if (Test-Path $target) { Remove-Item -Path $target -Recurse -Force }
+        }
+        foreach ($file in @('wwwroot/static/admin/css/admin-ui.css', 'wwwroot/static/admin/js/login-md5.js', 'wwwroot/static/admin/js/admin-config.js')) {
+            $target = Join-Path $exampleBase $file
+            if (Test-Path $target) { Remove-Item -Path $target -Force }
         }
 
         $proc = $null
@@ -157,6 +163,10 @@ if ($SkipSmoke) {
                         @{ Name = 'GET /biz/home/index（退出链接）'; Url = "$base/biz/home/index"; Must = '/biz/login/logout' },
                         @{ Name = 'GET /biz/config/index'; Url = "$base/biz/config/index"; Must = '站点设置' },
                         @{ Name = 'GET /biz/login/index'; Url = "$base/biz/login/index"; Must = '密码' },
+                        @{ Name = 'GET /biz/login/index（前端 MD5 脚本）'; Url = "$base/biz/login/index"; Must = '/static/admin/js/login-md5.js' },
+                        @{ Name = 'GET /biz/login/index（回填 returnUrl）'; Url = "$base/biz/login/index?returnUrl=%2Fbiz%2Fconfig%2Findex"; Must = 'value="/biz/config/index"' },
+                        @{ Name = 'GET /static/admin/css/admin-ui.css'; Url = "$base/static/admin/css/admin-ui.css"; Must = '.admin-form-row' },
+                        @{ Name = 'GET /static/admin/js/login-md5.js'; Url = "$base/static/admin/js/login-md5.js"; Must = 'dsmalluiMd5' },
                         @{ Name = 'GET /fileuploader?action=config'; Url = "$base/fileuploader?action=config"; Must = 'imageActionName' }
                     )) {
                     try {
@@ -207,13 +217,28 @@ if ($SkipSmoke) {
                     $configText = [Text.Encoding]::UTF8.GetString($configBytes)
                     if ($configText.Contains('RegressionShop')) { Pass 'POST /biz/config/updatebase' '回读命中' }
                     else { Fail 'POST /biz/config/updatebase' '回读未命中 RegressionShop' }
+                    if ($configText.Contains('/static/admin/css/admin-ui.css')) { Pass 'GET /biz/config/index（内置样式引用）' }
+                    else { Fail 'GET /biz/config/index（内置样式引用）' '未引用 admin-ui.css' }
                 }
                 else { Fail 'POST /biz/config/updatebase' "http=$($save.Output)" }
+
+                # Prompt 页：meta refresh 自动返回（Razor 子集下 `@if` 块内不能写 JS 花括号，
+                # 否则页面上会漏出孤立的 `}`）
+                $prompt = Invoke-External 'curl.exe' @('-s', '-d', 'SiteName=PromptCheck', "$base/biz/config/updatebase")
+                if ($prompt.Output.Contains('meta http-equiv="refresh"') -and -not $prompt.Output.Contains('1500')) {
+                    Pass 'POST /biz/config/updatebase（Prompt 页自动返回）'
+                }
+                else { Fail 'POST /biz/config/updatebase（Prompt 页自动返回）' $prompt.Output }
 
                 # 3.5 登录（成功 302 / 失败 200）
                 $loginOk = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', '-d', 'UserName=admin&Password=admin123', "$base/biz/login/login")
                 if ($loginOk.Output -match '302') { Pass 'POST /biz/login/login（正确口令）' }
                 else { Fail 'POST /biz/login/login（正确口令）' "http=$($loginOk.Output)" }
+
+                # 前端 MD5 传输：md5("admin123") = 0192023a7bbd73250516f069df18b500（与 C#/Rust 同口径）
+                $loginMd5 = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', '-d', 'UserName=admin&Password=0192023a7bbd73250516f069df18b500', "$base/biz/login/login")
+                if ($loginMd5.Output -match '302') { Pass 'POST /biz/login/login（前端 MD5 口令）' }
+                else { Fail 'POST /biz/login/login（前端 MD5 口令）' "http=$($loginMd5.Output)" }
 
                 $loginBad = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', '-d', 'UserName=admin&Password=wrong', "$base/biz/login/login")
                 if ($loginBad.Output -match '200') { Pass 'POST /biz/login/login（错误口令）' }
