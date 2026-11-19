@@ -84,4 +84,17 @@ pub fn build(b: *std.Build) void {
     run_zio.addPassthruArgs();
     const zio_step = b.step("zio-server", "异步高并发验证服务（zio 运行时 + dispatch=task）");
     zio_step.dependOn(&run_zio.step);
+
+    // 最小对照（只 accept+读，不解析 HTTP）：拆分「协程栈」与「HTTP 层」的内存开销
+    const min_mod = b.createModule(.{
+        .root_source_file = b.path("examples/minaccept.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    min_mod.addImport("zio", zio_dep.module("zio"));
+    const min_exe = b.addExecutable(.{ .name = "zdsmallui-minaccept", .root_module = min_mod });
+    const run_min = b.addRunArtifact(min_exe);
+    run_min.addPassthruArgs();
+    const min_step = b.step("minaccept", "最小对照：只 accept+读，测协程内存底噪");
+    min_step.dependOn(&run_min.step);
 }

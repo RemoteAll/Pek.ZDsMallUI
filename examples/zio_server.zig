@@ -66,6 +66,9 @@ pub fn main(init: std.process.Init) !void {
             .max_connections = 200_000,
             .keep_alive = true,
             .keep_alive_requests = 1000,
+            // 上万连接场景：每连接缓冲是主要固定开销（实测 16K+16K 与 4K+4K 差 20+ KB/连接）
+            .conn_recv_buf_size = 4 * 1024,
+            .conn_send_buf_size = 4 * 1024,
         },
     };
     srv.ctx = @ptrCast(&srv);
