@@ -305,6 +305,23 @@ if ($SkipSmoke) {
                 }
                 if ($blockedBody.Output -match '"code":429') { Pass 'POST /biz/login/login（防爆破：6 次失败后 code=429）' }
                 else { Fail 'POST /biz/login/login（防爆破：6 次失败后 code=429）' $blockedBody.Output }
+
+                # 3.10 WAF（Pek.ZWaf）：用 X-Forwarded-For 伪装外网 IP 绕过回环豁免
+                $wafScan = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', '-H', 'X-Forwarded-For: 1.2.3.4', "$base/.env")
+                if ($wafScan.Output -match '403') { Pass 'WAF 拦截：/.env 路径探测（XFF=1.2.3.4）' }
+                else { Fail 'WAF 拦截：/.env 路径探测（XFF=1.2.3.4）' "http=$($wafScan.Output)" }
+
+                $wafUa = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', '-H', 'X-Forwarded-For: 1.2.3.4', '-A', 'sqlmap/1.7', "$base/biz/login/index")
+                if ($wafUa.Output -match '403') { Pass 'WAF 拦截：sqlmap UA（XFF=1.2.3.4）' }
+                else { Fail 'WAF 拦截：sqlmap UA（XFF=1.2.3.4）' "http=$($wafUa.Output)" }
+
+                $wafOk = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', '-H', 'X-Forwarded-For: 1.2.3.4', '-A', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', "$base/biz/login/index")
+                if ($wafOk.Output -match '200') { Pass 'WAF 不误伤：正常浏览器 UA + 登录页（XFF=1.2.3.4）' }
+                else { Fail 'WAF 不误伤：正常浏览器 UA + 登录页（XFF=1.2.3.4）' "http=$($wafOk.Output)" }
+
+                $wafLoopback = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', "$base/biz/login/index")
+                if ($wafLoopback.Output -match '200') { Pass 'WAF 回环豁免：本机 curl 冒烟不被拦' }
+                else { Fail 'WAF 回环豁免：本机 curl 冒烟不被拦' "http=$($wafLoopback.Output)" }
             }
             finally {
                 if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }

@@ -26,6 +26,7 @@
 
 const std = @import("std");
 const zzig = @import("zzig");
+const pek_zwaf = @import("pek_zwaf");
 const pek_zdsmallui = @import("pek_zdsmallui");
 
 /// 示例数据目录（不污染仓库根目录）。
@@ -56,6 +57,10 @@ pub fn main(init: std.process.Init) !u8 {
         // 示例密钥：生产必须从配置/环境变量取；不配则每次启动随机（旧令牌失效）
         .jwtSecret("HS256:zdsmallui-example-secret")
         .jwtExpireMinutes(120)
+        // WAF：读 {base_dir}/Config/Waf.toml（首启生成 adminApi 预设，回环默认豁免方便本地调试）
+        .waf(base_dir)
+        // 默认 SQLite 持久化：{base_dir}/Data/{Area}.db（无 sqlite3.dll 时自动回退内存并打 ERR）
+        .storage(base_dir ++ "/Data")
         .build();
     defer ui.deinit();
 
@@ -83,12 +88,18 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("[dsmallui] 退出登录  {s}{s}/login/logout\n", .{ site, prefix });
     std.debug.print("[dsmallui] UEditor   {s}/fileuploader?action=config\n", .{site});
 
-    try app.run("127.0.0.1", port, .{
+    // WAF 早拒：在路由匹配与读 body 之前就拦住扫描/注入请求
+    var srv = app.makeServer(.{
         .max_body = ui.maxUploadBytes(),
         .max_connections = 128,
-        // 只有前面挂了反向代理（nginx 等）时才设 `true`：
-        // 只当 TCP 对端是回环时采购 `x-real-ip` / `x-forwarded-for` 末段，否则 IP 恒为 127.0.0.1
-        .trust_forwarded_for = false,
     });
+    var guard: ?pek_zwaf.ServerGuard = null;
+    if (ui.waf()) |waf| {
+        guard = pek_zwaf.ServerGuard.init(waf, srv.ctx, srv.handler);
+        guard.?.install(&srv);
+    }
+    defer if (guard) |*g| g.deinit(gpa);
+
+    try srv.run("127.0.0.1", port);
     return 0;
 }

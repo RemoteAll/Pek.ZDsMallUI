@@ -24,6 +24,7 @@ const zzig = @import("zzig");
 const area_mod = @import("area.zig");
 const auth_mod = @import("auth.zig");
 const backend_mod = @import("backend.zig");
+const sqlite_backend_mod = @import("sqlite_backend.zig");
 const controllers = struct {
     const admin_area = @import("../Areas/Admin/Controllers/AdminArea.zig");
     const upload = @import("../Controllers/UploadController.zig");
@@ -31,6 +32,7 @@ const controllers = struct {
 const ueditor_mod = @import("ueditor/mod.zig");
 const views_mod = @import("views.zig");
 const login_guard_mod = @import("login_guard.zig");
+const pek_zwaf = @import("pek_zwaf");
 
 /// 默认上传目录名（C# `UploadPath` 默认值同为 `upload`）。
 pub const DEFAULT_UPLOAD_PATH = "upload";
@@ -68,6 +70,8 @@ pub const DsMallUi = struct {
     memory_backend: ?*backend_mod.MemoryBackend = null,
     /// 登录防爆破守卫（进程内计数，随本对象释放）
     login_guard: login_guard_mod.Guard,
+    /// WAF（`null` = 未启用；由 `Builder.waf(base_dir)` 创建，`mount` 首行注册中间件）
+    waf_instance: ?*pek_zwaf.Waf = null,
 
     /// 构造门面（默认配置）。
     pub fn builder(allocator: std.mem.Allocator, io: std.Io) Builder {
@@ -77,6 +81,7 @@ pub const DsMallUi = struct {
     /// 释放控制器、视图缓存与自有字符串。
     pub fn deinit(self: *DsMallUi) void {
         self.login_guard.deinit();
+        if (self.waf_instance) |w| w.deinit();
         self.upload_controller.deinit();
         self.admin_area.deinit();
         self.ui_views.deinit();
@@ -121,6 +126,11 @@ pub const DsMallUi = struct {
         return self.admin_area;
     }
 
+    /// WAF 实例（需要自己挂 `ServerGuard` 早据时用；未启用为 `null`）。
+    pub fn waf(self: *const DsMallUi) ?*pek_zwaf.Waf {
+        return self.waf_instance;
+    }
+
     /// 后台区域名（Pascal，如 `Admin` / `Biz`）。
     pub fn adminArea(self: *const DsMallUi) []const u8 {
         return self.admin_area.areaName();
@@ -133,6 +143,9 @@ pub const DsMallUi = struct {
 
     /// 把路由挂到应用：`/fileuploader`、`/Upload/*`、`/{area}/home|config|login/*`。
     pub fn mount(self: *DsMallUi, app: *zzig.web.App) !void {
+        // WAF 必须在最前注册：后面匹配到的路由（含登录页、上传、静态）全部生效
+        if (self.waf_instance) |w| try app.useMiddleware(w.middleware());
+
         // 伪静态后缀（官网类）：`/x.html` → `/x`，精确路由优先、参数路由次之
         try app.router.addSuffixes(self.pseudo_suffixes);
 
@@ -232,6 +245,10 @@ pub const Builder = struct {
     pseudo_suffixes: []const []const u8 = &.{".html"},
     /// 登录防爆破参数（默认：同 IP 10 次 / 同用户 5 次失败 → 封禁 5 分钟）
     login_guard_options: login_guard_mod.Options = .{},
+    /// WAF 配置目录（含 `Config/Waf.toml`；`null` = 不启用 WAF）
+    waf_base_dir: ?[]const u8 = null,
+    /// 数据目录（`null` = 内存后端；设置后启用 SQLite，库文件为 `{dir}/{Area}.db`）
+    storage_dir: ?[]const u8 = null,
 
     /// 站点物理根（默认 `wwwroot`；**业务系统按自己的配置改成任意路径**）。
     pub fn webRoot(self: Builder, root: []const u8) Builder {
@@ -353,6 +370,24 @@ pub const Builder = struct {
         return copy;
     }
 
+    /// 启用 WAF（读 `{base_dir}/Config/Waf.toml`，首启自动生成模板）。
+    ///
+    /// 启用后 `mount` 会把 WAF 中间件注册在**最前面**，另建议在示例里挂 `ServerGuard` 做早拒。
+    pub fn waf(self: Builder, base_dir: []const u8) Builder {
+        var copy = self;
+        copy.waf_base_dir = base_dir;
+        return copy;
+    }
+
+    /// 启用 SQLite 持久化（库文件 `{dir}/{Area}.db`，首启自动建表 + 种子账号）。
+    ///
+    /// 驱动加载失败（没有 `sqlite3.dll`）时**自动回退内存并打 ERR 日志**，不会让服务起不来。
+    pub fn storage(self: Builder, dir: []const u8) Builder {
+        var copy = self;
+        copy.storage_dir = dir;
+        return copy;
+    }
+
     /// 组装（失败时已分配的资源全部回滚）。
     pub fn build(self: Builder) !*DsMallUi {
         const normalized_area = try area_mod.normalize(self.allocator, self.admin_area);
@@ -375,14 +410,29 @@ pub const Builder = struct {
         const areas_root = try self.allocator.dupe(u8, self.areas_root);
         errdefer self.allocator.free(areas_root);
 
-        // 数据源：外部优先，否则内置内存实现（本对象拥有其生命周期）
+        // 数据源：外部 > SQLite（`storage`，默认落 `Data/{Area}.db`）> 内存
         var memory: ?*backend_mod.MemoryBackend = null;
+        var sqlite_backend: ?*sqlite_backend_mod.SqliteBackend = null;
         const admin_backend: backend_mod.AdminBackend = if (self.external_backend) |external| external else blk: {
+            if (self.storage_dir) |dir| {
+                const db_path = try std.fs.path.join(self.allocator, &.{ dir, try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area}) });
+                defer self.allocator.free(db_path);
+                if (sqlite_backend_mod.SqliteBackend.init(self.allocator, self.io, db_path)) |created| {
+                    sqlite_backend = created;
+                    break :blk created.backend();
+                } else |e| {
+                    zzig.Logger.err(
+                        "[ZDsMallUI] SQLite 后端启动失败（{s}，库 {s}）——回退到内存，重启会丢数据",
+                        .{ @errorName(e), db_path },
+                    );
+                }
+            }
             const created = try backend_mod.MemoryBackend.init(self.allocator, self.io);
             memory = created;
             break :blk created.backend();
         };
         errdefer if (memory) |created| created.deinit();
+        errdefer if (sqlite_backend) |created| created.deinit();
 
         var service = try ueditor_mod.UeditorService.init(self.allocator, self.io, upload_root, upload_prefix);
         errdefer service.deinit();
@@ -409,6 +459,10 @@ pub const Builder = struct {
             .pseudo_suffixes = self.pseudo_suffixes,
             .memory_backend = memory,
             .login_guard = login_guard_mod.Guard.init(self.allocator, self.login_guard_options),
+            .waf_instance = if (self.waf_base_dir) |base|
+                try pek_zwaf.Waf.load(self.allocator, self.io, base)
+            else
+                null,
         };
         errdefer ui.ui_views.deinit();
 

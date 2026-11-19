@@ -10,6 +10,8 @@
         .zzig = .{ .path = "../zzig" },
         // JWT / 会话吊销（与 C# `NewLife.Web.JwtBuilder`、Rust `Pek.RPermissions` 字节级互通）
         .pek_zpermissions = .{ .path = "../Pek.ZPermissions" },
+        // WAF（爬虫分级 / 注入检测 / CSRF / IP 名单 / CC / 限流 / 规则引擎 / 早拒）
+        .pek_zwaf = .{ .path = "../Pek.ZWaf" },
     },
     .paths = .{
         "build.zig",
