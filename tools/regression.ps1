@@ -322,6 +322,22 @@ if ($SkipSmoke) {
                 $wafLoopback = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', "$base/biz/login/index")
                 if ($wafLoopback.Output -match '200') { Pass 'WAF 回环豁免：本机 curl 冒烟不被拦' }
                 else { Fail 'WAF 回环豁免：本机 curl 冒烟不被拦' "http=$($wafLoopback.Output)" }
+
+                # 3.11 请求头数量上限（zzig `max_header_count` 默认 100）：
+                # std.http.Server 只限总字节不限个数，150 个十余字节的小头总量不足 3 KB，
+                # 靠数量上限才能拦住；超限必须回 431 而不是继续解析。
+                $padArgs = @('-s', '-o', 'NUL', '-w', '%{http_code}', "$base/biz/login/index")
+                for ($i = 0; $i -lt 150; $i++) { $padArgs = @('-H', "X-Pad-$($i): 1") + $padArgs }
+                $padOut = Invoke-External 'curl.exe' $padArgs
+                if ($padOut.Output -match '431') { Pass '请求头数量上限：150 个小头 → 431' }
+                else { Fail '请求头数量上限：150 个小头 → 431' "http=$($padOut.Output)" }
+
+                # 3.12 头数量正常（20 个）必须放行，确认上限没设得过严
+                $okArgs = @('-s', '-o', 'NUL', '-w', '%{http_code}', "$base/biz/login/index")
+                for ($i = 0; $i -lt 20; $i++) { $okArgs = @('-H', "X-Pad-$($i): 1") + $okArgs }
+                $okOut = Invoke-External 'curl.exe' $okArgs
+                if ($okOut.Output -match '200') { Pass '请求头数量正常：20 个小头 → 200' }
+                else { Fail '请求头数量正常：20 个小头 → 200' "http=$($okOut.Output)" }
             }
             finally {
                 if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
