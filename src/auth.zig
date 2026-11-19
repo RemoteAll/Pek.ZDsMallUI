@@ -334,7 +334,7 @@ pub const Auth = struct {
             const target = try std.fmt.allocPrint(
                 c.arena,
                 "{s}?returnUrl={s}",
-                .{ self.login_path, try percentEncode(c.arena, c.req.path) },
+                .{ self.login_path, try zzig.url.encode(c.arena, c.req.path) },
             );
             return router.Response.redirectAlloc(c.arena, target);
         }
@@ -345,30 +345,19 @@ pub const Auth = struct {
     pub fn isGuardedPath(self: *Auth, path: []const u8) bool {
         const login_prefix = std.fmt.allocPrint(self.allocator, "/{s}/login", .{self.area_segment}) catch return false;
         defer self.allocator.free(login_prefix);
-        if (startsWithIgnoreCase(path, login_prefix)) return false;
+        if (zzig.ascii.startsWithIgnoreCase(path, login_prefix)) return false;
 
         const area_prefix = std.fmt.allocPrint(self.allocator, "/{s}/", .{self.area_segment}) catch return false;
         defer self.allocator.free(area_prefix);
-        return startsWithIgnoreCase(path, area_prefix);
+        return zzig.ascii.startsWithIgnoreCase(path, area_prefix);
     }
 };
 
 // ————— 内部工具 —————
 
-fn startsWithIgnoreCase(text: []const u8, prefix: []const u8) bool {
-    if (text.len < prefix.len) return false;
-    return std.ascii.eqlIgnoreCase(text[0..prefix.len], prefix);
-}
-
-/// 从 `Cookie` 请求头取指定名字的值。
+/// 从 `Cookie` 请求头取指定名字的值（转发 `zzig.cookie`，保留本模块入口便于测试/消费方）。
 pub fn cookieValue(header: []const u8, name: []const u8) ?[]const u8 {
-    var iterator = std.mem.splitScalar(u8, header, ';');
-    while (iterator.next()) |raw| {
-        const item = std.mem.trim(u8, raw, " \t");
-        const eq = std.mem.indexOfScalar(u8, item, '=') orelse continue;
-        if (std.mem.eql(u8, item[0..eq], name)) return item[eq + 1 ..];
-    }
-    return null;
+    return zzig.cookie.value(header, name);
 }
 
 fn claimText(payload: std.json.ObjectMap, name: []const u8) ?[]const u8 {
@@ -396,20 +385,9 @@ fn claimInt(payload: std.json.ObjectMap, name: []const u8) ?i64 {
     };
 }
 
-/// RFC 3986 百分号编码（只保留 unreserved）。
+/// RFC 3986 百分号编码（转发 `zzig.url.encode`，语义与之前一致）。
 pub fn percentEncode(arena: std.mem.Allocator, text: []const u8) ![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(arena);
-    try out.ensureTotalCapacity(arena, text.len * 3);
-    for (text) |byte| {
-        const keep = std.ascii.isAlphanumeric(byte) or byte == '-' or byte == '.' or byte == '_' or byte == '~';
-        if (keep) {
-            try out.append(arena, byte);
-        } else {
-            try out.print(arena, "%{X:0>2}", .{byte});
-        }
-    }
-    return out.toOwnedSlice(arena);
+    return zzig.url.encode(arena, text);
 }
 
 /// 开发用随机密钥：`HS256:<64 位十六进制>`（重启后旧令牌失效，生产必须显式配置）。

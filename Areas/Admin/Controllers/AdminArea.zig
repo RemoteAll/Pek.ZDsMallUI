@@ -268,34 +268,14 @@ pub fn renderPrompt(
     };
 }
 
-/// 是否 Ajax 请求（与 C# `Request.IsAjaxRequest()` 同口径）。
+/// 是否 Ajax 请求（转发 `zzig.web.router.isAjax`，与 C# `Request.IsAjaxRequest()` 同口径）。
 pub fn isAjax(c: *router.Ctx) bool {
-    if (c.header("x-requested-with")) |value| {
-        if (std.ascii.eqlIgnoreCase(value, "xmlhttprequest")) return true;
-    }
-    if (c.header("accept")) |value| {
-        return containsIgnoreCase(value, "application/json");
-    }
-    return false;
+    return router.isAjax(c.req);
 }
 
-fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (haystack.len < needle.len) return false;
-    var index: usize = 0;
-    while (index + needle.len <= haystack.len) : (index += 1) {
-        if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
-    }
-    return false;
-}
-
-/// 站内跳转目标校验：只允许以单个 `/` 开头的相对路径（防开放重定向）。
+/// 站内跳转目标校验（转发 `zzig.web.router.safeLocalPath`，防开放重定向）。
 pub fn safeRedirect(target: []const u8) ?[]const u8 {
-    const trimmed = std.mem.trim(u8, target, " \t\r\n");
-    if (trimmed.len == 0 or trimmed[0] != '/') return null;
-    if (std.mem.startsWith(u8, trimmed, "//")) return null;
-    if (std.mem.indexOfScalar(u8, trimmed, '\\') != null) return null;
-    return trimmed;
+    return router.safeLocalPath(target);
 }
 
 // ————— 测试 —————
