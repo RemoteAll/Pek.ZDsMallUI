@@ -42,17 +42,16 @@ pub fn main(init: std.process.Init) !void {
     // 用小数值可以在大机器上**模拟 2 核 / 4 核服务器**，验证小规格下的连接承载。
     const executors: u8 = if (args.items.len > 2) std.fmt.parseInt(u8, args.items[2], 10) catch 0 else 0;
 
-    // 协程栈：默认 256 KiB 提交 → 上万连接就是几 GB；连接协程栈用量很小，降到 16 KiB。
-    // `maximum_size` 实测下限是 **128 KiB**：设 64 KiB 时第 130 个连接就 `Stack overflow`
-    // （Debug / ReleaseFast 都复现）。栈是被 `std.http.receiveHead` 的解析路径吃掉的，
-    // 首字节能到达前协程就得有足够栈，所以这是「用 std.http」的硬成本，不是配置没调好。
-    // 实测（5000 空闲连接 / 2 executor / 4 KiB 收发缓冲）：
-    //   maximum_size = 1 MiB → 479 MB（98 KB/连接）；128 KiB → Debug 401 MB、ReleaseFast 303 MB（59 KB/连接）。
+    // 协程栈：2026-11-19 起 zzig 的 HTTP 层改用 lighting 的自写解析（不再走 `std.http`），
+    // 连接协程的栈需求从 >64 KiB 掉到 32 KiB 以内 —— 之前那个「64 KiB 就 Stack overflow」的
+    // 硬下限随之一并消失。实测（5000 空闲连接 / 2 executor / 4 KiB 收发缓冲）：
+    //   std.http + 128 KiB 栈 → 302.7 MB（59.3 KB/连接）
+    //   lighting 解析 + 32 KiB 栈 → 见 docs/决策记录.md 2026-11-19（十一）
     const rt = try zio.Runtime.init(gpa, .{
         // `ExecutorCount` 是非穷尽枚举（`auto = 0, _`），用 `@fromBackingInt` 构造具体值
         .executors = if (executors > 0) @fromBackingInt(executors) else .auto,
         .stack_pool = .{
-            .maximum_size = 128 * 1024,
+            .maximum_size = 32 * 1024,
             .committed_size = 16 * 1024,
         },
     });
