@@ -2,6 +2,10 @@
 .zig-cache/
 zig-out/
 
+# `zig fetch` 下来的依赖源码（zio 等）。build.zig.zon 里的 url+hash 才是唯一真相，
+# 这个目录是每台机器重新拉取的缓存，不能提交。
+zig-pkg/
+
 # 回归/冒烟产物
 artifacts/
 

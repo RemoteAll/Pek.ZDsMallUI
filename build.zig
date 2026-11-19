@@ -67,4 +67,21 @@ pub fn build(b: *std.Build) void {
     run_exe.addPassthruArgs();
     const run_step = b.step("run", "启动后台示例服务（默认 127.0.0.1:18080，区域 Biz）");
     run_step.dependOn(&run_exe.step);
+
+    // 异步高并发验证（zio 运行时：Windows IOCP / Linux io_uring；`dispatch = .task` 即协程）
+    // `zig build zio-server -- 18091`
+    const zio_dep = b.dependency("zio", .{ .target = target, .optimize = optimize });
+    const zio_mod = b.createModule(.{
+        .root_source_file = b.path("examples/zio_server.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    zio_mod.addImport("zzig", zzig_dep.module("zzig"));
+    zio_mod.addImport("zio", zio_dep.module("zio"));
+    const zio_exe = b.addExecutable(.{ .name = "zdsmallui-zio", .root_module = zio_mod });
+    b.installArtifact(zio_exe);
+    const run_zio = b.addRunArtifact(zio_exe);
+    run_zio.addPassthruArgs();
+    const zio_step = b.step("zio-server", "异步高并发验证服务（zio 运行时 + dispatch=task）");
+    zio_step.dependOn(&run_zio.step);
 }

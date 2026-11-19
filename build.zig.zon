@@ -14,6 +14,10 @@
         .pek_zwaf = .{ .path = "../Pek.ZWaf" },
         // XCode ORM（Model.xml → 增量建表 syncSchema / 实体 / 查询）
         .zcode = .{ .path = "../Pek.ZCode" },
+        .zio = .{
+            .url = "git+https://github.com/lalinsky/zio?ref=v0.20.1#53ed3c3773179a5c34aeca6b7e61aa5817accaee",
+            .hash = "zio-0.20.1-xHbVVHZrLwDgu_C5K7zM6If_GttrcgX8_lhwwnml3s-N",
+        },
     },
     .paths = .{
         "build.zig",

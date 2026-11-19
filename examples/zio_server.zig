@@ -1,0 +1,76 @@
+//! 异步高并发验证：用 **zio 运行时**（Windows IOCP / Linux io_uring）跑 zzig 的 HTTP 服务端。
+//!
+//! 目的：验证「不每连接一线程」。zio 完整实现了 `std.Io`，所以 zzig 的 HTTP 代码**一行都不用改**，
+//! 只要：① 用 `rt.io()` 作为 io；② `dispatch = .task`（连接跑成协程而不是 OS 线程）。
+//!
+//! 用法：
+//!   zig build zio-server -- <port>        # 起服务（外部工具压测连接数）
+//!
+//! 观测点：`Get-Process` 的线程数 —— 协程模型下应恒定在「executor 数 + 少量」，不随连接数增长。
+
+const std = @import("std");
+const zio = @import("zio");
+const zzig = @import("zzig");
+
+/// 让 `std.debug.print` 不阻塞事件循环（zio README 推荐）。
+pub const std_options_debug_io = zio.debug_io;
+
+fn handle(ctx: *anyopaque, req: zzig.http_server.RequestView, arena: std.mem.Allocator) anyerror!zzig.http_server.Reply {
+    _ = ctx;
+    _ = req;
+    _ = arena;
+    return .{ .status = .ok, .body = "ok" };
+}
+
+/// `Server.run` 的返回类型带 `error.SystemResources` 等错误集，而 `std.Io.Group.async`
+/// 要求返回可强转成 `Cancelable!void` —— 这里包一层把错误就地消化。
+fn runServer(srv: *zzig.http_server.Server, host: []const u8, port: u16) std.Io.Cancelable!void {
+    srv.run(host, port) catch |e| {
+        std.debug.print("[zio] server 退出：{s}\n", .{@errorName(e)});
+    };
+}
+
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+
+    var args: std.ArrayList([]const u8) = .empty;
+    defer args.deinit(gpa);
+    var it = try std.process.Args.Iterator.initAllocator(init.minimal.args, gpa);
+    while (it.next()) |a| try args.append(gpa, a);
+    const port: u16 = if (args.items.len > 1) std.fmt.parseInt(u16, args.items[1], 10) catch 18091 else 18091;
+
+    // 协程栈：默认 256 KiB 提交 → 上万连接就是几 GB；连接协程栈用量很小，降到 16 KiB。
+    const rt = try zio.Runtime.init(gpa, .{
+        .executors = .auto,
+        .stack_pool = .{
+            .maximum_size = 1024 * 1024,
+            .committed_size = 16 * 1024,
+        },
+    });
+    defer rt.deinit();
+    const io = rt.io();
+
+    var srv = zzig.http_server.Server{
+        .gpa = gpa,
+        .io = io,
+        .ctx = undefined,
+        .handler = handle,
+        .opts = .{
+            // 关键：连接作为运行时任务（协程）跑，而不是每连接一个 OS 线程
+            .dispatch = .task,
+            // 协程便宜，把连接上限抬到很高，验证「连接数 ≈ 协程数 ≠ 线程数」
+            .max_connections = 200_000,
+            .keep_alive = true,
+            .keep_alive_requests = 1000,
+        },
+    };
+    srv.ctx = @ptrCast(&srv);
+
+    std.debug.print("ZIO_HTTP_SERVER port={d} dispatch=task\n", .{port});
+
+    // 服务端必须跑在**运行时里**：zio 的 accept/读写在运行时上下文才会挂起协程，
+    // 丢到裸 std.Thread 上会卡死（zgrpc 的 with-zio 示例同样如此）。
+    var group: std.Io.Group = .init;
+    group.async(io, runServer, .{ &srv, @as([]const u8, "127.0.0.1"), port });
+    group.await(io) catch {};
+}
