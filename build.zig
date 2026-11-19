@@ -27,6 +27,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const zcode_dep = b.dependency("zcode", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const mod = b.addModule("pek_zdsmallui", .{
         .root_source_file = b.path("pek_zdsmallui.zig"),
@@ -36,6 +40,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zzig", .module = zzig_dep.module("zzig") },
             .{ .name = "pek_zpermissions", .module = perms_dep.module("pek_zpermissions") },
             .{ .name = "pek_zwaf", .module = zwaf_dep.module("pek_zwaf") },
+            .{ .name = "zcode", .module = zcode_dep.module("zcode") },
         },
     });
 

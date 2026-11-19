@@ -12,6 +12,8 @@
         .pek_zpermissions = .{ .path = "../Pek.ZPermissions" },
         // WAF（爬虫分级 / 注入检测 / CSRF / IP 名单 / CC / 限流 / 规则引擎 / 早拒）
         .pek_zwaf = .{ .path = "../Pek.ZWaf" },
+        // XCode ORM（Model.xml → 增量建表 syncSchema / 实体 / 查询）
+        .zcode = .{ .path = "../Pek.ZCode" },
     },
     .paths = .{
         "build.zig",

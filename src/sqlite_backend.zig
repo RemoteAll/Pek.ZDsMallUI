@@ -1,22 +1,20 @@
-//! SQLite 后端：与 C# 侧「有实体/配置就连库、没有就默认 SQLite」的口径对齐——
-//! **默认把数据落在 `Data/{区域}.db`，重启不丢**，不需要外部数据库。
+//! SQLite 后端：**表结构由 `Pek.ZCode` 的 `Dal.syncSchema` 同步**（模型是唯一真相源：
+//! 缺表建表、缺列 `ALTER TABLE ... ADD COLUMN`、缺索引建索引；**不删列、不改类型**），
+//! 本文件里不写任何 `CREATE TABLE`。
 //!
-//! 驱动来自 `zzig.db.sqlite`（动态加载 `sqlite3.dll` / `winsqlite3.dll`）；
-//! 加载不到时由调用方回退到内存实现（见 `options.zig` 的 `Builder.storage`）。
+//! 分工（都实测过）：
+//! - **建表/迁移**：`Pek.ZCode`（`EntityModel` + `Dal.syncSchema`），只在启动时跑一次，
+//!   用完就把它的连接关掉；
+//! - **运行期读写**：直接用 `zzig.db.sqlite`（一次 prepare + bind + step，没有 session 建连开销）。
+//!   早期版本每个请求都 `Dal.openSession()`，实测单条 INSERT 要 ~1.1s（方言探测 + 建连），
+//!   而 `Session` 按值拷进结构体会让它内部的指针失效（`prepare` 段错误），所以运行期不再用它。
 //!
-//! 表结构（幂等 `CREATE TABLE IF NOT EXISTS`，首次启动自动建）：
-//!
-//! ```sql
-//! Setting(Key TEXT PRIMARY KEY, Value TEXT NOT NULL)
-//! AdminUser(Id INTEGER PRIMARY KEY AUTOINCREMENT, UserName TEXT UNIQUE NOT NULL,
-//!           DisplayName TEXT NOT NULL, Password TEXT NOT NULL,
-//!           IsAdmin INTEGER NOT NULL, Enable INTEGER NOT NULL)
-//! ```
-//!
-//! 种子数据：表里没有用户时插入 `admin` / `admin123`（口令走 [`password`]，默认 `md5+sha1`，与 C# 字节级互通）。
+//! - 模型：`assets/zdsmallui-model.xml`；库文件：`Data/{区域}.db`
+//! - 种子：库里没有用户时插入 `admin` / `admin123`（口令走 [`password`]，与 C# 字节级互通）
 
 const std = @import("std");
 const zzig = @import("zzig");
+const zcode = @import("zcode");
 
 const backend_mod = @import("backend.zig");
 const password = @import("password.zig");
@@ -24,6 +22,9 @@ const password = @import("password.zig");
 const sqlite = zzig.db.sqlite;
 const router = zzig.web.router;
 const Value = zzig.db.Value;
+
+/// 内置模型（`Model.xml`，与 C# 同格式；结构变更只改它）。
+pub const MODEL_XML = @embedFile("../assets/zdsmallui-model.xml");
 
 /// 默认数据库目录（与 C# 侧 `Data/` 同构）。
 pub const DEFAULT_DB_DIR = "Data";
@@ -35,19 +36,17 @@ pub const SqliteBackend = struct {
     db: sqlite.Db,
     mutex: zzig.compat.Mutex = .{},
 
-    /// 打开（不存在则创建）数据库并建表 + 补种子用户。
-    ///
-    /// 注意：`sqlite.Db` 内部持有 `*Lib` 指针，**必须指向本对象里的 `lib` 字段**；
-    /// 早期实现把栈上 `Lib` 复制进结构体，`db.lib` 仍指向已失效的栈地址（表现为 `prepare` 段错误）。
+    /// 打开（不存在则创建）数据库：先用 `Pek.ZCode` 同步表结构，再建运行期连接。
     pub fn init(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !*SqliteBackend {
+        if (std.fs.path.dirname(path)) |dir| {
+            if (dir.len > 0) try zzig.fsio.makePath(io, dir);
+        }
+
+        try syncSchema(allocator, path);
+
         const self = try allocator.create(SqliteBackend);
         errdefer allocator.destroy(self);
-        self.* = .{
-            .allocator = allocator,
-            .io = io,
-            .lib = undefined,
-            .db = undefined,
-        };
+        self.* = .{ .allocator = allocator, .io = io, .lib = undefined, .db = undefined };
 
         self.lib = sqlite.Lib.load(allocator) catch |e| {
             zzig.Logger.err("[ZDsMallUI] 加载 SQLite 失败（{s}）：把 sqlite3.dll 放到程序目录即可", .{@errorName(e)});
@@ -55,17 +54,14 @@ pub const SqliteBackend = struct {
         };
         errdefer self.lib.deinit();
 
-        if (std.fs.path.dirname(path)) |dir| {
-            if (dir.len > 0) try zzig.fsio.makePath(io, dir);
-        }
-
         self.db = sqlite.Db.open(&self.lib, path) catch |e| {
             zzig.Logger.err("[ZDsMallUI] 打开 SQLite 数据库失败（{s}，路径 {s}）", .{ @errorName(e), path });
             return e;
         };
         errdefer self.db.close();
+        // 双连接（ZCode 建表连接已关）仍可能撞锁，给个等待上限
+        _ = self.db.exec(allocator, "PRAGMA busy_timeout = 8000") catch {};
 
-        try self.createSchema();
         try self.seedDefaultUser();
         zzig.Logger.info("[ZDsMallUI] SQLite 就绪：{s}（驱动 {s}）", .{ path, self.lib.version() });
         return self;
@@ -81,40 +77,36 @@ pub const SqliteBackend = struct {
         return .{ .ptr = @ptrCast(self), .vtable = &vtable };
     }
 
-    // ---- 建表 / 种子 ----
+    /// 用 `Pek.ZCode` 做增量建表（幂等：再跑一次不会重复建/不会报错）。
+    fn syncSchema(allocator: std.mem.Allocator, path: []const u8) !void {
+        const model = zcode.EntityModel.parse(allocator, MODEL_XML) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 解析内置 Model.xml 失败：{s}", .{@errorName(e)});
+            return e;
+        };
+        const conn = try std.fmt.allocPrint(allocator, "Data Source={s};Provider=SQLite", .{path});
+        defer allocator.free(conn);
 
-    fn createSchema(self: *SqliteBackend) !void {
-        _ = try self.db.exec(self.allocator,
-            \\CREATE TABLE IF NOT EXISTS Setting (
-            \\  Key   TEXT PRIMARY KEY,
-            \\  Value TEXT NOT NULL
-            \\);
-        );
-        _ = try self.db.exec(self.allocator,
-            \\CREATE TABLE IF NOT EXISTS AdminUser (
-            \\  Id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            \\  UserName    TEXT NOT NULL UNIQUE,
-            \\  DisplayName TEXT NOT NULL,
-            \\  Password    TEXT NOT NULL,
-            \\  IsAdmin     INTEGER NOT NULL DEFAULT 1,
-            \\  Enable      INTEGER NOT NULL DEFAULT 1
-            \\);
-        );
+        var dal = zcode.Dal.initWithModel(allocator, conn, model) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 建表连接失败（{s}，路径 {s}）", .{ @errorName(e), path });
+            return e;
+        };
+        defer dal.deinit();
+
+        var s = try dal.openSession();
+        defer s.deinit();
+        const report = dal.syncSchema(&s) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 同步表结构失败（库 {s}）：{s}", .{ path, @errorName(e) });
+            return e;
+        };
+        if (report.tables_created > 0 or report.columns_added > 0 or report.indexes_created > 0) {
+            zzig.Logger.info(
+                "[ZDsMallUI] 表结构已同步：新建表 {d} / 补列 {d} / 建索引 {d}",
+                .{ report.tables_created, report.columns_added, report.indexes_created },
+            );
+        }
     }
 
-    fn seedDefaultUser(self: *SqliteBackend) !void {
-        const count = try self.queryInt("SELECT COUNT(*) AS N FROM AdminUser", &.{});
-        if (count > 0) return;
-        const hashed = try password.hash(self.allocator, self.io, "admin123");
-        defer self.allocator.free(hashed);
-        try self.exec(
-            "INSERT INTO AdminUser (UserName, DisplayName, Password, IsAdmin, Enable) VALUES (?, ?, ?, 1, 1)",
-            &.{ .{ .text = "admin" }, .{ .text = "管理员" }, .{ .text = hashed } },
-        );
-        zzig.Logger.warn("[ZDsMallUI] 已创建默认账号 admin / admin123（**生产环境请立即修改**）", .{});
-    }
-
-    // ---- 底层执行 ----
+    // ---- 底层执行（调用方负责加锁）----
 
     fn exec(self: *SqliteBackend, sql: []const u8, params: []const Value) !void {
         var stmt = try self.db.prepare(self.allocator, sql);
@@ -123,28 +115,43 @@ pub const SqliteBackend = struct {
         try stmt.run();
     }
 
-    fn queryInt(self: *SqliteBackend, sql: []const u8, params: []const Value) !i64 {
+    fn queryScalarInt(self: *SqliteBackend, sql: []const u8, params: []const Value) !i64 {
         var arena_state = std.heap.ArenaAllocator.init(self.allocator);
         defer arena_state.deinit();
         const row = try self.queryOne(arena_state.allocator(), sql, params);
-        const v = row.get("N") orelse return 0;
+        const v = row.at(0) orelse return 0;
         return switch (v) {
             .int => |n| n,
+            .boolean => |b| if (b) 1 else 0,
             else => 0,
         };
     }
 
-    /// 执行查询并读**第一行**（无行时返回空 Row）。
-    ///
-    /// `readRow` 的文本值借用传入的 `arena`，所以**必须由调用方提供**：
-    /// 传自己的请求 arena 就能在本次请求内安全持有，传临时 arena 就只能当场用完。
+    /// 查询并读**第一行**（无行返回空 Row）。`arena` 由调用方提供：`readRow` 的文本借用它。
     fn queryOne(self: *SqliteBackend, arena: std.mem.Allocator, sql: []const u8, params: []const Value) !sqlite.Row {
         var stmt = try self.db.prepare(self.allocator, sql);
         defer stmt.finalize();
         try stmt.bindAll(params);
-        // `readRow` 只在 step 拿到行后才有值（未 step 时列全是 null）
         if (!stmt.hasRow()) return .{};
         return stmt.readRow(arena);
+    }
+
+    // ---- 种子 ----
+
+    fn seedDefaultUser(self: *SqliteBackend) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const count = try self.queryScalarInt("SELECT COUNT(*) FROM AdminUser", &.{});
+        if (count > 0) return;
+
+        const hashed = try password.hash(self.allocator, self.io, "admin123");
+        defer self.allocator.free(hashed);
+        try self.exec(
+            "INSERT INTO AdminUser (UserName, DisplayName, Password, IsAdmin, Enable) VALUES (?, ?, ?, 1, 1)",
+            &.{ .{ .text = "admin" }, .{ .text = "管理员" }, .{ .text = hashed } },
+        );
+        zzig.Logger.warn("[ZDsMallUI] 已创建默认账号 admin / admin123（**生产环境请立即修改**）", .{});
     }
 
     // ---- AdminBackend 实现 ----
@@ -161,7 +168,6 @@ pub const SqliteBackend = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // 先把库里的值读进临时 map，再与默认键合并（缺键用默认值）
         var stored = std.StringHashMapUnmanaged([]const u8).empty;
         defer {
             var it = stored.iterator();
@@ -181,10 +187,10 @@ pub const SqliteBackend = struct {
         while (stmt.hasRow()) {
             const row = try stmt.readRow(tmp);
             const key = row.get("Key") orelse break;
-            const val = row.get("Value") orelse break;
+            const value = row.get("Value") orelse break;
             const owned_key = try self.allocator.dupe(u8, key.text);
             errdefer self.allocator.free(owned_key);
-            const owned_val = try self.allocator.dupe(u8, val.text);
+            const owned_val = try self.allocator.dupe(u8, value.text);
             try stored.put(self.allocator, owned_key, owned_val);
         }
 
@@ -239,7 +245,11 @@ pub const SqliteBackend = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const row = try self.queryOne(arena, "SELECT Id, UserName, DisplayName, Password, IsAdmin, Enable FROM AdminUser WHERE UserName = ? COLLATE NOCASE", &.{.{ .text = name }});
+        const row = try self.queryOne(
+            arena,
+            "SELECT Id, UserName, DisplayName, Password, IsAdmin, Enable FROM AdminUser WHERE UserName = ? COLLATE NOCASE",
+            &.{.{ .text = name }},
+        );
         if (row.names.len == 0) return not_found;
 
         const id = (row.get("Id") orelse return not_found).int;
@@ -248,10 +258,12 @@ pub const SqliteBackend = struct {
         const db_password = (row.get("Password") orelse return not_found).text;
         const is_admin = switch (row.get("IsAdmin") orelse return not_found) {
             .int => |n| n != 0,
+            .boolean => |b| b,
             else => false,
         };
         const enabled = switch (row.get("Enable") orelse return not_found) {
             .int => |n| n != 0,
+            .boolean => |b| b,
             else => true,
         };
         if (!enabled) return .{ .err = "账号已被停用" };
@@ -293,7 +305,7 @@ pub const SqliteBackend = struct {
 
 const testing = std.testing;
 
-test "sqlite 后端：建表 + 设置读写 + 登录（无驱动时显式 SKIP）" {
+test "sqlite 后端：ZCode syncSchema 建表 + 设置读写 + 登录 + 重开数据仍在" {
     const dir = ".zig-cache/zdsmallui-test-db";
     std.Io.Dir.cwd().deleteTree(testing.io, dir) catch {};
     defer std.Io.Dir.cwd().deleteTree(testing.io, dir) catch {};
@@ -307,7 +319,7 @@ test "sqlite 后端：建表 + 设置读写 + 登录（无驱动时显式 SKIP�
     defer if (be_opt) |b| b.deinit();
     const be = be_opt.?;
 
-    // 默认账号可登录
+    // 默认账号可登录（种子走 INSERT，读写走 prepare/bind）
     {
         var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena_state.deinit();
@@ -321,11 +333,10 @@ test "sqlite 后端：建表 + 设置读写 + 登录（无驱动时显式 SKIP�
     {
         var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena_state.deinit();
-        const outcome = try be.backend().login(arena_state.allocator(), "admin", "wrong");
-        try testing.expect(outcome == .err);
+        try testing.expect(try be.backend().login(arena_state.allocator(), "admin", "wrong") == .err);
     }
 
-    // 保存设置 → 重新读取（走真实 INSERT ... ON CONFLICT）
+    // 保存设置 → 读取
     {
         var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena_state.deinit();
@@ -334,12 +345,11 @@ test "sqlite 后端：建表 + 设置读写 + 登录（无驱动时显式 SKIP�
             .{ .name = "SiteName", .value = "SQLiteShop" },
             .{ .name = "DisplayName", .value = "SQLite 后台" },
         };
-        const outcome = try be.backend().saveSettings(arena, &form);
-        try testing.expect(outcome == .ok);
+        try testing.expect(try be.backend().saveSettings(arena, &form) == .ok);
         try testing.expectEqualStrings("SQLite 后台", try be.backend().displayName(arena));
     }
 
-    // 重开同一个库：数据必须在（持久化验证）
+    // 重开同一个库：数据仍在（持久化）+ syncSchema 再跑一次仍幂等
     {
         be.deinit();
         be_opt = null;

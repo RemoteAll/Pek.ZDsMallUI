@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  本库的模型（与 C# 侧同构的记忆：Model.xml 是结构唯一来源）。
+
+  - 结构变更**只改这份文件**，启动时由 `Pek.ZCode` 的 `Dal.syncSchema` 做增量同步：
+    缺表建表、缺列 `ALTER TABLE ... ADD COLUMN`、缺索引建索引（**不删列、不改类型**）。
+  - 对应 C#：`Areas/Admin/Models` 生成的实体与 `Data/Platform.db` 里的同名表。
+-->
+<EntityModel xmlns="https://newlifex.com/Model202509.xsd">
+  <Option>
+    <Namespace>Pek.ZDsMallUI</Namespace>
+    <!-- 连接名与 C# 侧 `Pek.RPanlServer` 一致（Platform） -->
+    <ConnName>Platform</ConnName>
+  </Option>
+  <Tables>
+    <Table Name="Setting" TableName="Setting" Description="站点设置（键值）">
+      <Columns>
+        <Column Name="Key" DataType="String" Length="100" PrimaryKey="True" Description="配置键" />
+        <Column Name="Value" DataType="String" Length="4000" Description="配置值" />
+      </Columns>
+    </Table>
+    <Table Name="AdminUser" TableName="AdminUser" Description="后台用户">
+      <Columns>
+        <Column Name="Id" DataType="Int32" Identity="True" PrimaryKey="True" Description="编号" />
+        <Column Name="UserName" DataType="String" Length="50" Description="登录名" />
+        <Column Name="DisplayName" DataType="String" Length="50" Description="显示名" />
+        <Column Name="Password" DataType="String" Length="200" Description="口令散列（$算法$盐$散列）" />
+        <Column Name="IsAdmin" DataType="Boolean" Description="是否管理员" />
+        <Column Name="Enable" DataType="Boolean" Description="是否启用" />
+      </Columns>
+      <Indexes>
+        <Index Columns="UserName" Unique="True" />
+      </Indexes>
+    </Table>
+  </Tables>
+</EntityModel>
