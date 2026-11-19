@@ -32,5 +32,15 @@
         <Index Columns="UserName" Unique="True" />
       </Indexes>
     </Table>
+    <Table Name="Session" TableName="Session" Description="会话吊销表（登出后令牌立即失效，重启仍有效）">
+      <Columns>
+        <Column Name="Key" DataType="String" Length="200" PrimaryKey="True" Description="键（含令牌/用户维度前缀）" />
+        <Column Name="Value" DataType="String" Length="400" Description="值（会话/版本信息）" />
+        <Column Name="ExpireAt" DataType="Int64" Description="过期 Unix 秒（0 = 不过期）" />
+      </Columns>
+      <Indexes>
+        <Index Columns="ExpireAt" />
+      </Indexes>
+    </Table>
   </Tables>
 </EntityModel>

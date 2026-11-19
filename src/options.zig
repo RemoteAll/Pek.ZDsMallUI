@@ -25,6 +25,7 @@ const area_mod = @import("area.zig");
 const auth_mod = @import("auth.zig");
 const backend_mod = @import("backend.zig");
 const sqlite_backend_mod = @import("sqlite_backend.zig");
+const sqlite_session_mod = @import("sqlite_session_store.zig");
 const controllers = struct {
     const admin_area = @import("../Areas/Admin/Controllers/AdminArea.zig");
     const upload = @import("../Controllers/UploadController.zig");
@@ -72,6 +73,8 @@ pub const DsMallUi = struct {
     login_guard: login_guard_mod.Guard,
     /// WAF（`null` = 未启用；由 `Builder.waf(base_dir)` 创建，`mount` 首行注册中间件）
     waf_instance: ?*pek_zwaf.Waf = null,
+    /// SQLite 会话吊销表（`storage` 启用且未给外部 store 时自动创建；随本对象释放）
+    session_store: ?*sqlite_session_mod.SqliteSessionStore = null,
 
     /// 构造门面（默认配置）。
     pub fn builder(allocator: std.mem.Allocator, io: std.Io) Builder {
@@ -82,6 +85,7 @@ pub const DsMallUi = struct {
     pub fn deinit(self: *DsMallUi) void {
         self.login_guard.deinit();
         if (self.waf_instance) |w| w.deinit();
+        if (self.session_store) |st| st.deinit();
         self.upload_controller.deinit();
         self.admin_area.deinit();
         self.ui_views.deinit();
@@ -472,13 +476,30 @@ pub const Builder = struct {
         try ui.admin_area.setUploadPrefix(upload_prefix);
 
         // 登录鉴权（JWT + 会话吊销）：装配即生效，登录/登出由 LoginController 使用
+        //
+        // 会话吊销表：外部 store 优先；没给外部 store 但开了 storage 时，
+        // 自动用**同一个 SQLite 库**的 Session 表（重启后「已登出」仍然失效）。
+        var session_store = self.external_session_store;
+        if (session_store == null) {
+            if (self.storage_dir) |dir| {
+                const db_path = try std.fs.path.join(self.allocator, &.{ dir, try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area}) });
+                defer self.allocator.free(db_path);
+                if (sqlite_session_mod.SqliteSessionStore.init(self.allocator, db_path)) |created| {
+                    ui.session_store = created;
+                    session_store = created.store();
+                } else |e| {
+                    zzig.Logger.err("[ZDsMallUI] 会话吊销表打开失败（{s}），退回内存（重启后已登出的令牌可能复活）", .{@errorName(e)});
+                }
+            }
+        }
+
         const auth = try auth_mod.Auth.init(self.allocator, self.io, normalized_area, .{
             .secret = self.jwt_secret,
             .issuer = self.jwt_issuer,
             .expire_minutes = self.jwt_expire_minutes,
             .cookie_secure = self.cookie_secure,
             .require_login = self.require_login,
-        }, self.external_session_store);
+        }, session_store);
         ui.admin_area.setAuth(auth);
 
         // 登录防爆破：失败到阈值后按「IP / 用户名」双维度封禁
