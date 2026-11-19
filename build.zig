@@ -97,4 +97,22 @@ pub fn build(b: *std.Build) void {
     run_min.addPassthruArgs();
     const min_step = b.step("minaccept", "最小对照：只 accept+读，测协程内存底噪");
     min_step.dependOn(&run_min.step);
+
+    // lighting + zio 对照：同一套协程运行时，但 HTTP 解析不依赖 std.http。
+    // 用来定位「59 KB/连接」里的栈开销究竟属于 std.http 还是有栈协程本身。
+    // `zig build lighting-zio -Doptimize=ReleaseFast -- 18201 2 32`
+    const lighting_dep = b.dependency("lighting", .{ .target = target, .optimize = optimize });
+    const lg_mod = b.createModule(.{
+        .root_source_file = b.path("examples/lighting_zio.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    lg_mod.addImport("lighting", lighting_dep.module("lighting"));
+    lg_mod.addImport("zio", zio_dep.module("zio"));
+    const lg_exe = b.addExecutable(.{ .name = "zdsmallui-lighting", .root_module = lg_mod });
+    b.installArtifact(lg_exe);
+    const run_lg = b.addRunArtifact(lg_exe);
+    run_lg.addPassthruArgs();
+    const lg_step = b.step("lighting-zio", "lighting 框架（自写解析）+ zio 协程的内存对照");
+    lg_step.dependOn(&run_lg.step);
 }
