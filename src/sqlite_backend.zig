@@ -54,20 +54,13 @@ pub const SqliteBackend = struct {
         };
         errdefer self.lib.deinit();
 
+        // **不显式指定 journal_mode/synchronous**：`zzig.db.sqlite.Options` 的默认值已经是
+        // 最快的 `WAL + NORMAL`（2026-11-19 改）。这里只覆盖 busy_timeout —— 面板启动时常有
+        // 外部工具（备份脚本、SQLiteStudio）占着库，8 秒等待比默认 5 秒更不容易误报失败。
+        //
+        // 若确认部署在网络盘（SMB/NFS 不支持 `-shm` 共享内存文件），把 `journal_mode` 显式设成
+        // `"delete"` 即可；WAL 设置失败时驱动只打日志，不会中断打开。
         self.db = sqlite.Db.openWithOptions(&self.lib, path, .{
-            // **WAL + NORMAL**：面板类是「读多写少 + 写时还要能读」的场景，这两个 PRAGMA 是量级差距。
-            // 实测（`Pek.ZCode` 的 `zig build bench`，SQLite 文件库，ReleaseFast）：
-            //   - 单次写：WAL+NORMAL **94.76 µs** / DELETE+FULL **3086.89 µs** / DELETE+NORMAL **4731.96 µs**
-            //     → 默认的 DELETE 模式慢 **32 倍**；
-            //   - 写事务进行中的并发读：WAL 能读 **3047** 次（单次 3.92 µs），
-            //     DELETE 只能读 **25** 次且单次 **36 ms** —— 写期间读被整体阻塞，这是线上最致命的。
-            //
-            // 不用 WAL 的唯二场景：① 库文件在网络盘（SMB/NFS，`-shm` 共享内存不可靠）；
-            // ② 备份/打包时必须把 `-wal`、`-shm` 一并带上（只看 `.db` 会丢最近写入）。
-            // 需要关掉时把 `journal_mode` 设成 `"delete"` 即可（`Options` 支持显式覆盖）。
-            .journal_mode = "WAL",
-            .synchronous = "NORMAL",
-            // 撞锁等待上限（ZCode 建表连接已关，但外部工具仍可能占用）
             .busy_timeout_ms = 8000,
         }) catch |e| {
             zzig.Logger.err("[ZDsMallUI] 打开 SQLite 数据库失败（{s}，路径 {s}）", .{ @errorName(e), path });
