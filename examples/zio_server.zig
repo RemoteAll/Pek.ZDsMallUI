@@ -38,10 +38,14 @@ pub fn main(init: std.process.Init) !void {
     var it = try std.process.Args.Iterator.initAllocator(init.minimal.args, gpa);
     while (it.next()) |a| try args.append(gpa, a);
     const port: u16 = if (args.items.len > 1) std.fmt.parseInt(u16, args.items[1], 10) catch 18091 else 18091;
+    // 第 2 个参数：executor（工作线程）数。0 / 缺省 = `.auto`（按 CPU 核数，且尊重 cgroup 配额）。
+    // 用小数值可以在大机器上**模拟 2 核 / 4 核服务器**，验证小规格下的连接承载。
+    const executors: u8 = if (args.items.len > 2) std.fmt.parseInt(u8, args.items[2], 10) catch 0 else 0;
 
     // 协程栈：默认 256 KiB 提交 → 上万连接就是几 GB；连接协程栈用量很小，降到 16 KiB。
     const rt = try zio.Runtime.init(gpa, .{
-        .executors = .auto,
+        // `ExecutorCount` 是非穷尽枚举（`auto = 0, _`），用 `@fromBackingInt` 构造具体值
+        .executors = if (executors > 0) @fromBackingInt(executors) else .auto,
         .stack_pool = .{
             .maximum_size = 1024 * 1024,
             .committed_size = 16 * 1024,
@@ -66,7 +70,7 @@ pub fn main(init: std.process.Init) !void {
     };
     srv.ctx = @ptrCast(&srv);
 
-    std.debug.print("ZIO_HTTP_SERVER port={d} dispatch=task\n", .{port});
+    std.debug.print("ZIO_HTTP_SERVER port={d} dispatch=task executors={s}\n", .{ port, if (executors > 0) "exact" else "auto" });
 
     // 服务端必须跑在**运行时里**：zio 的 accept/读写在运行时上下文才会挂起协程，
     // 丢到裸 std.Thread 上会卡死（zgrpc 的 with-zio 示例同样如此）。
