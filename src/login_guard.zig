@@ -8,6 +8,8 @@
 //! - **内存有界**：条目超 `max_entries` 先清过期项，仍超限就整表清空（宁可少限一次，不能被打爆内存）。
 //!
 //! 说明：这是**进程内**限流，多实例部署需换共享存储（Redis 等）；单实例面板足够。
+//! 另外，反向代理后必须让 `zzig.http.server` 的 `trust_forwarded_for = true`，
+//! 否则所有请求的 `remote_addr` 都是 `127.0.0.1`，IP 维度会退化成「全部算同一个客户端」。
 
 const std = @import("std");
 const zzig = @import("zzig");

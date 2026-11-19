@@ -16,7 +16,7 @@ param(
     [switch]$SkipSmoke,
     [int]$Port = 18099,
     # 测试数基线（只能抬高；降低必须在 docs/决策记录.md 写明依据）
-    [int]$MinTests = 94
+    [int]$MinTests = 97
 )
 
 $ErrorActionPreference = 'Continue'
