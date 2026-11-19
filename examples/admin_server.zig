@@ -62,7 +62,11 @@ pub fn main(init: std.process.Init) !u8 {
     const written = try ui.materializeDefaults();
     std.debug.print("[dsmallui] 默认视图/配置已落地：{d} 个文件（已存在则跳过）\n", .{written});
 
-    var app = try zzig.web.App.init(gpa, io, .{ .wwwroot = web_root });
+    var app = try zzig.web.App.init(gpa, io, .{
+        .wwwroot = web_root,
+        // 静态资源缓存 10 分钟：仍有 ETag 兑底（改样式后刷新即生效），但少了每次的 304 往返
+        .static_cache_control = "public, max-age=600",
+    });
     defer app.deinit();
     try ui.mount(&app);
 
@@ -82,6 +86,9 @@ pub fn main(init: std.process.Init) !u8 {
     try app.run("127.0.0.1", port, .{
         .max_body = ui.maxUploadBytes(),
         .max_connections = 128,
+        // 只有前面挂了反向代理（nginx 等）时才设 `true`：
+        // 只当 TCP 对端是回环时采购 `x-real-ip` / `x-forwarded-for` 末段，否则 IP 恒为 127.0.0.1
+        .trust_forwarded_for = false,
     });
     return 0;
 }

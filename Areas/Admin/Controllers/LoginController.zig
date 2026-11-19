@@ -22,6 +22,21 @@ const router = zzig.web.router;
 const controller_mod = zzig.web.controller;
 const ActionResult = zzig.web.controller.ActionResult;
 
+/// 取客户端 IP（已由 `zzig.http.server` 按 `trust_forwarded_for` 穿透反代）；
+/// 拿不到时用固定串，保证「无 IP」的请求仍受 IP 维度封禁约束。
+fn clientIp(c: *router.Ctx) []const u8 {
+    const addr = c.req.remote_addr orelse return "unknown";
+    // `[::1]:8080` → `[::1]`
+    if (std.mem.indexOfScalar(u8, addr, ']')) |close| {
+        if (close + 1 < addr.len and addr[close + 1] == ':') return addr[0 .. close + 1];
+        return addr;
+    }
+    // 裸 IPv6（多个冒号）原样返回；IPv4:port 去掉端口
+    const first = std.mem.indexOfScalar(u8, addr, ':') orelse return addr;
+    if (std.mem.lastIndexOfScalar(u8, addr, ':').? != first) return addr;
+    return addr[0..first];
+}
+
 /// 后台登录控制器。
 pub const LoginController = struct {
     /// `GET /{area}/login/index`：渲染登录页（回填 `?returnUrl=`）。
@@ -39,9 +54,25 @@ pub const LoginController = struct {
         const user_name = std.mem.trim(u8, c.formValue("UserName") orelse "", " \t\r\n");
         const pass = c.formValue("Password") orelse "";
         const return_url = std.mem.trim(u8, c.formValue("returnUrl") orelse "", " \t\r\n");
+        const client_ip = clientIp(c);
+        const now_ms = zzig.compat.milliTimestamp();
+
+        // 防爆破：命中封禁则直接回 429（不查库、不耗 CPU 做口令散列）
+        if (self.login_guard) |guard| {
+            if (guard.retryAfterSeconds(user_name, client_ip, now_ms)) |secs| {
+                zzig.Logger.warn("[ZDsMallUI] 登录被拒（{s}@{s}）：失败次数过多，还需 {d} 秒", .{ user_name, client_ip, secs });
+                const msg = try std.fmt.allocPrint(c.arena, "尝试次数过多，请 {d} 秒后再试", .{secs});
+                if (admin_area.isAjax(c)) {
+                    return .{ .response = try controller_mod.jsonResult(c.arena, 429, msg, null) };
+                }
+                const model = try buildModel(self, c.arena, admin_area.currentUser(c), msg, admin_area.safeRedirect(return_url) orelse "");
+                return admin_area.renderView(self, c, "Login", "Index", model);
+            }
+        }
 
         switch (try self.backend.login(c.arena, user_name, pass)) {
             .ok => |user| {
+                if (self.login_guard) |guard| guard.recordSuccess(user.user_name, client_ip);
                 // 签发 JWT（未装配鉴权器时跳过，保持纯登录行为）
                 const issued: ?auth_mod.Issued = if (self.auth) |auth|
                     auth.issue(c.arena, user, 0) catch |err| blk: {
@@ -90,7 +121,12 @@ pub const LoginController = struct {
                 return .{ .response = response };
             },
             .err => |message| {
-                zzig.Logger.warn("[ZDsMallUI] 登录失败（{s}）：{s}", .{ user_name, message });
+                if (self.login_guard) |guard| {
+                    guard.recordFailure(user_name, client_ip, now_ms) catch |e| {
+                        zzig.Logger.err("[ZDsMallUI] 登录失败计数写入失败（{s}@{s}）：{s}", .{ user_name, client_ip, @errorName(e) });
+                    };
+                }
+                zzig.Logger.warn("[ZDsMallUI] 登录失败（{s}@{s}）：{s}", .{ user_name, client_ip, message });
                 if (admin_area.isAjax(c)) {
                     return .{ .response = try controller_mod.jsonResult(c.arena, 401, message, null) };
                 }

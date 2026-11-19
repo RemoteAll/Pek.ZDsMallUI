@@ -288,6 +288,23 @@ if ($SkipSmoke) {
                 catch {
                     Fail 'GET /fileuploader?action=nope' $_.Exception.Message
                 }
+
+                # 3.8 默认安全响应头（防点击劫持 / MIME 嗅探 / referer 外泄）
+                $secHeaders = Invoke-External 'curl.exe' @('-s', '-D', '-', '-o', 'NUL', "$base/biz/login/index")
+                $hasNosniff = $secHeaders.Output -match '(?i)x-content-type-options:\s*nosniff'
+                $hasFrame = $secHeaders.Output -match '(?i)x-frame-options:\s*SAMEORIGIN'
+                $hasReferrer = $secHeaders.Output -match '(?i)referrer-policy:\s*no-referrer'
+                if ($hasNosniff -and $hasFrame -and $hasReferrer) { Pass 'GET /biz/login/index（默认安全响应头）' }
+                else { Fail 'GET /biz/login/index（默认安全响应头）' "nosniff=$hasNosniff frame=$hasFrame referrer=$hasReferrer" }
+
+                # 3.9 登录防爆破：连续 5 次错误口令后第 6 次必须 429（**放最后跑**，避免封锁影响前面的正常登录用例）
+                # 注意：本项目沿用 C# 约定——HTTP 状态码恒 200，业务码在 JSON 的 `code` 字段
+                $blockedBody = $null
+                for ($i = 0; $i -lt 6; $i++) {
+                    $blockedBody = Invoke-External 'curl.exe' @('-s', '-H', 'X-Requested-With: XMLHttpRequest', '-d', 'UserName=admin&Password=definitely-wrong', "$base/biz/login/login")
+                }
+                if ($blockedBody.Output -match '"code":429') { Pass 'POST /biz/login/login（防爆破：6 次失败后 code=429）' }
+                else { Fail 'POST /biz/login/login（防爆破：6 次失败后 code=429）' $blockedBody.Output }
             }
             finally {
                 if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }

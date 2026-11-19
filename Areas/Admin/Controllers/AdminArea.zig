@@ -54,6 +54,8 @@ pub const AdminArea = struct {
     upload_prefix: []const u8,
     /// 登录鉴权（JWT 签发 / 校验 / 登出吊销）；`null` = 未启用（不签令牌）
     auth: ?*auth_mod.Auth = null,
+    /// 登录防爆破守卫（可选；由门面在 `build()` 时注入）
+    login_guard: ?*@import("../../../src/login_guard.zig").Guard = null,
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
 
@@ -104,6 +106,11 @@ pub const AdminArea = struct {
     pub fn setAuth(self: *AdminArea, auth: *auth_mod.Auth) void {
         if (self.auth) |existing| existing.deinit();
         self.auth = auth;
+    }
+
+    /// 注入登录防爆破守卫（不注入则不做失败计数）。
+    pub fn setLoginGuard(self: *AdminArea, guard: *@import("../../../src/login_guard.zig").Guard) void {
+        self.login_guard = guard;
     }
 
     /// 登录页路径（`/{area}/login/index`）。

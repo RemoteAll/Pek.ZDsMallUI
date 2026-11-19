@@ -30,6 +30,7 @@ const controllers = struct {
 };
 const ueditor_mod = @import("ueditor/mod.zig");
 const views_mod = @import("views.zig");
+const login_guard_mod = @import("login_guard.zig");
 
 /// 默认上传目录名（C# `UploadPath` 默认值同为 `upload`）。
 pub const DEFAULT_UPLOAD_PATH = "upload";
@@ -65,6 +66,8 @@ pub const DsMallUi = struct {
     pseudo_suffixes: []const []const u8 = &.{},
     /// 内置内存数据源（未指定外部 backend 时由本对象拥有）
     memory_backend: ?*backend_mod.MemoryBackend = null,
+    /// 登录防爆破守卫（进程内计数，随本对象释放）
+    login_guard: login_guard_mod.Guard,
 
     /// 构造门面（默认配置）。
     pub fn builder(allocator: std.mem.Allocator, io: std.Io) Builder {
@@ -73,6 +76,7 @@ pub const DsMallUi = struct {
 
     /// 释放控制器、视图缓存与自有字符串。
     pub fn deinit(self: *DsMallUi) void {
+        self.login_guard.deinit();
         self.upload_controller.deinit();
         self.admin_area.deinit();
         self.ui_views.deinit();
@@ -226,6 +230,8 @@ pub const Builder = struct {
     external_session_store: ?auth_mod.SessionStore = null,
     /// 伪静态后缀（默认 `.html`：`/biz/home/index.html` 命中 `/biz/home/index`；空数组 = 关闭）
     pseudo_suffixes: []const []const u8 = &.{".html"},
+    /// 登录防爆破参数（默认：同 IP 10 次 / 同用户 5 次失败 → 封禁 5 分钟）
+    login_guard_options: login_guard_mod.Options = .{},
 
     /// 站点物理根（默认 `wwwroot`；**业务系统按自己的配置改成任意路径**）。
     pub fn webRoot(self: Builder, root: []const u8) Builder {
@@ -340,6 +346,13 @@ pub const Builder = struct {
         return copy;
     }
 
+    /// 登录防爆破参数（默认：同 IP 10 次 / 同用户 5 次失败 → 封禁 5 分钟）。
+    pub fn loginGuardOptions(self: Builder, options: login_guard_mod.Options) Builder {
+        var copy = self;
+        copy.login_guard_options = options;
+        return copy;
+    }
+
     /// 组装（失败时已分配的资源全部回滚）。
     pub fn build(self: Builder) !*DsMallUi {
         const normalized_area = try area_mod.normalize(self.allocator, self.admin_area);
@@ -395,6 +408,7 @@ pub const Builder = struct {
             .upload_controller = undefined,
             .pseudo_suffixes = self.pseudo_suffixes,
             .memory_backend = memory,
+            .login_guard = login_guard_mod.Guard.init(self.allocator, self.login_guard_options),
         };
         errdefer ui.ui_views.deinit();
 
@@ -412,6 +426,9 @@ pub const Builder = struct {
             .require_login = self.require_login,
         }, self.external_session_store);
         ui.admin_area.setAuth(auth);
+
+        // 登录防爆破：失败到阈值后按「IP / 用户名」双维度封禁
+        ui.admin_area.setLoginGuard(&ui.login_guard);
 
         ui.upload_controller = try controllers.upload.UploadController.init(self.allocator, self.io, service, upload_root);
         errdefer ui.upload_controller.deinit();
