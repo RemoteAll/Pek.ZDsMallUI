@@ -47,6 +47,10 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "common.edit", .zh = "编辑", .en = "Edit" },
     .{ .key = "common.add", .zh = "新增", .en = "Add" },
     .{ .key = "common.search", .zh = "搜索", .en = "Search" },
+    .{ .key = "common.export", .zh = "导出", .en = "Export" },
+    .{ .key = "common.import", .zh = "导入", .en = "Import" },
+    .{ .key = "common.cancel", .zh = "取消", .en = "Cancel" },
+    .{ .key = "common.error_request", .zh = "请求失败，请稍后重试", .en = "Request failed, please retry" },
     .{ .key = "common.back", .zh = "返回", .en = "Back" },
     .{ .key = "common.actions", .zh = "操作", .en = "Actions" },
     .{ .key = "common.status", .zh = "状态", .en = "Status" },
@@ -87,6 +91,7 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "page.languages.key", .zh = "资源键", .en = "Key" },
     .{ .key = "page.languages.value", .zh = "翻译文本", .en = "Value" },
     .{ .key = "page.languages.language", .zh = "语言", .en = "Language" },
+    .{ .key = "page.languages.export_need_culture", .zh = "请先选择语言再导出", .en = "Please select a language before exporting" },
     .{ .key = "page.config.site_name", .zh = "网站名称", .en = "Site name" },
     .{ .key = "page.config.seo_title", .zh = "网站Seo标题", .en = "SEO title" },
     .{ .key = "page.config.seo_key", .zh = "网站Seo关键字", .en = "SEO keywords" },
@@ -426,6 +431,99 @@ pub const Store = struct {
     /// 语言列表（快照，读路径无锁）。
     pub fn all(self: *const Store) []const Language {
         return self.languages;
+    }
+
+    /// 语言包「资源行」（对齐 C# `LocaleStringResource` 的一行：Id / CultureId / LanKey / LanValue）。
+    ///
+    /// 行集合 = **库里的行** ∪ **内置键里还没落库的**（后者 `id = 0`，属于「虚拟行」）：
+    /// 这样首次部署也能看到/编辑全部文案，保存一次就变成真行（有 Id，可删除/导出）。
+    /// `id == 0` 的行**不可删除**（库里本来就没有），前端也不给它 checkbox。
+    pub const ResourceRow = struct {
+        id: i64,
+        culture_id: i32,
+        key: []const u8,
+        value: []const u8,
+        language_name: []const u8,
+    };
+
+    /// 查某语言下的资源行（可带 `lanKey` / `lanValue` 过滤，均大小写不敏感子串匹配）。
+    ///
+    /// 只读：文本全部拷贝进 `arena`，调用方用完即可丢弃。
+    pub fn resourceRows(
+        self: *Store,
+        arena: std.mem.Allocator,
+        culture_id: i32,
+        key_filter: []const u8,
+        value_filter: []const u8,
+    ) ![]ResourceRow {
+        var out: std.ArrayList(ResourceRow) = .empty;
+        var seen = std.StringHashMapUnmanaged(void).empty;
+        const language_name = if (self.byId(culture_id)) |row| row.display_name else "";
+
+        if (self.db_path) |db_path| {
+            if (sqlite.Lib.load(self.allocator)) |loaded| {
+                var lib_val = loaded;
+                defer lib_val.deinit();
+                if (sqlite.Db.openWithOptions(&lib_val, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null })) |db_in| {
+                    var db = db_in;
+                    defer db.close();
+                    if (db.prepare(self.allocator, "SELECT Id, LanKey, LanValue FROM LocaleStringResource WHERE CultureId = ? ORDER BY LanKey")) |stmt_in| {
+                        var stmt = stmt_in;
+                        defer stmt.finalize();
+                        stmt.bindAll(&.{.{ .int = culture_id }}) catch {};
+                        while (stmt.hasRow()) {
+                            const row = stmt.readRow(arena) catch break;
+                            const key_text = rowText(row, "LanKey");
+                            const value_text = rowText(row, "LanValue");
+                            seen.put(arena, try arena.dupe(u8, key_text), {}) catch {};
+                            if (key_filter.len > 0 and std.mem.indexOf(u8, key_text, key_filter) == null) continue;
+                            if (value_filter.len > 0 and std.mem.indexOf(u8, value_text, value_filter) == null) continue;
+                            try out.append(arena, .{
+                                .id = rowInt(row, "Id"),
+                                .culture_id = culture_id,
+                                .key = try arena.dupe(u8, key_text),
+                                .value = try arena.dupe(u8, value_text),
+                                .language_name = try arena.dupe(u8, language_name),
+                            });
+                        }
+                    } else |_| {}
+                } else |_| {}
+            } else |_| {}
+        }
+
+        // 内置键里还没落库的 → 虚拟行（`id = 0`）：保证页面一开始就不是空的
+        for (BUILTIN_STRINGS) |entry| {
+            if (seen.contains(entry.key)) continue;
+            if (key_filter.len > 0 and std.mem.indexOf(u8, entry.key, key_filter) == null) continue;
+            const builtin_value = self.text(culture_id, entry.key);
+            if (value_filter.len > 0 and std.mem.indexOf(u8, builtin_value, value_filter) == null) continue;
+            try out.append(arena, .{
+                .id = 0,
+                .culture_id = culture_id,
+                .key = entry.key,
+                .value = try arena.dupe(u8, builtin_value),
+                .language_name = try arena.dupe(u8, language_name),
+            });
+        }
+        return out.toOwnedSlice(arena);
+    }
+
+    /// 按 `LocaleStringResource.Id` 删一条（对齐 C# `Delete?Ids=`）。返回是否真的删到了行。
+    pub fn removeResourceById(self: *Store, id: i64) !bool {
+        const db_path = self.db_path orelse return false;
+        if (id <= 0) return false;
+        var lib = try sqlite.Lib.load(self.allocator);
+        defer lib.deinit();
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        defer db.close();
+
+        var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE Id = ?");
+        defer stmt.finalize();
+        try stmt.bindAll(&.{.{ .int = id }});
+        try stmt.run();
+        const changed = db.changes();
+        try self.reload();
+        return changed > 0;
     }
 
     /// 默认语言（`IsDefault`；没有则第一条；再没有则 `null`）。

@@ -73,7 +73,7 @@ pub const CultureController = struct {
         try model.int("total", @intCast(all_rows.len));
         try model.int("page", @intCast(cur_page));
         try model.int("pages", @intCast(pages));
-        try model.str("pageHtml", try pageHtml(c.arena, try areaPrefix(self, c), "/culture/index", keyword, status_filter, page_size_eff, cur_page, pages));
+        try model.str("pageHtml", try pageHtml(c.arena, try areaPrefix(self, c), "/culture/index", try cultureQuery(c.arena, keyword, status_filter, page_size_eff), cur_page, pages));
         try model.str("saved", c.queryValue("saved") orelse "");
         try model.str("error", c.queryValue("error") orelse "");
         return admin_area.renderView(self, c, "Culture", "Index", model.finish());
@@ -251,6 +251,11 @@ pub const LanguagesController = struct {
     pub const addLanguagesCall = addLanguages;
     pub const editLanguagesCall = editLanguages;
     pub const saveLanguagesCall = saveLanguages;
+    /// 供路由挂载：行内编辑保存（返回 JSON，见文件末尾 `editLanValue`）。
+    pub const editLanValueCall = editLanValue;
+    /// 供路由挂载：导出 CSV / 导入 CSV（见文件末尾）。
+    pub const exportResourcesCall = exportResources;
+    pub const importResourcesCall = importResources;
     /// `GET /{area}/languages?culture=N`：列出内置键在当前语言下的文本。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);
@@ -264,19 +269,25 @@ pub const LanguagesController = struct {
         // 搜索（对齐 C# `Languages/Index`：lanKey + lanValue）
         const lan_key = std.mem.trim(u8, c.queryValue("lanKey") orelse "", " \t\r\n");
         const lan_value = std.mem.trim(u8, c.queryValue("lanValue") orelse "", " \t\r\n");
+        const page_size: usize = std.fmt.parseInt(usize, c.queryValue("pageSize") orelse "20", 10) catch 20;
+        const want_page = std.fmt.parseInt(usize, c.queryValue("page") orelse "1", 10) catch 1;
 
-        const keys = try store.resourceKeys(c.arena);
+        // 行 = `LocaleStringResource` 行（对齐 C#）+ 内置键中尚未落库的虚拟行（`id = 0`）
+        const all_rows = try store.resourceRows(c.arena, culture_id, lan_key, lan_value);
+        const page_size_eff = if (page_size == 0) @as(usize, 20) else page_size;
+        const pages = if (all_rows.len == 0) @as(usize, 1) else (all_rows.len + page_size_eff - 1) / page_size_eff;
+        const cur_page = @min(@max(want_page, 1), pages);
+        const start = (cur_page - 1) * page_size_eff;
+
         var rows: std.ArrayList(zzig.web.Value) = .empty;
-        for (keys) |key| {
-            if (lan_key.len > 0 and std.mem.indexOf(u8, key, lan_key) == null) continue;
-            const text_value = store.text(culture_id, key);
-            if (lan_value.len > 0 and std.mem.indexOf(u8, text_value, lan_value) == null) continue;
-
+        for (all_rows[start..@min(start + page_size_eff, all_rows.len)]) |row| {
             var builder = zzig.web.ObjectBuilder.init(c.arena);
-            try builder.str("key", key);
-            // `ident` = 表单字段后缀（`v_<ident>`），也是视图里 `@Model.lang.<ident>` 用的标识符
-            try builder.str("ident", try language_mod.identifier(c.arena, key));
-            try builder.str("value", text_value);
+            try builder.int("id", row.id);
+            try builder.str("key", row.key);
+            try builder.str("ident", try language_mod.identifier(c.arena, row.key));
+            try builder.str("value", row.value);
+            try builder.str("languageName", row.language_name);
+            try builder.int("cultureId", row.culture_id);
             try rows.append(c.arena, builder.finish());
         }
 
@@ -298,6 +309,10 @@ pub const LanguagesController = struct {
         try model.str("cultureName", if (store.find(std.fmt.allocPrint(c.arena, "{d}", .{culture_id}) catch "")) |row| row.display_name else "");
         try model.str("lanKey", lan_key);
         try model.str("lanValue", lan_value);
+        try model.int("total", @intCast(all_rows.len));
+        try model.int("page", @intCast(cur_page));
+        try model.int("pages", @intCast(pages));
+        try model.str("pageHtml", try pageHtml(c.arena, try areaPrefix(self, c), "/languages/index", try languagesQuery(c.arena, culture_id, lan_key, lan_value, page_size_eff), cur_page, pages));
         try model.str("areaRoute", try areaPrefix(self, c));
         try model.str("saved", c.queryValue("saved") orelse "");
         try model.str("error", c.queryValue("error") orelse "");
@@ -404,7 +419,34 @@ pub fn saveLanguages(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
 
 fn deleteResource(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
     const self = admin_area.castSelf(raw);
-    const store = self.languages orelse return redirectTo(self, c, "/languages/index", "error=未启用多语言");
+    const store = self.languages orelse return jsonEnvelope(c, false, 1, "未启用多语言");
+
+    // 对齐 C#：`Delete?Ids=行1,行2`（`LocaleStringResource.Id`），返回 JSON 给 `dsLayerConfirm` / 批量删除。
+    // 兼容旧链接 `?culture=&key=`（返回重定向页面，供不带 JS 的入口使用）。
+    if (c.queryValue("Ids")) |ids_raw| {
+        var removed: usize = 0;
+        var missing = false;
+        var failed = false;
+        var it = std.mem.tokenizeAny(u8, ids_raw, ", \t\r\n");
+        while (it.next()) |token| {
+            const id = std.fmt.parseInt(i64, token, 10) catch continue;
+            if (id <= 0) continue;
+            const ok = store.removeResourceById(id) catch |e| blk: {
+                failed = true;
+                zzig.Logger.warn("[ZDsMallUI] 删除语言包失败（Id={d}）：{s}", .{ id, @errorName(e) });
+                break :blk false;
+            };
+            if (ok) removed += 1 else missing = true;
+        }
+        if (removed == 0) {
+            if (failed) return jsonEnvelope(c, false, 1, "删除失败，详见日志");
+            if (missing) return jsonEnvelope(c, false, 1, "要删除的语言包不存在（内置键尚未落库）");
+            return jsonEnvelope(c, false, 1, "参数 ids 无效");
+        }
+        if (missing) return jsonEnvelope(c, true, 10000, "已删除，部分内置键尚未落库已跳过");
+        return jsonEnvelope(c, true, 10000, "删除成功");
+    }
+
     const culture_id = std.fmt.parseInt(i32, c.queryValue("culture") orelse "0", 10) catch 0;
     const key = std.mem.trim(u8, c.queryValue("key") orelse "", " \t\r\n");
     if (culture_id <= 0 or key.len == 0) return redirectTo(self, c, "/languages/index", "error=参数无效");
@@ -413,6 +455,128 @@ fn deleteResource(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         return redirectTo(self, c, "/languages/index", "error=删除失败，详见日志");
     };
     return redirectTo(self, c, "/languages/index", "saved=1");
+}
+
+/// `POST /{area}/languages/editlanvalue`：行内编辑保存一条翻译值（对齐 C# `EditLanValue`）。
+///
+/// 返回 `{success, msg}`：前端 `editable-cell` 保存成功后把显示值换成新值并 `layer.msg` 提示。
+pub fn editLanValue(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
+    const self = admin_area.castSelf(raw);
+    const store = self.languages orelse return jsonEnvelope(c, false, 1, "未启用多语言");
+
+    const culture_id = c.formInt(i32, "cultureId");
+    const lan_key = std.mem.trim(u8, c.formStr("lanKey"), " \t\r\n");
+    const lan_value = c.formStr("lanValue");
+    if (culture_id <= 0 or lan_key.len == 0) return jsonEnvelope(c, false, 1, "参数无效（cultureId / lanKey）");
+
+    store.saveResource(culture_id, lan_key, lan_value) catch |e| {
+        zzig.Logger.err("[ZDsMallUI] 行内保存语言包失败（{s}/{s}）：{s}", .{ lan_key, lan_value, @errorName(e) });
+        return jsonEnvelope(c, false, 1, "保存失败，详见日志");
+    };
+    return jsonEnvelope(c, true, 10000, "保存成功");
+}
+
+/// `GET /{area}/languages/export?cultureId=N`：导出该语言的语言包为 CSV（对齐 C# `Export`）。
+///
+/// CSV 头是 `LanKey,LanValue`；与导入一一对应（导入也按这两列解析）。
+/// 用 CSV 而不是 xlsx：零依赖、Excel/WPS 都能直接打开，跨平台一致。
+pub fn exportResources(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
+    const self = admin_area.castSelf(raw);
+    const store = self.languages orelse return renderMissing(self, c);
+
+    const culture_id = std.fmt.parseInt(i32, c.queryValue("cultureId") orelse "0", 10) catch 0;
+    if (culture_id <= 0) return jsonEnvelope(c, false, 1, "请先选择语言再导出");
+
+    const rows = try store.resourceRows(c.arena, culture_id, "", "");
+    var parts: std.ArrayList([]const u8) = .empty;
+    // UTF-8 BOM：Excel 直接双击打开不乱码
+    try parts.append(c.arena, "\xEF\xBB\xBFLanKey,LanValue\r\n");
+    for (rows) |row| {
+        try parts.append(c.arena, try csvLine(c.arena, row.key, row.value));
+    }
+    const body = try std.mem.concat(c.arena, u8, parts.items);
+
+    // 文件名只用 ASCII（语言代码 zh / en）：HTTP 头里直接塞中文会变成乱码字节
+    const culture_code = if (store.find(std.fmt.allocPrint(c.arena, "{d}", .{culture_id}) catch "")) |row| row.code else "";
+    const disposition = try std.fmt.allocPrint(
+        c.arena,
+        "attachment; filename=\"languages-{s}-{d}.csv\"",
+        .{ if (culture_code.len > 0) culture_code else "export", culture_id },
+    );
+    const headers = try c.arena.alloc(std.http.Header, 1);
+    headers[0] = .{ .name = "content-disposition", .value = disposition };
+    return .{ .response = .{
+        .content_type = "text/csv; charset=utf-8",
+        .body = body,
+        .headers = headers,
+    } };
+}
+
+/// `POST /{area}/languages/import?cultureId=N`：导入 CSV（正文是文件纯文本，不是 multipart）。
+///
+/// 前端用 `FileReader` 读出文本再 POST，服务端只按 `LanKey,LanValue` 逐行 upsert ——
+/// 好处是不用解析 multipart，Zig / 浏览器 / 脚本（curl --data-binary）都能用同一契约。
+pub fn importResources(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
+    const self = admin_area.castSelf(raw);
+    const store = self.languages orelse return jsonEnvelope(c, false, 1, "未启用多语言");
+
+    const culture_id = std.fmt.parseInt(i32, c.queryValue("cultureId") orelse "0", 10) catch 0;
+    if (culture_id <= 0) return jsonEnvelope(c, false, 1, "请先选择语言再导入");
+
+    const body = c.req.body;
+    if (body.len == 0) return jsonEnvelope(c, false, 1, "导入内容为空");
+
+    var saved: usize = 0;
+    var skipped: usize = 0;
+    var line_no: usize = 0;
+    var it = std.mem.splitScalar(u8, body, '\n');
+    while (it.next()) |raw_line| {
+        line_no += 1;
+        // 去 BOM / 回车 / 首尾空白
+        var line = std.mem.trim(u8, raw_line, " \t\r\n");
+        if (line.len > 0 and std.mem.startsWith(u8, line, "\xEF\xBB\xBF")) line = line[3..];
+        if (line.len == 0) continue;
+
+        const comma = std.mem.indexOfScalar(u8, line, ',') orelse {
+            skipped += 1;
+            continue;
+        };
+        const key = std.mem.trim(u8, line[0..comma], " \t\"");
+        if (key.len == 0 or std.ascii.eqlIgnoreCase(key, "LanKey")) {
+            skipped += 1;
+            continue;
+        }
+        const value = std.mem.trim(u8, line[comma + 1 ..], "\"");
+        store.saveResource(culture_id, key, value) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 导入语言包失败（第 {d} 行 {s}）：{s}", .{ line_no, key, @errorName(e) });
+            return jsonEnvelope(c, false, 1, "导入失败，详见日志");
+        };
+        saved += 1;
+    }
+    if (saved == 0) {
+        zzig.Logger.warn("[ZDsMallUI] 导入语言包：文件里没有可解析的 `LanKey,LanValue` 行（跳过 {d} 行）", .{skipped});
+        return jsonEnvelope(c, false, 1, "没有可导入的行（需要 LanKey,LanValue 两列）");
+    }
+    const msg = try std.fmt.allocPrint(c.arena, "导入成功：{d} 条", .{saved});
+    return jsonEnvelope(c, true, 10000, msg);
+}
+
+/// CSV 一行（字段里有引号/逗号/换行时用双引号包裹并转义）。
+fn csvLine(arena: std.mem.Allocator, key: []const u8, value: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(arena, "{s},{s}\r\n", .{ try csvField(arena, key), try csvField(arena, value) });
+}
+
+fn csvField(arena: std.mem.Allocator, text: []const u8) ![]const u8 {
+    const needs_quote = std.mem.indexOfAny(u8, text, ",\"\r\n") != null;
+    if (!needs_quote) return text;
+    var parts: std.ArrayList([]const u8) = .empty;
+    try parts.append(arena, "\"");
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        if (text[i] == '"') try parts.append(arena, "\"\"") else try parts.append(arena, text[i .. i + 1]);
+    }
+    try parts.append(arena, "\"");
+    return std.mem.concat(arena, u8, parts.items);
 }
 
 /// 大小写不敏感的子串包含（Zig 0.17 的 std.ascii 没有 indexOfIgnoreCase）。
@@ -449,20 +613,12 @@ fn pageHtml(
     arena: std.mem.Allocator,
     prefix: []const u8,
     path: []const u8,
-    keyword: []const u8,
-    status_filter: i32,
-    page_size: usize,
+    extra_query: []const u8,
     cur_page: usize,
     pages: usize,
 ) ![]const u8 {
     var parts: std.ArrayList([]const u8) = .empty;
-
-    // 保留搜索条件（翻页不丢关键字 / 状态 / 每页条数）
-    var keep: std.ArrayList([]const u8) = .empty;
-    if (keyword.len > 0) try keep.append(arena, try std.fmt.allocPrint(arena, "&name={s}", .{try urlEncode(arena, keyword)}));
-    if (status_filter >= 0) try keep.append(arena, try std.fmt.allocPrint(arena, "&status={d}", .{status_filter}));
-    if (page_size != 20) try keep.append(arena, try std.fmt.allocPrint(arena, "&pageSize={d}", .{page_size}));
-    const extra = try std.mem.concat(arena, u8, keep.items);
+    const extra = extra_query;
 
     const href = struct {
         fn make(a: std.mem.Allocator, p: []const u8, pa: []const u8, e: []const u8, page: usize) ![]const u8 {
@@ -489,6 +645,31 @@ fn pageHtml(
         }
     }
     return std.mem.concat(arena, u8, parts.items);
+}
+
+/// 拼 `culture/index` 翻页时要保留的查询串（关键字 / 状态 / 每页条数）。
+fn cultureQuery(arena: std.mem.Allocator, keyword: []const u8, status_filter: i32, page_size: usize) ![]const u8 {
+    var keep: std.ArrayList([]const u8) = .empty;
+    if (keyword.len > 0) try keep.append(arena, try std.fmt.allocPrint(arena, "&name={s}", .{try urlEncode(arena, keyword)}));
+    if (status_filter >= 0) try keep.append(arena, try std.fmt.allocPrint(arena, "&status={d}", .{status_filter}));
+    if (page_size != 20) try keep.append(arena, try std.fmt.allocPrint(arena, "&pageSize={d}", .{page_size}));
+    return std.mem.concat(arena, u8, keep.items);
+}
+
+/// 拼 `languages/index` 翻页时要保留的查询串（翻译键 / 翻译值 / 语言 / 每页条数）。
+fn languagesQuery(
+    arena: std.mem.Allocator,
+    culture_id: i32,
+    lan_key: []const u8,
+    lan_value: []const u8,
+    page_size: usize,
+) ![]const u8 {
+    var keep: std.ArrayList([]const u8) = .empty;
+    try keep.append(arena, try std.fmt.allocPrint(arena, "&cultureId={d}", .{culture_id}));
+    if (lan_key.len > 0) try keep.append(arena, try std.fmt.allocPrint(arena, "&lanKey={s}", .{try urlEncode(arena, lan_key)}));
+    if (lan_value.len > 0) try keep.append(arena, try std.fmt.allocPrint(arena, "&lanValue={s}", .{try urlEncode(arena, lan_value)}));
+    if (page_size != 20) try keep.append(arena, try std.fmt.allocPrint(arena, "&pageSize={d}", .{page_size}));
+    return std.mem.concat(arena, u8, keep.items);
 }
 
 /// 仅转义 URL 查询值里必须转义的字符（关键字里的中文由浏览器负责编码，这里保持原样）。

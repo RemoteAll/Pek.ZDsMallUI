@@ -357,6 +357,11 @@ pub const AdminArea = struct {
             const ctrl = try self.newController(prefix);
             try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(language_controllers.LanguagesController.index));
             try ctrl.mapWithContext("POST", "save", @ptrCast(self), guarded(language_controllers.LanguagesController.save));
+            // 行内编辑保存（对齐 C# `EditLanValue`）：返回 JSON
+            try ctrl.mapWithContext("POST", "editlanvalue", @ptrCast(self), guarded(language_controllers.LanguagesController.editLanValueCall));
+            // 导出 / 导入（对齐 C# `Export` / `Import`）：CSV，导入正文是纯文本
+            try ctrl.mapWithContext("GET", "export", @ptrCast(self), guarded(language_controllers.LanguagesController.exportResourcesCall));
+            try ctrl.mapWithContext("POST", "import", @ptrCast(self), guarded(language_controllers.LanguagesController.importResourcesCall));
             try ctrl.mapWithContext("GET", "delete", @ptrCast(self), guarded(language_controllers.LanguagesController.deleteResourceCall));
             try ctrl.mapWithContext("GET", "addlanguages", @ptrCast(self), guarded(language_controllers.LanguagesController.addLanguagesCall));
             try ctrl.mapWithContext("GET", "editlanguages", @ptrCast(self), guarded(language_controllers.LanguagesController.editLanguagesCall));

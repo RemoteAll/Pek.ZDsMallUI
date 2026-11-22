@@ -2,8 +2,83 @@
     Layout = "Shared/_Layout";
 }
 @* 语言包：**结构与类名完全对齐 B2B2CShop `Areas/Admin/Views/Languages/Index.cshtml`**
-   （搜索区 `ds-search-form` 三个字段：翻译键 / 语言 / 翻译值；`table.ds-default-table`；
-   翻译值单元格就地编辑；`ul.pagination`）。字段与 C# 一致：LanKey / LanValue / CultureId。 *@
+   （搜索区三个字段：翻译键 / 语言 / 翻译值；四个按钮：搜索 / 新增 / 导出 / 导入；
+   翻译值单元格就地编辑 `editable-cell`；`table.ds-default-table`；tfoot 全选 + 批量删除；`ul.pagination`）。
+   行 = `LocaleStringResource` 记录（有 Id 的可勾选/删除；内置键尚未落库时 `id=0`，只读展示、保存后变真行）。 *@
+<style>
+    .btnAdd, .btnExport, .btnImport {
+        background-color: #FF0000 !important;
+        border: none !important;
+        padding: 6px 12px !important;
+        text-align: center !important;
+        line-height: 1.5 !important;
+        color: #FFFFFF !important;
+    }
+
+    /* 可编辑单元格样式（照抄 C#） */
+    .editable-cell {
+        position: relative;
+        cursor: pointer;
+        min-height: 40px;
+    }
+
+    .editable-cell:hover .display-value {
+        background-color: #f5f5f5;
+        border: 1px dashed #ccc;
+        padding: 4px 8px;
+        border-radius: 3px;
+    }
+
+    .editable-cell.editing {
+        background-color: #f8f9fa;
+        border: 1px solid #007bff;
+        border-radius: 4px;
+        padding: 8px;
+    }
+
+    .edit-value {
+        width: 100%;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+        font-size: 14px;
+    }
+
+    .edit-actions {
+        margin-top: 8px;
+        text-align: right;
+    }
+
+    .btn-save, .btn-cancel {
+        padding: 4px 12px;
+        margin-left: 8px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+        background-color: #fff;
+        cursor: pointer;
+        font-size: 12px;
+    }
+
+    .btn-save {
+        background-color: #28a745;
+        color: white;
+        border-color: #28a745;
+    }
+
+    .btn-save:hover {
+        background-color: #218838;
+    }
+
+    .btn-cancel {
+        background-color: #6c757d;
+        color: white;
+        border-color: #6c757d;
+    }
+
+    .btn-cancel:hover {
+        background-color: #5a6268;
+    }
+</style>
+
 <div class="page">
     <div class="fixed-bar">
         <div class="item-title">
@@ -35,7 +110,6 @@
                 <dt>@Model.lang.page_languages_language：</dt>
                 <dd>
                     <select name="cultureId" id="cultureId">
-                        <option value="0">@Model.lang.common_please_select</option>
                         @foreach (var item in Model.cultures) {
                         <option value="@item.id" @if (item.current) {<text>selected</text>}>@item.name</option>
                         }
@@ -48,61 +122,217 @@
             </dl>
             <div class="btn_group">
                 <input type="submit" class="btn" value="@Model.lang.common_search">
+                <input type="submit" class="btnAdd" id="btnAdd" value="@Model.lang.common_add">
+                <input type="submit" class="btnExport" id="btnExport" value="@Model.lang.common_export">
+                <input type="submit" class="btnImport" id="btnImport" value="@Model.lang.common_import">
+                <input type="file" id="fileInput" accept=".csv,text/csv,text/plain" style="display: none;" />
             </div>
         </div>
     </form>
 
-    <form method="post" action="@Model.areaRoute/languages/save" name="formSave">
-        <input type="hidden" name="CultureId" value="@Model.cultureId">
-        <table class="ds-default-table">
-            <thead>
-                <tr>
-                    <th class="w24"></th>
-                    <th>@Model.lang.page_languages_key</th>
-                    <th>@Model.lang.page_languages_language</th>
-                    <th>@Model.lang.page_languages_value</th>
-                    <th>@Model.lang.common_actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var row in Model.rows) {
-                <tr>
-                    <td><input type="checkbox" class="checkitem" name="nav_id[]" value="@row.ident"></td>
-                    <td style="width:auto;"><code>@row.key</code></td>
-                    <td style="width:100px;">@Model.cultureName</td>
-                    <td>
-                        <input name="v_@row.ident" value="@row.value" class="edit-value" type="text">
-                    </td>
-                    <td style="width:120px;">
-                        <a href="@Model.areaRoute/languages/editlanguages?key=@row.key" class="dsui-btn-edit">@Model.lang.common_edit</a>
-                        <a href="@Model.areaRoute/languages/delete?culture=@Model.cultureId&key=@row.key" onclick="return confirm('@Model.lang.common_confirm_delete')" class="dsui-btn-del">@Model.lang.common_delete</a>
-                    </td>
-                </tr>
-                }
-            </tbody>
-            <tfoot>
-                <tr class="tfoot">
-                    <td><input type="checkbox" class="checkall" id="checkallBottom"></td>
-                    <td colspan="4"><label for="checkallBottom">@Model.lang.common_select_all</label></td>
-                </tr>
-            </tfoot>
-        </table>
-        <ul class="pagination"></ul>
-
-        <a id="add-language"></a>
-        <div class="ncap-form-default">
-            <dl>
-                <dt>@Model.lang.common_add</dt>
-                <dd>
-                    <input name="NewKey" class="input-txt" type="text" placeholder="my.custom.key" style="width:260px;">
-                    <input name="NewValue" class="input-txt" type="text" placeholder="@Model.lang.page_languages_value">
-                    <span class="err"></span>
-                </dd>
-            </dl>
-            <dl>
-                <dt></dt>
-                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms.formSave.submit()">@Model.lang.common_save</a></dd>
-            </dl>
-        </div>
-    </form>
+    <table class="ds-default-table">
+        <thead>
+            <tr>
+                <th class="w24"></th>
+                <th>@Model.lang.page_languages_key</th>
+                <th>@Model.lang.page_languages_language</th>
+                <th>@Model.lang.page_languages_value</th>
+                <th>@Model.lang.common_actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in Model.rows) {
+            <tr id="ds_row_@row.id">
+                <td>@if (row.id > 0) {<input type="checkbox" class="checkitem" name="nav_id[]" value="@row.id">}</td>
+                <td style="width:auto;"><code>@row.key</code></td>
+                <td style="width:100px;">@row.languageName</td>
+                <td class="editable-cell" data-culture-id="@row.cultureId" data-lan-key="@row.key">
+                    <span class="display-value">@row.value</span>
+                    <textarea class="edit-value" style="display: none; height:100px;">@row.value</textarea>
+                    <div class="edit-actions" style="display: none;">
+                        <button class="btn-save">@Model.lang.common_save</button>
+                        <button class="btn-cancel">@Model.lang.common_cancel</button>
+                    </div>
+                </td>
+                <td style="width:120px;">
+                    <a href="@Model.areaRoute/languages/editlanguages?key=@row.key" class="dsui-btn-edit">@Model.lang.common_edit</a>
+                    @if (row.id > 0) {
+                    <a href="javascript:;" onclick="javascript:dsLayerConfirm('@Model.areaRoute/languages/delete?Ids=@row.id','@Model.lang.common_confirm_delete',@row.id)" class="dsui-btn-del">@Model.lang.common_delete</a>
+                    }
+                </td>
+            </tr>
+            }
+        </tbody>
+        <tfoot>
+            <tr class="tfoot">
+                <td><input type="checkbox" class="checkall" id="checkallBottom"></td>
+                <td colspan="4">
+                    <label for="checkallBottom">@Model.lang.common_select_all</label>
+                    &nbsp;&nbsp;<a href="JavaScript:void(0);" class="btn btn-small" onclick="submit_delete_batch()"><span>@Model.lang.common_delete</span></a>
+                </td>
+            </tr>
+        </tfoot>
+    </table>
+    <ul class="pagination">@Model.pageHtml</ul>
 </div>
+<script>
+    // 与 C# 完全一致：删除走 `Delete?Ids=`（JSON 回执），批量删除复用公共 JS 的 `submit_delete_batch()`。
+    // **不要**改成原生 confirm —— 全项目禁止原生弹窗。
+    function submit_delete(ids_str) {
+        var _uri = "@Model.areaRoute/languages/delete?Ids=" + ids_str;
+        dsLayerConfirm(_uri, '@Model.lang.common_confirm_delete');
+    }
+
+    // 翻译值点击就地编辑（对齐 C# `editable-cell` 交互）
+    // 注意：Layout 在 body 末尾加载 jQuery，内联脚本会更早执行 —— 所以统统放到 `load` 之后再绑定。
+    window.addEventListener('load', function () {
+        var currentEditingCell = null;
+
+        $('.editable-cell').click(function (e) {
+            if ($(this).hasClass('editing') || $(e.target).is('button') || $(e.target).is('input')) {
+                return;
+            }
+            if (currentEditingCell && currentEditingCell[0] !== this) {
+                saveEdit(currentEditingCell);
+            }
+            enterEditMode($(this));
+        });
+
+        $('.editable-cell').on('click', '.btn-save', function (e) {
+            e.stopPropagation();
+            saveEdit($(this).closest('.editable-cell'));
+        });
+
+        $('.editable-cell').on('click', '.btn-cancel', function (e) {
+            e.stopPropagation();
+            cancelEdit($(this).closest('.editable-cell'));
+        });
+
+        $('.editable-cell').on('keydown', '.edit-value', function (e) {
+            if (e.keyCode === 13) {
+                e.preventDefault();
+                saveEdit($(this).closest('.editable-cell'));
+            } else if (e.keyCode === 27) {
+                e.preventDefault();
+                cancelEdit($(this).closest('.editable-cell'));
+            }
+        });
+
+        $(document).click(function (e) {
+            if (currentEditingCell && !$(e.target).closest('.editable-cell.editing').length) {
+                saveEdit(currentEditingCell);
+            }
+        });
+
+        function enterEditMode(cell) {
+            currentEditingCell = cell;
+            cell.addClass('editing');
+            cell.find('.display-value').hide();
+            cell.find('.edit-value').show().focus().select();
+            cell.find('.edit-actions').show();
+        }
+
+        function saveEdit(cell) {
+            var cultureId = cell.data('culture-id');
+            var lanKey = cell.data('lan-key');
+            var newValue = cell.find('.edit-value').val();
+            var originalValue = cell.find('.display-value').text();
+
+            if (newValue.trim() === originalValue.trim()) {
+                exitEditMode(cell);
+                return;
+            }
+
+            $.ajax({
+                url: "@Model.areaRoute/languages/editlanvalue",
+                type: 'POST',
+                data: { cultureId: cultureId, lanKey: lanKey, lanValue: newValue },
+                dataType: 'json',
+                success: function (response) {
+                    if (response.success) {
+                        cell.find('.display-value').text(newValue);
+                        exitEditMode(cell);
+                        layer.msg(response.msg, { icon: 1 });
+                    } else {
+                        layer.msg(response.msg, { icon: 2 });
+                        cell.find('.edit-value').val(originalValue);
+                    }
+                },
+                error: function () {
+                    layer.msg('@Model.lang.common_error_request', { icon: 2 });
+                    cell.find('.edit-value').val(originalValue);
+                }
+            });
+        }
+
+        function cancelEdit(cell) {
+            cell.find('.edit-value').val(cell.find('.display-value').text());
+            exitEditMode(cell);
+        }
+
+        function exitEditMode(cell) {
+            cell.removeClass('editing');
+            cell.find('.display-value').show();
+            cell.find('.edit-value').hide();
+            cell.find('.edit-actions').hide();
+            currentEditingCell = null;
+        }
+
+    // 新增
+    $("#btnAdd").click(function () {
+        window.location.href = "@Model.areaRoute/languages/addlanguages";
+        return false;
+    });
+
+    // 导出（GET `Export?cultureId=`，浏览器直接下载 CSV）
+    $("#btnExport").click(function () {
+        var cultureId = $("#cultureId").val();
+        if (!cultureId || cultureId === "0") {
+            layer.msg('@Model.lang.page_languages_export_need_culture', { icon: 2 });
+            return false;
+        }
+        var form = $('<form></form>').attr('action', '@Model.areaRoute/languages/export').attr('method', 'GET');
+        form.append($('<input>').attr('type', 'hidden').attr('name', 'cultureId').attr('value', cultureId));
+        form.appendTo('body').submit().remove();
+        return false;
+    });
+
+    // 导入（读文件文本 → POST 纯文本；服务端零 multipart 解析，跨平台一致）
+    $("#btnImport").click(function () {
+        $("#fileInput").click();
+        return false;
+    });
+    $("#fileInput").change(function () {
+        var file = this.files[0];
+        if (!file) {
+            return;
+        }
+        var cultureId = $("#cultureId").val();
+        var reader = new FileReader();
+        reader.onload = function (e) {
+            $.ajax({
+                url: "@Model.areaRoute/languages/import?cultureId=" + cultureId,
+                type: 'POST',
+                data: e.target.result,
+                processData: false,
+                contentType: 'text/plain; charset=utf-8',
+                dataType: 'json',
+                success: function (response) {
+                    if (response.success) {
+                        layer.msg(response.msg, { icon: 1, time: 1200 }, function () {
+                            window.location.reload();
+                        });
+                    } else {
+                        layer.msg(response.msg, { icon: 2 });
+                    }
+                },
+                error: function () {
+                    layer.msg('@Model.lang.common_error_request', { icon: 2 });
+                }
+            });
+        };
+        reader.readAsText(file, 'utf-8');
+        this.value = '';
+    });
+});
+</script>
