@@ -9,6 +9,12 @@
 //!
 //! 语言包（DB）只覆盖文本，不改变视图能引用的键集合：视图引用 `BUILTIN_STRINGS` 里的键，
 //! 缺失回退内置中文/英文，所以新增语言不会让页面报「属性不存在」。
+//!
+//! ★ **对外键 = 中文源文**（2026-11-23 用户明确要求：「我就是要类似于中文的这种啊」）：
+//! - 后台语言包页的「翻译键」列、导出 CSV 的 `LanKey`、DB 里的 `LocaleStringResource.LanKey`
+//!   一律是**中文原文**（如「控制台」「添加成功」），与 C# NCube/DsMall 的 `LanKey` 完全一致，可直接互导；
+//! - 视图里仍写 `@Model.lang.<ascii 别名>`（Razor 子集不支持方法调用/字符串下标，Zig 标识符也不能用中文），
+//!   所以 `Builtin.key` 保留为**视图别名**（`menu.console`），`Builtin.zh` 就是**对外键**。
 
 const std = @import("std");
 const zzig = @import("zzig");
@@ -16,14 +22,23 @@ const zzig = @import("zzig");
 const sqlite = zzig.db.sqlite;
 const value = zzig.web.value;
 
-/// 内置文案（key → 中文 / 英文）。
+/// 内置文案。
 ///
-/// **新增界面文案**：在这里加一行，再在视图里写 `@Model.lang.<标识符>`；
-/// 语言包管理页可以覆盖这些文本，但键本身由代码定义（视图编译期就要知道它存在）。
+/// 字段含义：
+/// - `key`：**视图别名**（`@Model.lang.menu_console` 这种 ASCII 标识符）；
+/// - `zh`：中文文案，**同时就是对外的资源键**（后台列表 / CSV / DB `LanKey` 都用它）；
+/// - `en`：英文文案（键不变，只变值）。
+///
+/// **新增界面文案**：在这里加一行，再在视图里写 `@Model.lang.<标识符>`。
 pub const Builtin = struct {
     key: []const u8,
     zh: []const u8,
     en: []const u8,
+
+    /// 对外键（= 中文原文）。
+    pub fn publicKey(entry: Builtin) []const u8 {
+        return entry.zh;
+    }
 };
 
 pub const BUILTIN_STRINGS = [_]Builtin{
@@ -504,14 +519,15 @@ pub const Store = struct {
 
         // 内置键里还没落库的 → 虚拟行（`id = 0`）：保证页面一开始就不是空的
         for (BUILTIN_STRINGS) |entry| {
-            if (seen.contains(entry.key)) continue;
-            if (key_filter.len > 0 and std.mem.indexOf(u8, entry.key, key_filter) == null) continue;
+            const public_key = entry.publicKey();
+            if (seen.contains(public_key)) continue;
+            if (key_filter.len > 0 and std.mem.indexOf(u8, public_key, key_filter) == null) continue;
             const builtin_value = self.text(culture_id, entry.key);
             if (value_filter.len > 0 and std.mem.indexOf(u8, builtin_value, value_filter) == null) continue;
             try out.append(arena, .{
                 .id = 0,
                 .culture_id = culture_id,
-                .key = entry.key,
+                .key = public_key,
                 .value = try arena.dupe(u8, builtin_value),
                 .language_name = try arena.dupe(u8, language_name),
             });
@@ -567,21 +583,43 @@ pub const Store = struct {
     }
 
     /// 取文案：DB 覆盖 > 内置（按语言代码选中文/英文）> 键名本身。
+    ///
+    /// `key` 可以传**视图别名**（`menu.console`）或**对外中文键**（「控制台」）：
+    /// - 先按别名找到内置条目（找不到就当它就是对外键）；
+    /// - DB 查「中文键」，未命中再查一次别名（兼容早期存英文键的数据）；
+    /// - 都没有 → 内置英文/中文 → 最后回退键名本身（对齐 C# 「某语言没这个键就用键名」）。
     pub fn text(self: *const Store, culture_id: i32, key: []const u8) []const u8 {
         var buf: [16]u8 = undefined;
         const culture_key = std.fmt.bufPrint(&buf, "{d}", .{culture_id}) catch "";
+
+        const entry = findByAlias(key);
+        const public_key = if (entry) |e| e.publicKey() else key;
+
         if (self.resources.get(culture_key)) |inner| {
-            if (inner.get(key)) |translated| {
+            if (inner.get(public_key)) |translated| {
                 if (translated.len > 0) return translated;
+            }
+            // 兼容：早期数据把英文别名当键存过
+            if (entry != null) {
+                if (inner.get(key)) |legacy| {
+                    if (legacy.len > 0) return legacy;
+                }
             }
         }
         // 内置：按语言代码挑；未知语言回退中文
         const lang = self.byId(culture_id);
         const english = if (lang) |row| isEnglish(row.code) else false;
-        for (BUILTIN_STRINGS) |entry| {
-            if (std.mem.eql(u8, entry.key, key)) return if (english) entry.en else entry.zh;
-        }
+        if (entry) |e| return if (english) e.en else e.zh;
         return key;
+    }
+
+    fn findByAlias(alias: []const u8) ?Builtin {
+        for (BUILTIN_STRINGS) |entry| {
+            if (std.mem.eql(u8, entry.key, alias)) return entry;
+            // 允许直接拿中文键来查
+            if (std.mem.eql(u8, entry.zh, alias)) return entry;
+        }
+        return null;
     }
 
     fn byId(self: *const Store, culture_id: i32) ?Language {
@@ -680,10 +718,10 @@ pub const Store = struct {
         try self.reload();
     }
 
-    /// 语言包键集合：内置键 ∪ 数据库里出现过的自定义键（去重、稳定顺序）。
+    /// 语言包键集合：内置键（中文对外键）∪ 数据库里出现过的自定义键（去重、稳定顺序）。
     pub fn resourceKeys(self: *const Store, allocator: std.mem.Allocator) ![]const []const u8 {
         var list: std.ArrayList([]const u8) = .empty;
-        for (BUILTIN_STRINGS) |entry| try list.append(allocator, entry.key);
+        for (BUILTIN_STRINGS) |entry| try list.append(allocator, entry.publicKey());
         var it = self.resources.iterator();
         while (it.next()) |entry| {
             var inner = entry.value_ptr.iterator();

@@ -478,6 +478,8 @@ pub const Builder = struct {
     /// 应用根（对应 ASP.NET Core 的 `~`）：视图里 `~/static/x` → `{path_base}/static/x`。
     /// `null` = 域名根（展开为 `/static/x`）；部署在子目录时传 `/pek`。
     path_base: ?[]const u8 = null,
+    /// **程序目录**（exe 所在目录）：`Model.xml` 这类随包资源认它（候选链里排第一）。
+    app_root: ?[]const u8 = null,
     /// 模型文件（默认 `Model.xml`，与 C# 同构）：项目目录下存在则用它，否则用库内置模型。
     model_path: []const u8 = sqlite_backend_mod.DEFAULT_MODEL_FILE,
 
@@ -506,6 +508,13 @@ pub const Builder = struct {
     pub fn pathBase(self: Builder, base: []const u8) Builder {
         var copy = self;
         copy.path_base = base;
+        return copy;
+    }
+
+    /// 程序目录（exe 所在目录）：`Model.xml` 这类随包资源认它。
+    pub fn appRoot(self: Builder, dir: []const u8) Builder {
+        var copy = self;
+        copy.app_root = dir;
         return copy;
     }
 
@@ -695,24 +704,37 @@ pub const Builder = struct {
             if (self.storage_dir) |dir| {
                 const db_path = try std.fs.path.join(self.allocator, &.{ dir, try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area}) });
                 defer self.allocator.free(db_path);
-                // 模型：显式 `model_path`（默认 cwd 下 `Model.xml`）→ 数据目录 → 程序目录
-                // （换 `--data-dir` 不该丢项目模型：2026-11-22 踩过，见 `readProjectModel` 注释）
+                // 模型候选顺序（**程序目录优先**）：
+                //   ① `{程序目录}/Model.xml` —— 随构建/打包安装的**权威副本**（`build.zig` 会装它）；
+                //   ② 显式 `model_path`（默认 cwd 下 `Model.xml`）—— 开发期直接跑源码目录时用；
+                //   ③ `{data_dir}/Model.xml` —— 兼容老部署，只作兜底。
+                //
+                // ★ 2026-11-23 踩过：原来 data_dir 排在程序目录**之前**，而 dev/部署时 `--data-dir` 里
+                // 常留着一份**旧** `Model.xml`（本次是加 `DH_SingleArticle` 之前的那份）。
+                // 结果：库里明明有表、程序也装好了新模型，Dal 却报 `TableNotFound`，
+                // 前台 `/p/{code}` 全 404。经验：模型与 Views/wwwroot 一样，**认程序目录**。
                 var model_candidates: [3][]const u8 = undefined;
                 var candidate_count: usize = 0;
+                var app_index: ?usize = null;
+                if (self.app_root) |app_dir| {
+                    app_index = candidate_count;
+                    model_candidates[candidate_count] = try std.fs.path.join(self.allocator, &.{ app_dir, sqlite_backend_mod.DEFAULT_MODEL_FILE });
+                    candidate_count += 1;
+                }
                 model_candidates[candidate_count] = self.model_path;
                 candidate_count += 1;
                 if (self.storage_dir) |data_dir| {
                     model_candidates[candidate_count] = try std.fs.path.join(self.allocator, &.{ data_dir, sqlite_backend_mod.DEFAULT_MODEL_FILE });
                     candidate_count += 1;
                 }
-                if (self.path_base) |base| {
-                    model_candidates[candidate_count] = try std.fs.path.join(self.allocator, &.{ base, sqlite_backend_mod.DEFAULT_MODEL_FILE });
-                    candidate_count += 1;
-                }
-                // 只有拼出来的后两个需要释放（第一个是调用方给的）
+                // 只有拼出来的（非 `model_path`）需要释放
                 defer {
-                    var i: usize = 1;
-                    while (i < candidate_count) : (i += 1) self.allocator.free(model_candidates[i]);
+                    var i: usize = 0;
+                    while (i < candidate_count) : (i += 1) {
+                        if (app_index != null and i == app_index.?) continue;
+                        if (std.mem.eql(u8, model_candidates[i], self.model_path)) continue;
+                        self.allocator.free(model_candidates[i]);
+                    }
                 }
                 const model_xml = readProjectModel(self.allocator, self.io, model_candidates[0..candidate_count]) catch |e| blk_model: {
                     zzig.Logger.warn("[ZDsMallUI] 读取项目 Model.xml 失败（{s}），改用内置模型", .{@errorName(e)});
@@ -1016,7 +1038,7 @@ test "门面：视图不落盘、静态资源落地且幂等" {
     // 自造样式已废弃：不再落地（旧版本留下的会被清理）
     try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/css/admin-ui.css", .{web_root})));
     // 视图**不再落地**：磁盘无副本，渲染走内置源（对齐 C# 预编译视图）
-    try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Config/Index.cshtml", .{areas_root})));
+    try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Config/Index.zshtml", .{areas_root})));
 
     const second = try ui.materializeDefaults();
     try testing.expectEqual(@as(usize, 0), second);

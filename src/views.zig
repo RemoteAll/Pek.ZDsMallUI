@@ -1,8 +1,8 @@
-﻿//! 视图约定：**与 C# 同构** —— `Areas/{Area}/Views/{Controller}/{Action}.cshtml`，
-//! 共享视图 `Views/Shared/{Name}.cshtml`（Razor 子集，双端可渲染）。
+//! 视图约定：**与 C# 同构** —— `Areas/{Area}/Views/{Controller}/{Action}.zshtml`，
+//! 共享视图 `Views/Shared/{Name}.zshtml`（Razor 子集，双端可渲染）。
 //!
 //! `zzig.web.ViewRenderer` 原生支持这套 ASP.NET Core Areas 约定：
-//! `/biz/config/index` → `Areas/Biz/Views/Config/Index.cshtml`；
+//! `/biz/config/index` → `Areas/Biz/Views/Config/Index.zshtml`；
 //! 区域视图缺失时回退 `Areas/Admin/Views/…`，因此改区域名（如 `Biz`）不必复制默认视图；
 //! 需要定制时再在 `Areas/Biz/Views/…` 放同名文件覆盖即可（对齐 NCube「子项目视图重写父项目视图」）。
 //!
@@ -35,19 +35,19 @@ pub const DefaultView = struct {
 
 /// 内置默认视图清单（与 C# 参考工程同一份，仅改为 Razor 子集语法）。
 pub const DEFAULT_VIEWS = [_]DefaultView{
-    .{ .relative = "Views/Shared/_Layout.cshtml", .source = @embedFile("../Views/Shared/_Layout.cshtml") },
-    .{ .relative = "Views/Shared/Prompt.cshtml", .source = @embedFile("../Views/Shared/Prompt.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Home/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Home/Index.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Home/Dashboard.cshtml", .source = @embedFile("../Areas/Admin/Views/Home/Dashboard.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Home/ModifyPw.cshtml", .source = @embedFile("../Areas/Admin/Views/Home/ModifyPw.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Config/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Config/Index.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Login/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Login/Index.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Culture/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Culture/Index.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Languages/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Languages/Index.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Culture/AddCulture.cshtml", .source = @embedFile("../Areas/Admin/Views/Culture/AddCulture.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Culture/EditCulture.cshtml", .source = @embedFile("../Areas/Admin/Views/Culture/EditCulture.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Languages/AddLanguages.cshtml", .source = @embedFile("../Areas/Admin/Views/Languages/AddLanguages.cshtml") },
-    .{ .relative = "Areas/Admin/Views/Languages/EditLanguages.cshtml", .source = @embedFile("../Areas/Admin/Views/Languages/EditLanguages.cshtml") },
+    .{ .relative = "Views/Shared/_Layout.zshtml", .source = @embedFile("../Views/Shared/_Layout.zshtml") },
+    .{ .relative = "Views/Shared/Prompt.zshtml", .source = @embedFile("../Views/Shared/Prompt.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Home/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Home/Index.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Home/Dashboard.zshtml", .source = @embedFile("../Areas/Admin/Views/Home/Dashboard.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Home/ModifyPw.zshtml", .source = @embedFile("../Areas/Admin/Views/Home/ModifyPw.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Config/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Config/Index.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Login/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Login/Index.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Culture/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Culture/Index.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Languages/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Languages/Index.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Culture/AddCulture.zshtml", .source = @embedFile("../Areas/Admin/Views/Culture/AddCulture.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Culture/EditCulture.zshtml", .source = @embedFile("../Areas/Admin/Views/Culture/EditCulture.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Languages/AddLanguages.zshtml", .source = @embedFile("../Areas/Admin/Views/Languages/AddLanguages.zshtml") },
+    .{ .relative = "Areas/Admin/Views/Languages/EditLanguages.zshtml", .source = @embedFile("../Areas/Admin/Views/Languages/EditLanguages.zshtml") },
 };
 
 /// 渲染结果。
@@ -110,7 +110,7 @@ pub const Views = struct {
         self.renderer.setPathBase(base);
     }
 
-    /// 按 Area 约定渲染：`Areas/{Area}/Views/{Controller}/{Action}.cshtml`
+    /// 按 Area 约定渲染：`Areas/{Area}/Views/{Controller}/{Action}.zshtml`
     /// （缺失回退 `Areas/Admin/Views/…`）。
     pub fn render(
         self: *Views,
@@ -140,7 +140,7 @@ pub const Views = struct {
         };
     }
 
-    /// 渲染共享视图：`Views/Shared/{Name}.cshtml`（如 `Prompt`）。
+    /// 渲染共享视图：`Views/Shared/{Name}.zshtml`（如 `Prompt`）。
     pub fn renderShared(self: *Views, arena: std.mem.Allocator, name: []const u8, model: zzig.web.Value) RenderOutcome {
         const full_model = withTemplateDefaults(arena, model) catch {
             return .{ .fail = "视图模型构建失败（内存不足）" };
@@ -153,7 +153,7 @@ pub const Views = struct {
 
     /// 区域视图是否存在（部署自检用；大小写按文件系统语义）。
     pub fn exists(self: *Views, area_name: []const u8, controller: []const u8, action: []const u8) bool {
-        const path = std.fmt.allocPrint(self.allocator, "{s}/{s}/Views/{s}/{s}.cshtml", .{
+        const path = std.fmt.allocPrint(self.allocator, "{s}/{s}/Views/{s}/{s}.zshtml", .{
             self.areas_root,
             std.mem.trim(u8, area_name, " /"),
             std.mem.trim(u8, controller, " /"),
@@ -400,7 +400,7 @@ test "视图：内置源直接渲染（磁盘无副本，对齐 C# 预编译视�
     defer views.deinit();
 
     // 磁盘上没有任何视图文件，依然能渲染出框架页
-    try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Index.cshtml", .{areas_root})));
+    try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Index.zshtml", .{areas_root})));
 
     var builder = zzig.web.ObjectBuilder.init(arena);
     try builder.str("title", "管理后台");
@@ -423,7 +423,7 @@ test "视图：磁盘文件优先于内置源（项目覆盖）" {
     const areas_root = fixture.areasRoot(arena);
 
     try zzig.fsio.makePath(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home", .{areas_root}));
-    try zzig.fsio.writeFile(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Index.cshtml", .{areas_root}), "<p>DISK-WIN</p>");
+    try zzig.fsio.writeFile(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Index.zshtml", .{areas_root}), "<p>DISK-WIN</p>");
 
     var views = Views.init(testing.allocator, testing.io, views_root, areas_root);
     defer views.deinit();
@@ -439,8 +439,8 @@ test "视图：清理历史落盘副本（只删带标记的）" {
     const views_root = fixture.viewsRoot(arena);
     const areas_root = fixture.areasRoot(arena);
 
-    const marked = try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Index.cshtml", .{areas_root});
-    const custom = try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Dashboard.cshtml", .{areas_root});
+    const marked = try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Index.zshtml", .{areas_root});
+    const custom = try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Dashboard.zshtml", .{areas_root});
     try zzig.fsio.makePath(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home", .{areas_root}));
     try zzig.fsio.writeFile(testing.io, marked, legacy_marker_prefix ++ "v2 *@\n<p>old</p>");
     try zzig.fsio.writeFile(testing.io, custom, "<p>MINE</p>");
@@ -479,7 +479,7 @@ test "视图：区域专属模板覆盖 Admin" {
     const areas_root = fixture.areasRoot(arena);
 
     try zzig.fsio.makePath(testing.io, try std.fmt.allocPrint(arena, "{s}/Biz/Views/Config", .{areas_root}));
-    try zzig.fsio.writeFile(testing.io, try std.fmt.allocPrint(arena, "{s}/Biz/Views/Config/Index.cshtml", .{areas_root}), "<p>BIZ-OVERRIDE</p>");
+    try zzig.fsio.writeFile(testing.io, try std.fmt.allocPrint(arena, "{s}/Biz/Views/Config/Index.zshtml", .{areas_root}), "<p>BIZ-OVERRIDE</p>");
 
     var views = Views.init(testing.allocator, testing.io, views_root, areas_root);
     defer views.deinit();

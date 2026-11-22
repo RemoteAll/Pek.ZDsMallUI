@@ -499,13 +499,27 @@ pub fn renderView(
     // 与用户语言相关的装配统一放这里：所有后台页面的 `@Model.lang.*` 都能用
     const localized = withLanguage(self, c.arena, currentUser(c), model) catch model;
     return switch (self.views.render(c.arena, self.areaName(), controller, view, localized)) {
-        .html => |html| .{ .response = router.Response.html(try injectRenderMs(c.arena, html, nowMillis() - started)) },
+        .html => |html| .{ .response = adminHtml(c.arena, try injectRenderMs(c.arena, html, nowMillis() - started)) },
         .fail => |message| blk: {
             zzig.Logger.err("[ZDsMallUI] {s}", .{message});
             const envelope = try controller_mod.jsonResult(c.arena, 500, message, null);
             break :blk .{ .response = envelope };
         },
     };
+}
+
+/// 后台页统一加 `Cache-Control: no-store`。
+///
+/// 2026-11-23 踩过：后台页原来**没有任何缓存头**，浏览器（尤其是 iframe 里的
+/// `/{area}/home/index` 框架）会拿启发式缓存，服务端数据已经变了却仍显示旧列表 ——
+/// 用户看到「语言包的键怎么还是没有变」，实际接口返回的已经是新内容。
+/// 后台页是**按登录用户与实时数据渲染**的，正确语义就是「永不缓存」。
+fn adminHtml(arena: std.mem.Allocator, html: []const u8) router.Response {
+    const headers = arena.alloc(std.http.Header, 1) catch return router.Response.html(html);
+    headers[0] = .{ .name = "cache-control", .value = "no-store, max-age=0" };
+    var resp = router.Response.html(html);
+    resp.headers = headers;
+    return resp;
 }
 
 /// 当前时刻（毫秒）。Zig 0.17 把 `std.time.*Timestamp` 都移除了，统一走 zzig 的兼容层。

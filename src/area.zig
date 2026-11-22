@@ -1,7 +1,7 @@
 //! Area（区域）命名与约定（对齐 ASP.NET Core Areas / C# `Pek.NCubeUI.Areas.Admin`）。
 //!
 //! C# 参考工程的区域名由配置决定（`DHSetting.Current.AdminArea`，默认 `Admin`），
-//! 路由是 `/{area}/{controller}/{action}`，视图是 `Areas/{Area}/Views/{Controller}/{Action}.cshtml`。
+//! 路由是 `/{area}/{controller}/{action}`，视图是 `Areas/{Area}/Views/{Controller}/{Action}.zshtml`。
 //! Zig 侧保持同一套两级约定，但**区域名在装配时由消费方决定**（可来自它自己的配置/环境变量）：
 //!
 //! ```zig
