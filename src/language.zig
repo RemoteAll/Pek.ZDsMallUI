@@ -74,6 +74,7 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "启用", .en = "Enabled" },
     .{ .key = "停用", .en = "Disabled" },
     .{ .key = "默认", .en = "Default" },
+    .{ .key = "标准", .en = "Standard" },
     .{ .key = "管理", .en = "Manage" },
     .{ .key = "标题", .en = "Title" },
     .{ .key = "显示名称", .en = "Display name" },

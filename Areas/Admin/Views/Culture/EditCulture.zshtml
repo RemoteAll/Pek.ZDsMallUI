@@ -75,7 +75,7 @@
                     <td class="vatop rowform"><input type="text" value="" name="Lcid" id="Lcid" class="infoTableInput w300" value="@Model.row.lcid"></td>
                 </tr>
                 <tr>
-                    <td><label>@(Model.lang.common_status):</label></td>
+                    <td><label>@T("状态"):</label></td>
                 </tr>
                 <tr class="noborder">
                     <td class="vatop rowform onoff">
@@ -86,7 +86,7 @@
                     </td>
                 </tr>
                 <tr>
-                    <td><label>@(Model.lang.page_culture_is_default):</label></td>
+                    <td><label>@T("是否默认"):</label></td>
                 </tr>
                 <tr class="noborder">
                     <td class="vatop rowform onoff">

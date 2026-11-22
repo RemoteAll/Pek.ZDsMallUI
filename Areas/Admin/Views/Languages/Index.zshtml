@@ -103,11 +103,11 @@
     <form method="get" name="formSearch" id="formSearch">
         <div class="ds-search-form">
             <dl>
-                <dt>@(Model.lang.page_languages_key)：</dt>
+                <dt>@T("资源键")：</dt>
                 <dd><input type="text" value="@Model.lanKey" name="lanKey" class="txt"></dd>
             </dl>
             <dl>
-                <dt>@(Model.lang.page_languages_language)：</dt>
+                <dt>@T("语言")：</dt>
                 <dd>
                     <select name="cultureId" id="cultureId">
                         @foreach (var item in Model.cultures) {
@@ -117,7 +117,7 @@
                 </dd>
             </dl>
             <dl>
-                <dt>@(Model.lang.page_languages_value)：</dt>
+                <dt>@T("翻译文本")：</dt>
                 <dd><input type="text" value="@Model.lanValue" name="lanValue" class="txt"></dd>
             </dl>
             <div class="btn_group">

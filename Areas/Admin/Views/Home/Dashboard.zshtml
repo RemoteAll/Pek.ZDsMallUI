@@ -19,7 +19,7 @@
             <div class="item-title">
                 <div class="subject">
                     <h3>@Model.displayName</h3>
-                    <h5>@(Model.lang.page_dashboard_user)：@Model.userName</h5>
+                    <h5>@T("当前用户")：@Model.userName</h5>
                 </div>
             </div>
         </div>
@@ -31,7 +31,7 @@
             </dl>
             <dl>
                 <dt>@T("当前区域")</dt>
-                <dd><code>@Model.areaName</code>（<code>@Model.areaRoute</code> @(Model.lang.page_dashboard_area_desc)）</dd>
+                <dd><code>@Model.areaName</code>（<code>@Model.areaRoute</code> @T("路由前缀，可随配置改名")）</dd>
             </dl>
             <dl>
                 <dt>@T("上传目录")</dt>

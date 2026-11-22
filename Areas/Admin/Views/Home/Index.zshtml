@@ -81,7 +81,7 @@
                    访问首页 / 清除缓存 / **Language（二级菜单：语言列表）** / 修改密码 / 安全退出。
                    `Language` 不做一级 li，而是主下拉里的一行 + 向右（贴边时向左）弹出的二级菜单。 *@
                 <li class="has-sub">
-                    <span>@(Model.lang.user_greeting)，@Model.userName</span>
+                    <span>@T("您好")，@Model.userName</span>
                     <div class="sub-meun">
                         <dl>
                             <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>@T("访问首页")</a></dd>

@@ -6,6 +6,19 @@
    - 表单：`.layui-tab.layui-tab-brief.Lan > .layui-tab-title + .layui-tab-content > .layui-tab-item.layui-show > .ncap-form-default`
    - 行：`dl > dt + dd > input.input-txt + span.err + p.notic`
    只把 C# 的 tag helper（@T / Url.Action / BeginForm）换成模型取值，样式全部来自随包下发的原版 admin.css + layui。 *@
+@* ★ 页面级样式必须照搬 C#：`.layui-tab.layui-tab-brief.Lan` 的 `box-shadow: 0 0 5px #AAA`
+   就是「站点设置表单四周那圈灰边」的唯一来源（admin.css 里没有），漏了页面就“没有边框”。 *@
+<style>
+    .layui-tab-title {
+        width: 95%;
+        margin: 0 auto;
+    }
+
+    .layui-tab.layui-tab-brief.Lan {
+        box-shadow: 0 0 5px #AAA inset;
+        box-shadow: 0 0 5px #AAA;
+    }
+</style>
 <div class="page">
     <div class="fixed-bar">
         <div class="item-title">
@@ -24,7 +37,7 @@
     <form method="post" action="@Model.areaRoute/config/updatebase" name="form1">
         <div class="layui-tab layui-tab-brief Lan">
             <ul class="layui-tab-title">
-                <li class="layui-this">@(Model.lang.common_default):</li>
+                <li class="layui-this">@T("标准"):</li>
             </ul>
             <div class="layui-tab-content">
                 <div class="layui-tab-item layui-show">
