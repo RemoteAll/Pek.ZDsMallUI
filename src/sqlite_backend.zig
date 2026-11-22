@@ -189,7 +189,42 @@ pub const SqliteBackend = struct {
         .save_settings = saveSettingsImpl,
         .login = loginImpl,
         .display_name = displayNameImpl,
+        .change_password = changePasswordImpl,
     };
+
+    /// 改密：校验旧口令（`password.verify`）→ 新口令哈希 → `UPDATE AdminUser`。
+    fn changePasswordImpl(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        user_name: []const u8,
+        old_pass: []const u8,
+        new_pass: []const u8,
+    ) anyerror!bool {
+        const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
+        const name = std.mem.trim(u8, user_name, " \t\r\n");
+        if (name.len == 0 or old_pass.len == 0 or new_pass.len == 0) return false;
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const row = try self.queryOne(
+            arena,
+            "SELECT Id, Password FROM AdminUser WHERE UserName = ? COLLATE NOCASE",
+            &.{.{ .text = name }},
+        );
+        if (row.names.len == 0) return false;
+        const id = (row.get("Id") orelse return false).int;
+        const stored = (row.get("Password") orelse return false).text;
+        if (!password.verify(old_pass, stored)) return false;
+
+        const hashed = try password.hash(self.allocator, self.io, new_pass);
+        defer self.allocator.free(hashed);
+        try self.exec("UPDATE AdminUser SET Password = ? WHERE Id = ?", &.{
+            .{ .text = hashed },
+            .{ .int = id },
+        });
+        return true;
+    }
 
     fn settingsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror!zzig.web.Value {
         const self: *SqliteBackend = @ptrCast(@alignCast(ptr));

@@ -114,6 +114,14 @@ pub const AdminBackend = struct {
         login: *const fn (ptr: *anyopaque, arena: std.mem.Allocator, user_name: []const u8, pass: []const u8) anyerror!LoginOutcome,
         /// 系统显示名（渲染页面标题用）。
         display_name: *const fn (ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const u8,
+        /// 修改口令（旧口令校验 + 新口令入库，均走 `password.zig`）；未提供 = 不支持改密。
+        change_password: ?*const fn (
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            user_name: []const u8,
+            old_pass: []const u8,
+            new_pass: []const u8,
+        ) anyerror!bool = null,
     };
 
     /// 读取设置。
@@ -134,6 +142,23 @@ pub const AdminBackend = struct {
     /// 系统显示名（缺设置时回退「管理后台」）。
     pub fn displayName(self: AdminBackend, arena: std.mem.Allocator) ![]const u8 {
         return self.vtable.display_name(self.ptr, arena);
+    }
+
+    /// 是否支持修改口令。
+    pub fn supportsChangePassword(self: AdminBackend) bool {
+        return self.vtable.change_password != null;
+    }
+
+    /// 修改口令：旧口令正确且新口令写入成功返回 `true`。
+    pub fn changePassword(
+        self: AdminBackend,
+        arena: std.mem.Allocator,
+        user_name: []const u8,
+        old_pass: []const u8,
+        new_pass: []const u8,
+    ) !bool {
+        const func = self.vtable.change_password orelse return false;
+        return func(self.ptr, arena, user_name, old_pass, new_pass);
     }
 };
 
@@ -190,7 +215,35 @@ pub const MemoryBackend = struct {
         .save_settings = saveSettingsImpl,
         .login = loginImpl,
         .display_name = displayNameImpl,
+        .change_password = changePasswordImpl,
     };
+
+    /// 改密：校验旧口令后写入新口令（复用 [`password`] 的哈希与升级逻辑）。
+    fn changePasswordImpl(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        user_name: []const u8,
+        old_pass: []const u8,
+        new_pass: []const u8,
+    ) anyerror!bool {
+        _ = arena;
+        const self: *MemoryBackend = @ptrCast(@alignCast(ptr));
+        const name = std.mem.trim(u8, user_name, " \t\r\n");
+        if (name.len == 0 or old_pass.len == 0 or new_pass.len == 0) return false;
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        for (self.users.items) |*user| {
+            if (!std.ascii.eqlIgnoreCase(user.user_name, name)) continue;
+            if (!password.verify(old_pass, user.password)) return false;
+            const hashed = try password.hash(self.allocator, self.io, new_pass);
+            self.allocator.free(user.password);
+            user.password = hashed;
+            return true;
+        }
+        return false;
+    }
 
     fn settingsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror!zzig.web.Value {
         const self: *MemoryBackend = @ptrCast(@alignCast(ptr));

@@ -39,6 +39,7 @@ pub const DEFAULT_VIEWS = [_]DefaultView{
     .{ .relative = "Views/Shared/Prompt.cshtml", .source = @embedFile("../Views/Shared/Prompt.cshtml") },
     .{ .relative = "Areas/Admin/Views/Home/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Home/Index.cshtml") },
     .{ .relative = "Areas/Admin/Views/Home/Dashboard.cshtml", .source = @embedFile("../Areas/Admin/Views/Home/Dashboard.cshtml") },
+    .{ .relative = "Areas/Admin/Views/Home/ModifyPw.cshtml", .source = @embedFile("../Areas/Admin/Views/Home/ModifyPw.cshtml") },
     .{ .relative = "Areas/Admin/Views/Config/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Config/Index.cshtml") },
     .{ .relative = "Areas/Admin/Views/Login/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Login/Index.cshtml") },
 };
@@ -77,6 +78,18 @@ pub const Views = struct {
     /// 释放模板缓存。
     pub fn deinit(self: *Views) void {
         self.renderer.deinit();
+    }
+
+    /// 清空模板缓存（后台「清除缓存」用）：重建渲染器，下次渲染重新读盘编译。
+    ///
+    /// zzig 的 `ViewRenderer` 没有单独的 clear 接口，`deinit + init` 是等价且安全的做法
+    /// （重建后重新设回根目录 / 区域根 / 回退区域，语义与初始一致）。
+    pub fn clearCache(self: *Views) void {
+        self.renderer.deinit();
+        self.renderer = zzig.web.ViewRenderer.init(self.allocator, self.io);
+        self.renderer.setRoot(self.root);
+        self.renderer.setAreasRoot(self.areas_root);
+        self.renderer.setFallbackArea(area.DEFAULT_AREA);
     }
 
     /// 按 Area 约定渲染：`Areas/{Area}/Views/{Controller}/{Action}.cshtml`

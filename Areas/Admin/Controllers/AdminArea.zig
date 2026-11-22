@@ -243,6 +243,11 @@ pub const AdminArea = struct {
             try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(home_controller.HomeController.index));
             // 框架内欢迎页（C# `Main/Index` 的位置）
             try ctrl.mapWithContext("GET", "dashboard", @ptrCast(self), guarded(home_controller.HomeController.dashboard));
+            // 右上角「清除缓存」（C# `Home/ClearCache`）
+            try ctrl.mapWithContext("GET", "clearcache", @ptrCast(self), guarded(home_controller.HomeController.clearCache));
+            // 右上角「修改密码」（C# `Home/ModifyPw`；GET/POST 用两个 action 名，避免同名覆盖）
+            try ctrl.mapWithContext("GET", "modifypw", @ptrCast(self), guarded(home_controller.HomeController.modifyPw));
+            try ctrl.mapWithContext("POST", "modifypwsubmit", @ptrCast(self), guarded(home_controller.HomeController.modifyPwSubmit));
             try ctrl.mount(&app.router);
         }
         {

@@ -31,6 +31,61 @@ pub const HomeController = struct {
         return admin_area.renderView(self, c, "Home", "Dashboard", model);
     }
 
+    /// `GET /{area}/home/clearcache`：清空模板缓存后回到欢迎页（对齐 C# `Home/ClearCache`）。
+    pub fn clearCache(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
+        const self = admin_area.castSelf(raw);
+        self.views.clearCache();
+        const location = try std.fmt.allocPrint(c.arena, "{s}/home/dashboard", .{try area_mod.routePrefix(c.arena, self.areaName())});
+        return .{ .response = try router.Response.redirectAlloc(c.arena, location) };
+    }
+
+    /// `GET /{area}/home/modifypw`：修改密码页（对齐 C# `Home/ModifyPw`）。
+    pub fn modifyPw(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
+        const self = admin_area.castSelf(raw);
+        return renderModifyPw(self, c, "", "");
+    }
+
+    /// `POST /{area}/home/modifypwsubmit`：校验旧密码 → 写新密码。
+    ///
+    /// 注意：zzig 的 controller 以 action 名为键、**同名的第二个注册会覆盖第一个**，
+    /// 所以 GET 与 POST 用两个 action 名（`modifypw` / `modifypwsubmit`）。
+    pub fn modifyPwSubmit(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
+        const self = admin_area.castSelf(raw);
+        const user = admin_area.currentUser(c);
+
+        const old_password = c.formValue("OldPassword") orelse "";
+        const password = c.formValue("Password") orelse "";
+        const repassword = c.formValue("RePassword") orelse "";
+
+        if (std.mem.trim(u8, old_password, " \t\r\n").len == 0) {
+            return renderModifyPw(self, c, "原密码不可为空", "");
+        }
+        if (password.len < 6) {
+            return renderModifyPw(self, c, "新密码至少 6 位", "");
+        }
+        if (!std.mem.eql(u8, password, repassword)) {
+            return renderModifyPw(self, c, "两次输入的新密码不一致", "");
+        }
+        if (user.len == 0) {
+            const route = try area_mod.routePrefix(c.arena, self.areaName());
+            return .{ .response = try router.Response.redirectAlloc(c.arena, try std.fmt.allocPrint(c.arena, "{s}/login/index", .{route})) };
+        }
+        if (!self.backend.supportsChangePassword()) {
+            return renderModifyPw(self, c, "当前数据源不支持修改密码", "");
+        }
+
+        const ok = self.backend.changePassword(c.arena, user, old_password, password) catch |err| {
+            zzig.Logger.err("[ZDsMallUI] 修改密码失败（用户 {s}）：{s}", .{ user, @errorName(err) });
+            return renderModifyPw(self, c, "修改失败，请查看后台日志", "");
+        };
+        if (!ok) return renderModifyPw(self, c, "原密码不正确", "");
+
+        zzig.Logger.info("[ZDsMallUI] 用户 {s} 已修改密码", .{user});
+        const route = try area_mod.routePrefix(c.arena, self.areaName());
+        const location = try std.fmt.allocPrint(c.arena, "{s}/home/dashboard", .{route});
+        return .{ .response = try router.Response.redirectAlloc(c.arena, location) };
+    }
+
     /// 组装首页模型（控制器与测试共用）。
     pub fn buildModel(self: *admin_area.AdminArea, arena: std.mem.Allocator, user: []const u8) !zzig.web.Value {
         const display_name = try self.backend.displayName(arena);
@@ -104,4 +159,17 @@ fn menuItem(arena: std.mem.Allocator, name: []const u8, url: []const u8, icon: [
     try item.str("url", url);
     try item.str("icon", icon);
     return item.finish();
+}
+
+/// 渲染「修改密码」页（`error` 为空表示首次进入）。
+fn renderModifyPw(self: *admin_area.AdminArea, c: *router.Ctx, err_text: []const u8, notice: []const u8) !ActionResult {
+    var builder = zzig.web.ObjectBuilder.init(c.arena);
+    try builder.str("title", "修改密码 - 管理后台");
+    try builder.str("displayName", try self.backend.displayName(c.arena));
+    try builder.str("userName", admin_area.currentUser(c));
+    try builder.str("areaRoute", try area_mod.routePrefix(c.arena, self.areaName()));
+    try builder.str("error", err_text);
+    try builder.str("notice", notice);
+    try builder.boolean("hasError", err_text.len > 0);
+    return admin_area.renderView(self, c, "Home", "ModifyPw", builder.finish());
 }
