@@ -93,6 +93,12 @@ pub const AdminArea = struct {
     /// 「库值如何落到业务配置文件」是业务知识（文件名/格式/热加载），库不该写死。
     settings_saved_ctx: ?*anyopaque = null,
     settings_saved_hook: ?*const fn (ctx: ?*anyopaque, arena: std.mem.Allocator) void = null,
+    /// 站点信息按语言分 Tab 的数据源（项目侧用 `entities` 实现，库不碰业务表）
+    language_tabs_ctx: ?*anyopaque = null,
+    language_tabs_hook: ?*const fn (ctx: ?*anyopaque, arena: std.mem.Allocator) zzig.web.Value = null,
+    /// 保存多语言 Tab 字段的钩子
+    save_language_rows_ctx: ?*anyopaque = null,
+    save_language_rows_hook: ?*const fn (ctx: ?*anyopaque, arena: std.mem.Allocator, form: []const router.Param) void = null,
 
     /// 注册「站点设置保存成功」回调（幂等：后注册的覆盖先注册的）。
     pub fn onSettingsSaved(
@@ -108,6 +114,42 @@ pub const AdminArea = struct {
     pub fn notifySettingsSaved(self: *AdminArea, arena: std.mem.Allocator) void {
         const hook = self.settings_saved_hook orelse return;
         hook(self.settings_saved_ctx, arena);
+    }
+
+    /// 站点信息「按语言分 Tab」的**数据源钩子**（项目侧用 `entities` 实现；库不碰业务表）。
+    ///
+    /// 为什么用钩子：`SiteInfoLan` 属项目表，库的 `ConfigController` 只负责 UI，
+    /// 直接 `dal.table("SiteInfoLan")` 会把业务表知识塞进库（用户 2026-11-23 指出「表数据和控制器混在一个文件」）。
+    /// 项目在装配时 `ui.admin_area.onLanguageTabs(&store, store.languageTabsValue);` 即可。
+    pub fn onLanguageTabs(
+        self: *AdminArea,
+        ctx: ?*anyopaque,
+        hook: *const fn (ctx: ?*anyopaque, arena: std.mem.Allocator) zzig.web.Value,
+    ) void {
+        self.language_tabs_ctx = ctx;
+        self.language_tabs_hook = hook;
+    }
+
+    /// 站点信息 Tab 数据（`[{id,name,langCode,siteName,seoTitle,...}]`）；未注册钩子返回空列表。
+    pub fn languageTabs(self: *const AdminArea, arena: std.mem.Allocator) zzig.web.Value {
+        const hook = self.language_tabs_hook orelse return .{ .list = &.{} };
+        return hook(self.language_tabs_ctx, arena);
+    }
+
+    /// 保存**多语言 Tab 字段**（`{langId}.SiteName` 这类表单名）的钩子。
+    pub fn onSaveLanguageRows(
+        self: *AdminArea,
+        ctx: ?*anyopaque,
+        hook: *const fn (ctx: ?*anyopaque, arena: std.mem.Allocator, form: []const router.Param) void,
+    ) void {
+        self.save_language_rows_ctx = ctx;
+        self.save_language_rows_hook = hook;
+    }
+
+    /// 通知项目侧保存多语言 Tab 字段（无钩子时忽略）。
+    pub fn notifySaveLanguageRows(self: *AdminArea, arena: std.mem.Allocator, form: []const router.Param) void {
+        const hook = self.save_language_rows_hook orelse return;
+        hook(self.save_language_rows_ctx, arena, form);
     }
 
     /// 指定数据源与视图根（默认区域 `Admin`，首页 `/{area}/home/index`）。

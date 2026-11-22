@@ -213,6 +213,8 @@ pub fn withTemplateDefaults(arena: std.mem.Allocator, model: zzig.web.Value) !zz
         .{ .key = "hasMenus", .value = .{ .boolean = false } },
         // 后台菜单/多语言：即使控制器没传也能渲染（避免「属性不存在」硬错误）
         .{ .key = "groups", .value = .{ .list = &.{} } },
+        // 站点设置页的「按语言分 Tab」数据（`SiteInfoLan`）；控制器没传时为空列表
+        .{ .key = "languageTabs", .value = .{ .list = &.{} } },
         .{ .key = "languages", .value = .{ .list = &.{} } },
         .{ .key = "hasLanguages", .value = .{ .boolean = false } },
         .{ .key = "lang", .value = .{ .object = &.{} } },

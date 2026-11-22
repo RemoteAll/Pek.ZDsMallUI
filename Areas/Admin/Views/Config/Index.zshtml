@@ -38,6 +38,9 @@
         <div class="layui-tab layui-tab-brief Lan">
             <ul class="layui-tab-title">
                 <li class="layui-this">@T("标准"):</li>
+                @foreach (var tab in Model.languageTabs) {
+                <li>@tab.name</li>
+                }
             </ul>
             <div class="layui-tab-content">
                 <div class="layui-tab-item layui-show">
@@ -86,6 +89,37 @@
                         </dl>
                     </div>
                 </div>
+                @* 每种已启用语言一个 Tab：字段名 `{语言ID}.字段` → `SiteInfoLan` 表（对齐 C#） *@
+                @foreach (var tab in Model.languageTabs) {
+                <div class="layui-tab-item">
+                    <div class="ncap-form-default">
+                        <dl>
+                            <dt>@T("网站名称")</dt>
+                            <dd><input name="@(tab.id).SiteName" value="@tab.siteName" class="input-txt" type="text"><span class="err"></span></dd>
+                        </dl>
+                        <dl>
+                            <dt>@T("网站Seo标题")</dt>
+                            <dd><input name="@(tab.id).SeoTitle" value="@tab.seoTitle" class="input-txt" type="text"><span class="err"></span></dd>
+                        </dl>
+                        <dl>
+                            <dt>@T("网站Seo关键字")</dt>
+                            <dd><input name="@(tab.id).SeoKey" value="@tab.seoKey" class="input-txt" type="text"><span class="err"></span></dd>
+                        </dl>
+                        <dl>
+                            <dt>@T("网站Seo描述")</dt>
+                            <dd><input name="@(tab.id).SeoDescribe" value="@tab.seoDescribe" class="input-txt" type="text"><span class="err"></span></dd>
+                        </dl>
+                        <dl>
+                            <dt>@T("ICP备案号")</dt>
+                            <dd><input name="@(tab.id).Registration" value="@tab.registration" class="input-txt" type="text"><span class="err"></span></dd>
+                        </dl>
+                        <dl>
+                            <dt>@T("版权")</dt>
+                            <dd><input name="@(tab.id).SiteCopyright" value="@tab.copyright" class="input-txt" type="text"><span class="err"></span></dd>
+                        </dl>
+                    </div>
+                </div>
+                }
             </div>
         </div>
 
@@ -176,3 +210,23 @@
         </div>
     </form>
 </div>
+@* 语言 Tab 切换（不引 layui 的 element 模块，10 行原生 JS 足够）：
+   点标题 → 切 `.layui-this` 与 `.layui-tab-item.layui-show`。 *@
+<script>
+    (function () {
+        var box = document.querySelector('.layui-tab.layui-tab-brief.Lan');
+        if (!box) return;
+        var titles = box.querySelectorAll('.layui-tab-title > li');
+        var panels = box.querySelectorAll('.layui-tab-content > .layui-tab-item');
+        for (var i = 0; i < titles.length; i++) {
+            (function (idx) {
+                titles[idx].addEventListener('click', function () {
+                    for (var j = 0; j < titles.length; j++) titles[j].classList.remove('layui-this');
+                    for (var j = 0; j < panels.length; j++) panels[j].classList.remove('layui-show');
+                    titles[idx].classList.add('layui-this');
+                    if (panels[idx]) panels[idx].classList.add('layui-show');
+                });
+            })(i);
+        }
+    })();
+</script>

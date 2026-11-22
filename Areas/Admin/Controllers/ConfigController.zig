@@ -58,6 +58,9 @@ pub const ConfigController = struct {
             .ok => {},
         }
 
+        // 站点信息的**多语言 Tab**（`{langId}.SiteName` 之类的表单字段）→ 项目侧钩子写 `SiteInfoLan`
+        self.notifySaveLanguageRows(c.arena, c.form);
+
         // 库已改：通知业务侧把「库值」同步到自己的配置文件（文件名/格式/热加载属业务知识）。
         // 放在响应之前：保存接口返回成功时，磁盘上的配置文件已经是新值。
         self.notifySettingsSaved(c.arena);
@@ -99,6 +102,9 @@ pub const ConfigController = struct {
         const has_languages = languages == .list and languages.list.len > 0;
         try builder.put("languages", languages);
         try builder.put("hasLanguages", .{ .boolean = has_languages });
+
+        // 站点信息**按语言**分 Tab：数据由项目侧钩子提供（`SiteInfoLan` 是项目表，库不碰）
+        try builder.put("languageTabs", self.languageTabs(arena));
         return builder.finish();
     }
 
