@@ -185,8 +185,27 @@ pub const SqliteBackend = struct {
         return self.getSettingLocked(arena, key);
     }
 
-    /// `setting` 的无锁版本（已持锁的调用方用）。
+    /// 与 [`setting`] 的区别：**键存在但值为空**时返回 `""`（而不是 `null`）。
+    ///
+    /// 为什么需要：调用方得区分两件事——
+    /// - `null` = 库里没有这个键 → **不要**去覆盖配置文件里的旧值；
+    /// - `""`   = 键存在、值就是空 → **要**把配置文件里那一项清空。
+    /// 只用一个 `setting` 的话，「后台把域名清空」永远同步不到文件。
+    pub fn settingRaw(self: *SqliteBackend, arena: std.mem.Allocator, key: []const u8) !?[]const u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.getSettingLockedKeepEmpty(arena, key);
+    }
+
+    /// `setting` 的底层：空值视为「没有」。
     fn getSettingLocked(self: *SqliteBackend, arena: std.mem.Allocator, key: []const u8) !?[]const u8 {
+        const value = try self.getSettingLockedKeepEmpty(arena, key) orelse return null;
+        if (value.len == 0) return null;
+        return value;
+    }
+
+    /// 只区分「有没有这个键」，不把空值当无。
+    fn getSettingLockedKeepEmpty(self: *SqliteBackend, arena: std.mem.Allocator, key: []const u8) !?[]const u8 {
         self.session.resetResults();
 
         // 键名统一成 `Config.Name` 的规范写法（`siteName` / `SiteName` 同一条记录）
@@ -206,7 +225,6 @@ pub const SqliteBackend = struct {
             .text => |t| t,
             else => return null,
         };
-        if (value.len == 0) return null;
         return try arena.dupe(u8, value);
     }
 

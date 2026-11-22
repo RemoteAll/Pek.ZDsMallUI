@@ -49,6 +49,10 @@ pub const ConfigController = struct {
             .ok => {},
         }
 
+        // 库已改：通知业务侧把「库值」同步到自己的配置文件（文件名/格式/热加载属业务知识）。
+        // 放在响应之前：保存接口返回成功时，磁盘上的配置文件已经是新值。
+        self.notifySettingsSaved(c.arena);
+
         if (admin_area.isAjax(c)) {
             return .{ .response = try controller_mod.jsonResult(c.arena, 0, "保存成功", null) };
         }

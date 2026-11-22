@@ -259,6 +259,21 @@ pub const DsMallUi = struct {
         return self.admin_area;
     }
 
+    /// 注册「后台站点设置保存成功」回调。
+    ///
+    /// 用途：站点设置页只写库（`Config` 表），业务往往还有**自己的配置文件**（如
+    /// `PekTools.toml` 的 `AdminArea` / `CurDomainUrl`）。保存后不刷回去就会出现
+    /// 「后台改了域名、sitemap 还是旧的」。业务在这个回调里把库值同步到文件即可。
+    ///
+    /// 回调在**请求线程内同步执行**，`arena` 是请求级分配器（不要保存其切片）。
+    pub fn adminAreaSavedHook(
+        self: *DsMallUi,
+        ctx: ?*anyopaque,
+        hook: *const fn (ctx: ?*anyopaque, arena: std.mem.Allocator) void,
+    ) void {
+        self.admin_area.onSettingsSaved(ctx, hook);
+    }
+
     /// WAF 实例（需要自己挂 `ServerGuard` 早据时用；未启用为 `null`）。
     pub fn waf(self: *const DsMallUi) ?*pek_zwaf.Waf {
         return self.waf_instance;

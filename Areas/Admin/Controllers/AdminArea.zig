@@ -72,6 +72,28 @@ pub const AdminArea = struct {
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
     /// 退役的旧快照（读线程可能还在用，延迟到 `deinit` 释放）
     retired_states: std.ArrayList(*AreaState) = .empty,
+    /// 站点设置保存成功后的回调（业务侧用来把库值回写配置文件、刷缓存等）。
+    ///
+    /// 为什么放在这里：`ConfigController` 只负责「校验 → 写库」，
+    /// 「库值如何落到业务配置文件」是业务知识（文件名/格式/热加载），库不该写死。
+    settings_saved_ctx: ?*anyopaque = null,
+    settings_saved_hook: ?*const fn (ctx: ?*anyopaque, arena: std.mem.Allocator) void = null,
+
+    /// 注册「站点设置保存成功」回调（幂等：后注册的覆盖先注册的）。
+    pub fn onSettingsSaved(
+        self: *AdminArea,
+        ctx: ?*anyopaque,
+        hook: *const fn (ctx: ?*anyopaque, arena: std.mem.Allocator) void,
+    ) void {
+        self.settings_saved_ctx = ctx;
+        self.settings_saved_hook = hook;
+    }
+
+    /// 站点设置保存成功后的统一入口（控制器调用；无钩子时什么都不做）。
+    pub fn notifySettingsSaved(self: *AdminArea, arena: std.mem.Allocator) void {
+        const hook = self.settings_saved_hook orelse return;
+        hook(self.settings_saved_ctx, arena);
+    }
 
     /// 指定数据源与视图根（默认区域 `Admin`，首页 `/{area}/home/index`）。
     pub fn init(
