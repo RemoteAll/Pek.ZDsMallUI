@@ -35,6 +35,8 @@
            原版只有 hover，鼠标没碰到时看着像没有下拉。 */
         .admincp-header .navbar .fr > li.has-sub > span::after { content: "▾"; margin-left: 4px; font-size: 10px; opacity: .85; }
         .admincp-header .navbar .fr > li.has-sub.open .sub-meun { display: block; }
+        /* 语言项与上面四个操作用一条分隔线隔开（语言项永远在最后，所以给「它前面那一项」加粗下边框） */
+        .admincp-header .navbar .fr li dl dd:has(+ dd.lang-item) { border-bottom: 1px solid #30c9ce; }
     </style>
 </head>
 <body class="admincp">
@@ -52,33 +54,24 @@
                 }
             </ul>
             <ul class="fr">
-                @* 右上角：**与 C# `Home/DashBoard.cshtml` 的 `ul.fr` 完全同构** ——
-                   四个独立 li（用户菜单 / Language 下拉 / 清除缓存 / 访问首页），
-                   不要把它们塞进同一个下拉：原版就是靠多个 li 撑住宽度的。 *@
+                @* 右上角：**一个下拉装全部菜单**（用户菜单 + 常用操作 + 语言切换）。
+                   语言项按 C# 的 `dd a` 呈现（纯文字列表、紧跟一条分隔线），不做标题/勾选装饰。 *@
                 <li class="has-sub">
                     <span>@(Model.lang.user_greeting)，@Model.userName</span>
                     <div class="sub-meun">
                         <dl>
+                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>@Model.lang.user_home</a></dd>
+                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe640;</i>@Model.lang.user_clear_cache</a></dd>
                             <dd><a href="@Model.areaRoute/home/modifypw" target="main-frame"><i class="iconfont">&#xe67b;</i>@Model.lang.user_change_password</a></dd>
                             <dd><a href="javascript:dsLayerConfirm('@Model.areaRoute/login/logout','@Model.lang.user_logout_confirm','logout')"><i class="iconfont">&#xe70c;</i>@Model.lang.user_logout</a></dd>
-                        </dl>
-                    </div>
-                </li>
-                @if (Model.hasLanguages) {
-                <li class="has-sub">
-                    @* C# 原版这里就是硬编码的英文 `Language`，不随语言包翻译 *@
-                    <span>Language</span>
-                    <div class="sub-meun">
-                        <dl>
+                            @if (Model.hasLanguages) {
                             @foreach (var lang in Model.languages) {
-                            <dd><a href="@lang.url">@lang.name</a></dd>
+                            <dd class="lang-item"><a href="@lang.url">@lang.name</a></dd>
+                            }
                             }
                         </dl>
                     </div>
                 </li>
-                }
-                <li><a href="@Model.areaRoute/home/clearcache">@Model.lang.user_clear_cache</a></li>
-                <li><a href="~/" target="_blank">@Model.lang.user_home</a></li>
             </ul>
         </div>
     </div>
@@ -159,8 +152,7 @@
             window.addEventListener('hashchange', function () { activateByHash(location.hash); });
 
             // 右上角下拉：原版只有 hover；这里额外支持**点击展开**（鼠标没碰到时也能看到）
-            var subItems = Array.prototype.slice.call(document.querySelectorAll('.admincp-header .navbar .fr > li.has-sub'));
-            subItems.forEach(function (li) {
+            var subItems = Array.prototype.slice.call(document.querySelectorAll('.admincp-header .navbar .fr > li.has-sub'));            subItems.forEach(function (li) {
                 li.addEventListener('click', function (e) {
                     var isMenuClick = e.target.closest && e.target.closest('.sub-meun');
                     if (isMenuClick) { return; }  // 点菜单项本身：正常跳转
