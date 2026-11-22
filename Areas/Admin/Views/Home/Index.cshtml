@@ -35,8 +35,6 @@
            原版只有 hover，鼠标没碰到时看着像没有下拉。 */
         .admincp-header .navbar .fr > li.has-sub > span::after { content: "▾"; margin-left: 4px; font-size: 10px; opacity: .85; }
         .admincp-header .navbar .fr > li.has-sub.open .sub-meun { display: block; }
-        /* 语言项与上面四个操作用一条分隔线隔开（语言项永远在最后，所以给「它前面那一项」加粗下边框） */
-        .admincp-header .navbar .fr li dl dd:has(+ dd.lang-item) { border-bottom: 1px solid #30c9ce; }
     </style>
 </head>
 <body class="admincp">
@@ -54,24 +52,33 @@
                 }
             </ul>
             <ul class="fr">
-                @* 右上角：**一个下拉装全部菜单**（用户菜单 + 常用操作 + 语言切换）。
-                   语言项按 C# 的 `dd a` 呈现（纯文字列表、紧跟一条分隔线），不做标题/勾选装饰。 *@
+                @* 右上角：**严格照抄 C# `Home/DashBoard.cshtml` 的 `ul.fr`** ——
+                   四个并列 li：① 您好（下拉：修改密码 / 安全退出）
+                                ② 语言（独立下拉：语言列表）——**不要并进①的下拉里**
+                                ③ 清除缓存　④ 访问首页 *@
                 <li class="has-sub">
                     <span>@(Model.lang.user_greeting)，@Model.userName</span>
                     <div class="sub-meun">
                         <dl>
-                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>@Model.lang.user_home</a></dd>
-                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe640;</i>@Model.lang.user_clear_cache</a></dd>
                             <dd><a href="@Model.areaRoute/home/modifypw" target="main-frame"><i class="iconfont">&#xe67b;</i>@Model.lang.user_change_password</a></dd>
                             <dd><a href="javascript:dsLayerConfirm('@Model.areaRoute/login/logout','@Model.lang.user_logout_confirm','logout')"><i class="iconfont">&#xe70c;</i>@Model.lang.user_logout</a></dd>
-                            @if (Model.hasLanguages) {
+                        </dl>
+                    </div>
+                </li>
+                @if (Model.hasLanguages) {
+                <li class="has-sub">
+                    <span>@Model.lang.user_language</span>
+                    <div class="sub-meun">
+                        <dl>
                             @foreach (var lang in Model.languages) {
-                            <dd class="lang-item"><a href="@lang.url">@lang.name</a></dd>
-                            }
+                            <dd><a href="@lang.url">@lang.name</a></dd>
                             }
                         </dl>
                     </div>
                 </li>
+                }
+                <li><a href="@Model.areaRoute/home/clearcache">@Model.lang.user_clear_cache</a></li>
+                <li><a href="~/" target="_blank">@Model.lang.user_home</a></li>
             </ul>
         </div>
     </div>
