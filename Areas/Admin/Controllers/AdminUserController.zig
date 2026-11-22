@@ -24,6 +24,7 @@ pub const AdminUserController = struct {
         .url = "{area}/adminuser/index",
         .icon = "&#xe67d;",
         .order = 37,
+        .actions = &.{ "index", "edit", "save", "delete" },
     };
     /// `GET /{area}/adminuser/index`：管理员列表。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {

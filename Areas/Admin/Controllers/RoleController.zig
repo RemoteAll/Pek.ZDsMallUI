@@ -1,4 +1,4 @@
-//! 角色权限管理（对齐 C# `Areas/Admin/Controllers/RoleController`：列表 / 新增 / 编辑 / 删除）。
+﻿//! 角色权限管理（对齐 C# `Areas/Admin/Controllers/RoleController`：列表 / 新增 / 编辑 / 删除）。
 //!
 //! 数据表是 `Pek.ZCode` 的 `Member.xml` 里的 `Role`（C# 同源），**读写走 ORM**（不手写 SQL）：
 //! 表名/列名取自模型，换库（SQLite / MySQL / PostgreSQL）只改连接串。
@@ -12,6 +12,8 @@ const zzig = @import("zzig");
 const zcode = @import("zcode");
 
 const admin_area = @import("AdminArea.zig");
+/// 菜单/动作声明类型（`Item` / `ACTION_TITLES`）
+const menu_dep = @import("../../../src/deps.zig").menu;
 
 const router = zzig.web.router;
 const ActionResult = zzig.web.controller.ActionResult;
@@ -25,6 +27,7 @@ pub const RoleController = struct {
         .url = "{area}/role/index",
         .icon = "&#xe67b;",
         .order = 38,
+        .actions = &.{ "index", "edit", "save", "delete" },
     };
     /// `GET /{area}/role/index`：角色列表。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
@@ -216,9 +219,11 @@ fn collectPermissions(arena: std.mem.Allocator, c: *router.Ctx) ![]const u8 {
     return out.toOwnedSlice(arena);
 }
 
-/// 权限勾选树：`[{ name: 目录名, items: [{ key: 控制器段, title: 菜单标题, checked }] }]`。
+/// 权限勾选树：`[{ name: 目录名, items: [{ key: 控制器段, title: 菜单标题, actions: [{name,title,allowed,checked}] }] }]`。
 ///
 /// `key` 取菜单 URL 的第二段（`{area}/role/index` → `role`）—— 与 `AdminArea.canAccess` 完全同口径。
+/// 动作清单来自控制器上声明的 `menu.actions`（没声明 = 只给「查看」），
+/// 勾选值写成 `role.save` 这种「控制器.动作」，由 `AdminArea.canAction` 判定。
 fn permissionTree(
     self: *admin_area.AdminArea,
     arena: std.mem.Allocator,
@@ -236,6 +241,9 @@ fn permissionTree(
     s.resetResults();
     const rows = try ref.queryRows(s, &q);
 
+    // 控制器声明的动作（按控制器段索引）
+    const decls: []const menu_dep.Item = if (self.menus) |reg| reg.itemList() else &.{};
+
     var groups: std.ArrayList(zzig.web.Value) = .empty;
     for (rows) |row| {
         if (columnInt(row, "Type") != 1) continue;
@@ -249,10 +257,23 @@ fn permissionTree(
             const key = controllerOfUrl(columnText(child, "Url"));
             if (key.len == 0) continue; // 目录/外链之类没有控制器段，跳过
             const title = columnText(child, "DisplayName");
+
+            var acts: std.ArrayList(zzig.web.Value) = .empty;
+            for (menu_dep.ACTION_TITLES) |at| {
+                const allowed = declDeclares(decls, key, at.name);
+                var ab = zzig.web.ObjectBuilder.init(arena);
+                try ab.str("name", at.name);
+                try ab.str("title", at.title);
+                try ab.boolean("allowed", allowed);
+                try ab.boolean("check", allowed and admin_area.AdminArea.permissionAllows(current, key, at.name));
+                try acts.append(arena, ab.finish());
+            }
+
             var b = zzig.web.ObjectBuilder.init(arena);
             try b.str("key", key);
             try b.str("title", if (title.len == 0) key else title);
             try b.boolean("checked", permissionHas(current, key));
+            try b.list("actions", try acts.toOwnedSlice(arena));
             try items.append(arena, b.finish());
         }
         if (items.items.len == 0) continue;
@@ -264,6 +285,22 @@ fn permissionTree(
         try groups.append(arena, gb.finish());
     }
     return groups.toOwnedSlice(arena);
+}
+
+/// 控制器（按 `name` 或 URL 控制器段匹配）是否声明了某个动作。
+/// 没声明任何动作的控制器 = 只有 `index`（只看不改）。
+fn declDeclares(decls: []const menu_dep.Item, key: []const u8, action: []const u8) bool {
+    for (decls) |d| {
+        const same = std.ascii.eqlIgnoreCase(d.name, key) or std.ascii.eqlIgnoreCase(controllerOfUrl(d.url), key);
+        if (!same) continue;
+        if (d.actions.len == 0) return std.ascii.eqlIgnoreCase(action, "index");
+        for (d.actions) |a| {
+            if (std.ascii.eqlIgnoreCase(a, action)) return true;
+        }
+        return false;
+    }
+    // 注册表里找不到（库里自带页面可能没走 addMenu）→ 只给查看，避免误放开写操作
+    return std.ascii.eqlIgnoreCase(action, "index");
 }
 
 /// `{area}/role/index` → `role`；`{area}/home/dashboard` → `home`；解析不出返回空串。

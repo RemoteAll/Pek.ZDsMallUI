@@ -574,11 +574,79 @@ pub const AdminArea = struct {
         while (it.next()) |raw| {
             const one = std.mem.trim(u8, raw, " \t\r\n");
             if (one.len == 0) continue;
-            // `*` = 全部权限（超级管理员）；其余按**控制器段**精确匹配
+            // `*` = 全部权限（超级管理员）
             if (std.mem.eql(u8, one, "*")) return true;
-            if (std.ascii.eqlIgnoreCase(one, controller_segment)) return true;
+            // `role`（页面级）或 `role.edit`（动作级）都算「能进这个页面」
+            const dot = std.mem.indexOfScalar(u8, one, '.') orelse one.len;
+            if (std.ascii.eqlIgnoreCase(one[0..dot], controller_segment)) return true;
         }
         return false;
+    }
+
+    /// 动作级判定（**写操作必须过这一关**）：`role.save` 这类「控制器.动作」权限。
+    ///
+    /// 规则：
+    /// - `*` → 全允许；
+    /// - `{控制器}.{动作}` 命中 → 允许；
+    /// - 只有页面级 `{控制器}` → 仅允许 `index`（查看），写操作一律拒（**权限要细，别默认放开**）。
+    pub fn canAction(self: *AdminArea, c: *router.Ctx, controller: []const u8, action: []const u8) bool {
+        if (c.stateValue(auth_mod.STATE_IS_ADMIN)) |flag| {
+            if (std.mem.eql(u8, flag, "1")) return true;
+        }
+        const user_name = currentUser(c);
+        if (user_name.len == 0) return true; // 未登录由中间件负责
+        const permissions = self.permissionsOf(user_name) orelse return true; // 查不到 → 放行（避免锁死）
+        return permissionAllows(permissions, controller, action);
+    }
+
+    /// 纯函数版（便于单测）：权限串是否允许 `controller.action`。
+    pub fn permissionAllows(permissions: []const u8, controller: []const u8, action: []const u8) bool {
+        var it = std.mem.splitScalar(u8, permissions, ',');
+        while (it.next()) |raw| {
+            const one = std.mem.trim(u8, raw, " \t\r\n");
+            if (one.len == 0) continue;
+            if (std.mem.eql(u8, one, "*")) return true;
+            const dot = std.mem.indexOfScalar(u8, one, '.');
+            if (dot) |d| {
+                if (std.ascii.eqlIgnoreCase(one[0..d], controller) and
+                    std.ascii.eqlIgnoreCase(one[d + 1 ..], action)) return true;
+            } else {
+                // 页面级条目 = 只能看
+                if (std.ascii.eqlIgnoreCase(one, controller) and std.ascii.eqlIgnoreCase(action, "index")) return true;
+            }
+        }
+        return false;
+    }
+
+    /// 从请求路径推断「动作名」（`/{area}/role/save` → `save`），供动作级 RBAC 使用。
+    ///
+    /// 这样不必在每个控制器调用点上手写动作名：写类别名（`updatebase` / `togglestatus` / `add` …）
+    /// 统一归到 `save`，删除类归 `delete`，其余按末段；识别不出时 GET 视为「查看」。
+    pub fn actionOfPath(path: []const u8) []const u8 {
+        const seg = lastSegment(path);
+        const saves = [_][]const u8{
+            "save",    "update",     "updatebase", "add",          "create",   "submit",
+            "adduser", "addculture", "setdefault", "togglestatus", "saverows",
+        };
+        for (saves) |s| {
+            if (std.ascii.eqlIgnoreCase(seg, s)) return "save";
+        }
+        const deletes = [_][]const u8{ "delete", "remove", "del", "drop" };
+        for (deletes) |s| {
+            if (std.ascii.eqlIgnoreCase(seg, s)) return "delete";
+        }
+        const edits = [_][]const u8{ "edit", "modify", "updateform", "addform" };
+        for (edits) |s| {
+            if (std.ascii.eqlIgnoreCase(seg, s)) return "edit";
+        }
+        return "index";
+    }
+
+    /// 动作级校验（按请求路径推断动作）。`guarded` 已内置调用，业务控制器也可直接用。
+    pub fn canAccessAction(self: *AdminArea, c: *router.Ctx) bool {
+        const seg = controllerSegment(c.req.path) orelse return true;
+        if (std.mem.eql(u8, seg, "home") or std.mem.eql(u8, seg, "login")) return true;
+        return self.canAction(c, seg, actionOfPath(c.req.path));
     }
 
     /// 取用户的角色权限串（`Role.Permission`）；查不到返回 `null`（= 放行）。
@@ -664,6 +732,8 @@ pub const AdminArea = struct {
                 if (!areaMatches(c, self.areaName())) return .{ .response = router.Response.notFound() };
                 // RBAC：管理员放行；其他人按「角色权限串」校验当前页面
                 if (!self.canAccess(c)) return .{ .response = forbiddenPage() };
+                // 动作级 RBAC：`role.save` / `article.delete` 这类写权限
+                if (!self.canAccessAction(c)) return .{ .response = forbiddenPage() };
                 return action(raw, c);
             }
         }.call;
@@ -834,6 +904,14 @@ fn controllerSegment(path: []const u8) ?[]const u8 {
     const seg = it.next() orelse return null;
     if (seg.len == 0) return null;
     return seg;
+}
+
+/// 路径最后一段（`/{area}/role/save` → `save`）；忽略查询串与尾斜杠。
+fn lastSegment(path: []const u8) []const u8 {
+    const no_query = if (std.mem.indexOfScalar(u8, path, '?')) |q| path[0..q] else path;
+    const trimmed = std.mem.trimEnd(u8, no_query, "/");
+    const idx = std.mem.lastIndexOfScalar(u8, trimmed, '/') orelse return trimmed;
+    return trimmed[idx + 1 ..];
 }
 
 /// 403 提示页（受保护页面无权限时）。

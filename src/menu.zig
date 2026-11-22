@@ -55,6 +55,19 @@ pub const Item = struct {
     order: i32 = 0,
     /// 是否可见（`false` = 注册但隐藏，便于灰度）
     visible: bool = true,
+    /// 该菜单可授予的**操作动作**（控制器里的方法名，如 `index`/`edit`/`save`/`delete`）。
+    ///
+    /// 角色权限按 `{控制器}.{动作}` 授权（如 `article.delete`），空 = 只授予 `index`（只看不改）。
+    /// 声明在控制器上（与 `menu` 同处），后台「角色权限管理」自动按动作列渲染勾选框。
+    actions: []const []const u8 = &.{},
+};
+
+/// 权限判定里的固定规范动作名（视图/控制器共用同一套中文标题）。
+pub const ACTION_TITLES = [_]struct { name: []const u8, title: []const u8 }{
+    .{ .name = "index", .title = "查看" },
+    .{ .name = "edit", .title = "编辑" },
+    .{ .name = "save", .title = "保存" },
+    .{ .name = "delete", .title = "删除" },
 };
 
 /// 菜单注册表（线程安全：注册在启动期，读取在请求期）。
@@ -90,6 +103,7 @@ pub const Registry = struct {
             self.allocator.free(i.title_key);
             self.allocator.free(i.url);
             self.allocator.free(i.icon);
+            freeActions(self.allocator, i.actions);
         }
         self.groups.deinit(self.allocator);
         self.items.deinit(self.allocator);
@@ -125,11 +139,13 @@ pub const Registry = struct {
                 self.allocator.free(existing.title_key);
                 self.allocator.free(existing.url);
                 self.allocator.free(existing.icon);
+                freeActions(self.allocator, existing.actions);
                 existing.title_key = try self.allocator.dupe(u8, item.title_key);
                 existing.url = try self.allocator.dupe(u8, item.url);
                 existing.icon = try self.allocator.dupe(u8, item.icon);
                 existing.order = item.order;
                 existing.visible = item.visible;
+                existing.actions = try dupeActions(self.allocator, item.actions);
                 return;
             }
         }
@@ -141,6 +157,7 @@ pub const Registry = struct {
             .icon = try self.allocator.dupe(u8, item.icon),
             .order = item.order,
             .visible = item.visible,
+            .actions = try dupeActions(self.allocator, item.actions),
         });
     }
 
@@ -349,4 +366,17 @@ test "菜单：重复注册同名项是 upsert，不产生重复" {
         .list => |items| items.len,
         else => 0,
     });
+}
+
+/// 深拷贝动作名列表（注册表持有自己的一份，调用方的 `menu` 常量可能来自只读数据段）。
+fn dupeActions(allocator: std.mem.Allocator, actions: []const []const u8) ![]const []const u8 {
+    if (actions.len == 0) return &.{};
+    const out = try allocator.alloc([]const u8, actions.len);
+    for (actions, 0..) |a, i| out[i] = try allocator.dupe(u8, a);
+    return out;
+}
+
+fn freeActions(allocator: std.mem.Allocator, actions: []const []const u8) void {
+    for (actions) |a| allocator.free(a);
+    if (actions.len > 0) allocator.free(actions);
 }
