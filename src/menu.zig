@@ -160,7 +160,15 @@ pub const Registry = struct {
             .icon = "&#xe614;",
             .order = 20,
         });
-        // 角色权限 / 管理员：**通用后台能力**（C# 在 Membership 通用模块里），随库注册
+        // 角色权限 / 管理员 / 菜单：**通用后台能力**（C# 在 Membership 通用模块里），随库注册
+        try self.addItem(.{
+            .group = "settings",
+            .name = "adminuser",
+            .title_key = "管理员管理",
+            .url = "{area}/adminuser/index",
+            .icon = "&#xe67d;",
+            .order = 37,
+        });
         try self.addItem(.{
             .group = "settings",
             .name = "role",
@@ -291,8 +299,8 @@ test "菜单：注册 + 排序 + {area} 替换 + 空分组过滤" {
         .list => |items| items,
         else => @panic("items 不是列表"),
     };
-    // settings 组现在有「站点设置 + 角色权限管理 + 菜单管理」三项
-    try testing.expectEqual(@as(usize, 3), settings_items.len);
+    // settings 组现在有「站点设置 + 管理员管理 + 角色权限管理 + 菜单管理」四项
+    try testing.expectEqual(@as(usize, 4), settings_items.len);
     try testing.expectEqualStrings("/biz/config/index", settings_items[0].get("url").?.asString().?);
 
     const product_items = switch (groups[2].get("items").?) {
@@ -322,8 +330,8 @@ test "菜单：重复注册同名项是 upsert，不产生重复" {
         else => @panic("groups 不是列表"),
     };
     try testing.expectEqual(@as(usize, 2), groups.len);
-    // settings 组：站点设置 + 角色权限 + 菜单管理（重复 addDefaults 不应叠加）
-    try testing.expectEqual(@as(usize, 3), switch (groups[1].get("items").?) {
+    // settings 组：站点设置 + 管理员 + 角色 + 菜单管理（重复 addDefaults 不应叠加）
+    try testing.expectEqual(@as(usize, 4), switch (groups[1].get("items").?) {
         .list => |items| items.len,
         else => 0,
     });

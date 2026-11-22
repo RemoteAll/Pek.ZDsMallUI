@@ -48,6 +48,8 @@ pub const DEFAULT_VIEWS = [_]DefaultView{
     .{ .relative = "Areas/Admin/Views/Role/Edit.zshtml", .source = @embedFile("../Areas/Admin/Views/Role/Edit.zshtml") },
     .{ .relative = "Areas/Admin/Views/Menu/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Menu/Index.zshtml") },
     .{ .relative = "Areas/Admin/Views/Menu/Edit.zshtml", .source = @embedFile("../Areas/Admin/Views/Menu/Edit.zshtml") },
+    .{ .relative = "Areas/Admin/Views/AdminUser/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/AdminUser/Index.zshtml") },
+    .{ .relative = "Areas/Admin/Views/AdminUser/Edit.zshtml", .source = @embedFile("../Areas/Admin/Views/AdminUser/Edit.zshtml") },
     .{ .relative = "Areas/Admin/Views/Culture/AddCulture.zshtml", .source = @embedFile("../Areas/Admin/Views/Culture/AddCulture.zshtml") },
     .{ .relative = "Areas/Admin/Views/Culture/EditCulture.zshtml", .source = @embedFile("../Areas/Admin/Views/Culture/EditCulture.zshtml") },
     .{ .relative = "Areas/Admin/Views/Languages/AddLanguages.zshtml", .source = @embedFile("../Areas/Admin/Views/Languages/AddLanguages.zshtml") },

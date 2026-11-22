@@ -29,6 +29,7 @@ const home_controller = @import("HomeController.zig");
 const login_controller = @import("LoginController.zig");
 const role_controller = @import("RoleController.zig");
 const menu_controller = @import("MenuController.zig");
+const adminuser_controller = @import("AdminUserController.zig");
 
 const menu_db_mod = @import("../../../src/deps.zig").menu_db;
 
@@ -448,6 +449,17 @@ pub const AdminArea = struct {
             try ctrl.mapWithContext("GET", "edit", @ptrCast(self), guarded(menu_controller.MenuController.edit));
             try ctrl.mapWithContext("POST", "save", @ptrCast(self), guarded(menu_controller.MenuController.save));
             try ctrl.mapWithContext("GET", "delete", @ptrCast(self), guarded(menu_controller.MenuController.delete));
+            try ctrl.mount(&app.router);
+        }
+        {
+            // 管理员管理（对齐 C# `AdminUserController`）：只列后台账号，口令走 password.hash
+            const prefix = try std.fmt.allocPrint(self.allocator, "{s}/adminuser", .{segment});
+            defer self.allocator.free(prefix);
+            const ctrl = try self.newController(prefix);
+            try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(adminuser_controller.AdminUserController.index));
+            try ctrl.mapWithContext("GET", "edit", @ptrCast(self), guarded(adminuser_controller.AdminUserController.edit));
+            try ctrl.mapWithContext("POST", "save", @ptrCast(self), guarded(adminuser_controller.AdminUserController.save));
+            try ctrl.mapWithContext("GET", "delete", @ptrCast(self), guarded(adminuser_controller.AdminUserController.delete));
             try ctrl.mount(&app.router);
         }
         {
