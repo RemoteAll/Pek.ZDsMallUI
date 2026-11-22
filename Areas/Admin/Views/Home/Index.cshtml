@@ -126,14 +126,29 @@
             var navLinks = Array.prototype.slice.call(document.querySelectorAll('.admincp-header .navbar .fl a'));
             var items = Array.prototype.slice.call(document.querySelectorAll('#mainMenu a[data-url]'));
 
+            // 顶部一级导航高亮：**类必须加在 li 上**（admin.css 是 `.navbar li.actived`），
+            // 加在 `<a>` 上不会有任何视觉效果。
             function showGroup(key) {
                 groups.forEach(function (g) {
                     g.style.display = g.getAttribute('data-group') === key ? 'block' : 'none';
                 });
                 navLinks.forEach(function (a) {
-                    if (a.getAttribute('data-group') === key) { a.classList.add('actived'); }
-                    else { a.classList.remove('actived'); }
+                    var li = a.closest('li') || a;
+                    if (a.getAttribute('data-group') === key) { li.classList.add('actived'); }
+                    else { li.classList.remove('actived'); }
                 });
+            }
+
+            // 左侧子菜单高亮：同样必须加在 li 上（admin.css 是 `.admincp-container-left li.selected a`）
+            function markSelected(target) {
+                items.forEach(function (a) {
+                    var li = a.closest('li');
+                    if (li) { li.classList.remove('selected'); }
+                    a.classList.remove('selected');
+                });
+                var li = target.closest('li');
+                if (li) { li.classList.add('selected'); }
+                target.classList.add('selected');
             }
 
             // 按 hash 激活子菜单：支持两种写法（两种都要能用，方便手写链接）
@@ -148,8 +163,7 @@
                 });
                 if (!target) { return false; }
                 frame.src = target.getAttribute('data-url');
-                items.forEach(function (x) { x.classList.remove('selected'); });
-                target.classList.add('selected');
+                markSelected(target);
                 var group = target.closest ? target.closest('.menu-group') : null;
                 if (group && group.getAttribute('data-group')) { showGroup(group.getAttribute('data-group')); }
                 return true;
@@ -163,8 +177,7 @@
                 a.addEventListener('click', function () {
                     var url = a.getAttribute('data-url');
                     frame.src = url;
-                    items.forEach(function (x) { x.classList.remove('selected'); });
-                    a.classList.add('selected');
+                    markSelected(a);
                     // 地址栏同步（用 replaceState 避免每次点菜单都往历史里塞一条）
                     if (location.hash !== '#' + url) {
                         if (history.replaceState) { history.replaceState(null, '', '#' + url); }
