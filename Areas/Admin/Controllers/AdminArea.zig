@@ -232,11 +232,17 @@ pub const AdminArea = struct {
         // 鉴权中间件先于控制器生效：解析 Cookie / Bearer 写入链路状态（`auth.uid` / `user`）
         if (self.auth) |auth| try app.useMiddleware(auth.middleware());
 
+        // 区域根：`/{area}` 与 `/{area}/` 直接 302 到后台首页（C# 同样行为；否则用户手输 `/admin/` 会看到 404）
+        try app.router.any("/{area}", .{ .ctx = @ptrCast(self), .call = areaRootCall });
+        try app.router.any("/{area}/", .{ .ctx = @ptrCast(self), .call = areaRootCall });
+
         {
             const prefix = try std.fmt.allocPrint(self.allocator, "{s}/home", .{segment});
             defer self.allocator.free(prefix);
             const ctrl = try self.newController(prefix);
             try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(home_controller.HomeController.index));
+            // 框架内欢迎页（C# `Main/Index` 的位置）
+            try ctrl.mapWithContext("GET", "dashboard", @ptrCast(self), guarded(home_controller.HomeController.dashboard));
             try ctrl.mount(&app.router);
         }
         {
@@ -265,6 +271,15 @@ pub const AdminArea = struct {
     pub fn areaMatches(c: *router.Ctx, area: []const u8) bool {
         const segment = c.param("area") orelse return false;
         return std.ascii.eqlIgnoreCase(segment, area);
+    }
+
+    /// 区域根（`/{area}` / `/{area}/`）→ 302 到 `/{area}/home/index`；区域不匹配则 404。
+    fn areaRootCall(raw: ?*anyopaque, c: *router.Ctx) anyerror!zzig.web.Response {
+        const self: *AdminArea = @ptrCast(@alignCast(raw orelse return router.Response.notFound()));
+        const segment = c.param("area") orelse return router.Response.notFound();
+        if (!std.ascii.eqlIgnoreCase(segment, self.areaName())) return router.Response.notFound();
+        const location = try std.fmt.allocPrint(c.arena, "/{s}/home/index", .{segment});
+        return router.Response.redirectAlloc(c.arena, location);
     }
 
     /// 给控制器动作包一层区域校验：区域不匹配直接 404（改区域名后旧地址立即失效）。

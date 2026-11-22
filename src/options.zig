@@ -74,6 +74,32 @@ pub const ADMIN_STATIC_ASSETS = [_]struct { relative: []const u8, source: []cons
         .relative = "static/admin/images/logo.png",
         .source = @embedFile("../assets/wwwroot/static/admin/images/logo.png"),
     },
+    // 图标字体（`.iconfont` 类依赖；缺字体会让菜单图标变方框）
+    .{
+        .relative = "static/plugins/iconfont/iconfont.css",
+        .source = @embedFile("../assets/wwwroot/static/plugins/iconfont/iconfont.css"),
+    },
+    .{
+        .relative = "static/plugins/iconfont/iconfont.woff",
+        .source = @embedFile("../assets/wwwroot/static/plugins/iconfont/iconfont.woff"),
+    },
+    .{
+        .relative = "static/plugins/iconfont/iconfont.ttf",
+        .source = @embedFile("../assets/wwwroot/static/plugins/iconfont/iconfont.ttf"),
+    },
+    .{
+        .relative = "static/plugins/iconfont/iconfont.eot",
+        .source = @embedFile("../assets/wwwroot/static/plugins/iconfont/iconfont.eot"),
+    },
+    // 后台框架页顶部 logo 与波浪背景（C# `.admincp-header` 用图）
+    .{
+        .relative = "static/admin/images/backlogo.png",
+        .source = @embedFile("../assets/wwwroot/static/admin/images/backlogo.png"),
+    },
+    .{
+        .relative = "static/admin/images/wave.png",
+        .source = @embedFile("../assets/wwwroot/static/admin/images/wave.png"),
+    },
     .{
         .relative = "static/admin/images/wallpage/bg_1.jpg",
         .source = @embedFile("../assets/wwwroot/static/admin/images/wallpage/bg_1.jpg"),

@@ -38,6 +38,7 @@ pub const DEFAULT_VIEWS = [_]DefaultView{
     .{ .relative = "Views/Shared/_Layout.cshtml", .source = @embedFile("../Views/Shared/_Layout.cshtml") },
     .{ .relative = "Views/Shared/Prompt.cshtml", .source = @embedFile("../Views/Shared/Prompt.cshtml") },
     .{ .relative = "Areas/Admin/Views/Home/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Home/Index.cshtml") },
+    .{ .relative = "Areas/Admin/Views/Home/Dashboard.cshtml", .source = @embedFile("../Areas/Admin/Views/Home/Dashboard.cshtml") },
     .{ .relative = "Areas/Admin/Views/Config/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Config/Index.cshtml") },
     .{ .relative = "Areas/Admin/Views/Login/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Login/Index.cshtml") },
 };
