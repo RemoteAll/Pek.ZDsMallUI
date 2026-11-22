@@ -109,10 +109,38 @@ pub fn settingsValue(
 ) !zzig.web.Value {
     var builder = zzig.web.ObjectBuilder.init(arena);
     for (DEFAULT_SETTINGS) |entry| {
-        const value = if (overrides) |map| map.get(entry.store_key) orelse entry.default else entry.default;
+        const value = if (overrides) |map| lookupSettingIgnoreCase(map, entry.store_key) orelse entry.default else entry.default;
         try builder.str(entry.key, value);
     }
     return builder.finish();
+}
+
+/// 在小写无关语义下查一个具体键，找不到返回 `null`。
+///
+/// `Config.Name` 在 C# 的 `Model.xml` 里是 `COLLATE NOCASE`，历史库因此可能存着
+/// `siteName` 而不是 `SiteName`；读写两侧都只能按大小写无关处理。
+fn lookupSettingIgnoreCase(
+    map: *const std.StringHashMapUnmanaged([]const u8),
+    key: []const u8,
+) ?[]const u8 {
+    if (map.get(key)) |value| return value;
+    var it = map.iterator();
+    while (it.next()) |kv| {
+        if (std.ascii.eqlIgnoreCase(kv.key_ptr.*, key)) return kv.value_ptr.*;
+    }
+    return null;
+}
+
+/// 把一个键名归一成 `Config.Name` 的规范写法（`DEFAULT_SETTINGS` 的 `store_key`）。
+///
+/// 不在白名单里的键（如 `__configVersion` 这类元数据）原样返回。
+pub fn canonicalStoreKey(key: []const u8) []const u8 {
+    for (DEFAULT_SETTINGS) |entry| {
+        if (std.ascii.eqlIgnoreCase(entry.store_key, key) or std.ascii.eqlIgnoreCase(entry.key, key)) {
+            return entry.store_key;
+        }
+    }
+    return key;
 }
 
 /// 后台数据接口（vtable；`ptr` 指向实现方状态）。

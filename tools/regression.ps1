@@ -93,7 +93,50 @@ if ($test.ExitCode -ne 0) {
     }
 }
 
-# ————— 3. 冒烟（起服务 → HTTP 断言 → 停服务）—————
+# ————— 3. 实体生成 / 反向工程（规范：实体必须由生成器产出，且结构可反查）—————
+# 一次性验证不算护栏：`codegen` 与 `reverse` 是「表结构复用」的入口，必须每轮回归都过一遍。
+$codegen = Invoke-External 'zig' @('build', 'codegen')
+if ($codegen.ExitCode -ne 0) {
+    Fail 'zig build codegen（实体生成）' "exit=$($codegen.ExitCode)"
+    Write-Log $codegen.Output
+}
+else {
+    $entities = Join-Path $root 'src/entities'
+    $entityFiles = @(Get-ChildItem -Path $entities -Filter '*.zig' -File -ErrorAction SilentlyContinue)
+    $hasMod = Test-Path (Join-Path $entities 'mod.zig')
+    $hasBiz = @($entityFiles | Where-Object { $_.Name -like '*.biz.zig' }).Count -gt 0
+    if ($hasMod -and $entityFiles.Count -ge 2 -and $hasBiz) {
+        Pass 'zig build codegen（实体生成）' ("{0} 个文件（含 mod.zig + .biz.zig）" -f $entityFiles.Count)
+    }
+    else {
+        Fail 'zig build codegen' "产出不完整（mod.zig=$hasMod，文件数=$($entityFiles.Count)，biz=$hasBiz）"
+    }
+}
+
+# 反向工程：用一个临时空库导出 Model.xml（验证 `--reverse`/`--model-only` 链路可用）
+$reverseDb = Join-Path $root '.zig-cache/regression-reverse.db'
+$reverseOut = Join-Path $root '.zig-cache/regression-reverse-Model.xml'
+Remove-Item $reverseDb, $reverseOut -Force -ErrorAction SilentlyContinue
+$reverse = Invoke-External 'zig' @(
+    'build', 'reverse',
+    "-Dconn=Data Source=$reverseDb;Provider=SQLite",
+    '-Dmodel-only=true',
+    "-Dmodel-out=$reverseOut"
+)
+if ($reverse.ExitCode -ne 0) {
+    Fail 'zig build reverse（导出 Model.xml）' "exit=$($reverse.ExitCode)"
+    Write-Log $reverse.Output
+}
+elseif (-not (Test-Path $reverseOut)) {
+    Fail 'zig build reverse' '未产出 Model.xml'
+}
+else {
+    $xmlLength = (Get-Item $reverseOut).Length
+    if ($xmlLength -gt 0) { Pass 'zig build reverse（导出 Model.xml）' "$xmlLength bytes" }
+    else { Fail 'zig build reverse' 'Model.xml 为空' }
+}
+
+# ————— 4. 冒烟（起服务 → HTTP 断言 → 停服务）—————
 if ($SkipSmoke) {
     Skip 'HTTP 冒烟' '按参数跳过（-SkipSmoke）'
 } else {
@@ -159,13 +202,14 @@ if ($SkipSmoke) {
             try {
                 # 3.1 页面与配置
                 foreach ($item in @(
-                        @{ Name = 'GET /biz/home/index'; Url = "$base/biz/home/index"; Must = '快捷入口' },
+                        @{ Name = 'GET /biz/home/index（框架页）'; Url = "$base/biz/home/index"; Must = 'main-frame' },
+                        @{ Name = 'GET /biz/home/dashboard（内容页）'; Url = "$base/biz/home/dashboard"; Must = '快捷入口' },
                         @{ Name = 'GET /biz/home/index（退出链接）'; Url = "$base/biz/home/index"; Must = '/biz/login/logout' },
                         @{ Name = 'GET /biz/config/index'; Url = "$base/biz/config/index"; Must = '站点设置' },
                         @{ Name = 'GET /biz/login/index'; Url = "$base/biz/login/index"; Must = '密码' },
                         @{ Name = 'GET /biz/login/index（前端 MD5 脚本）'; Url = "$base/biz/login/index"; Must = '/static/admin/js/login-md5.js' },
                         @{ Name = 'GET /biz/login/index（回填 returnUrl）'; Url = "$base/biz/login/index?returnUrl=%2Fbiz%2Fconfig%2Findex"; Must = 'value="/biz/config/index"' },
-                        @{ Name = 'GET /biz/home/index.html（伪静态）'; Url = "$base/biz/home/index.html"; Must = '快捷入口' },
+                        @{ Name = 'GET /biz/home/index.html（伪静态）'; Url = "$base/biz/home/index.html"; Must = 'main-frame' },
                         @{ Name = 'GET /biz/config/index.html（伪静态）'; Url = "$base/biz/config/index.html"; Must = '站点设置' },
                         @{ Name = 'GET /biz/login/index（参考版式）'; Url = "$base/biz/login/index"; Must = 'login_body' },
                         @{ Name = 'GET /static/admin/css/admin.css（参考皮肤）'; Url = "$base/static/admin/css/admin.css"; Must = 'ncap-form-default' },
@@ -221,10 +265,13 @@ if ($SkipSmoke) {
                 # 3.4 保存设置（表单）+ 回读
                 $save = Invoke-External 'curl.exe' @('-s', '-o', 'NUL', '-w', '%{http_code}', '-d', 'SiteName=RegressionShop&SeoTitle=RegressionTitle', "$base/biz/config/updatebase")
                 if ($save.Output -match '200') {
+                    # 回读看 **dashboard 内容页**（它渲染 `siteName`）——壳页 `home/index` 只包 iframe，不含站点名
+                    $dashBytes = (New-Object System.Net.WebClient).DownloadData("$base/biz/home/dashboard")
+                    $dashText = [Text.Encoding]::UTF8.GetString($dashBytes)
+                    if ($dashText.Contains('RegressionShop')) { Pass 'POST /biz/config/updatebase' '回读命中（dashboard.siteName）' }
+                    else { Fail 'POST /biz/config/updatebase' '回读未命中 RegressionShop' }
                     $configBytes = (New-Object System.Net.WebClient).DownloadData("$base/biz/config/index")
                     $configText = [Text.Encoding]::UTF8.GetString($configBytes)
-                    if ($configText.Contains('RegressionShop')) { Pass 'POST /biz/config/updatebase' '回读命中' }
-                    else { Fail 'POST /biz/config/updatebase' '回读未命中 RegressionShop' }
                     if ($configText.Contains('/static/admin/css/admin.css')) { Pass 'GET /biz/config/index（复用参考样式）' }
                     else { Fail 'GET /biz/config/index（复用参考样式）' '未引用 admin.css' }
                     if ($configText.Contains('ncap-form-default')) { Pass 'GET /biz/config/index（参考版式类）' }

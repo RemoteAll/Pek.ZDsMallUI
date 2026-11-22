@@ -159,10 +159,12 @@ pub const SqliteBackend = struct {
     fn getSettingLocked(self: *SqliteBackend, arena: std.mem.Allocator, key: []const u8) !?[]const u8 {
         self.session.resetResults();
 
+        // 键名统一成 `Config.Name` 的规范写法（`siteName` / `SiteName` 同一条记录）
+        const norm_key = backend_mod.canonicalStoreKey(key);
         const ref = try self.dal.table("Config");
         var w = zcode.Where.init(self.allocator);
         defer w.deinit();
-        _ = try w.eq("Name", .{ .text = key });
+        _ = try w.eq("Name", .{ .text = norm_key });
         var q = zcode.Query.init(self.allocator);
         defer q.deinit();
         _ = try q.column("Value");
@@ -186,16 +188,18 @@ pub const SqliteBackend = struct {
     }
 
     fn putSettingLocked(self: *SqliteBackend, key: []const u8, value: []const u8) !void {
+        // 见 `getSettingLocked`：写也走规范键名，不再产生 camelCase 新行
+        const norm_key = backend_mod.canonicalStoreKey(key);
         const ref = try self.dal.table("Config");
         var w = zcode.Where.init(self.allocator);
         defer w.deinit();
-        _ = try w.eq("Name", .{ .text = key });
+        _ = try w.eq("Name", .{ .text = norm_key });
 
         if (try ref.count(self.session, &w) > 0) {
             _ = try ref.updateOne(self.session, &.{zcode.dbtable.field("Value", .{ .text = value })}, &w, 0);
         } else {
             _ = try ref.insert(self.session, &.{
-                zcode.dbtable.field("Name", .{ .text = key }),
+                zcode.dbtable.field("Name", .{ .text = norm_key }),
                 zcode.dbtable.field("Value", .{ .text = value }),
             });
         }
@@ -775,6 +779,23 @@ test "后端：ORM 建表 + 设置读写 + 登录 + 重开数据仍在" {
         try testing.expectEqualStrings("ORM 测试站-改", (try be.setting(arena, "SiteName")).?);
     }
 
+    // 控制器链路：`backend().saveSettings(form)` 必须真的落库（踩过：回归里 POST updatebase 返回 200 但回读不到）
+    {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const form = [_]router.Param{
+            .{ .name = "SiteName", .value = "保存链路站" },
+            .{ .name = "SeoTitle", .value = "保存链路标题" },
+        };
+        const outcome = try be.backend().saveSettings(arena, &form);
+        try testing.expect(outcome == .ok);
+        try testing.expectEqualStrings("保存链路站", (try be.setting(arena, "SiteName")).?);
+        try testing.expectEqualStrings("保存链路标题", (try be.setting(arena, "SeoTitle")).?);
+        // 版本戳递增（外部据此判断「库里的设置变新了」）
+        try testing.expect((try be.setting(arena, "__configVersion")) != null);
+    }
+
     // 语言偏好落在 C# 的 UserDetail.LanguageId
     be.backend().setLanguageId("admin", 2);
     try testing.expectEqual(@as(i32, 2), be.backend().languageId("admin"));
@@ -804,7 +825,10 @@ test "后端：ORM 建表 + 设置读写 + 登录 + 重开数据仍在" {
         var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        try testing.expectEqualStrings("ORM 测试站-改", (try be2.setting(arena, "SiteName")).?);
+        // 断言「最后一次写入的值」：上面的 `saveSettings` 用例把 `SiteName` 改成了「保存链路站」
+        try testing.expectEqualStrings("保存链路站", (try be2.setting(arena, "SiteName")).?);
+        // 键名大小写无关：用小写 `siteName` 也要读得到同一条记录（`Config.Name` 是 COLLATE NOCASE）
+        try testing.expectEqualStrings("保存链路站", (try be2.setting(arena, "siteName")).?);
         try testing.expectEqual(@as(i32, 2), be2.backend().languageId("admin"));
     }
 }
