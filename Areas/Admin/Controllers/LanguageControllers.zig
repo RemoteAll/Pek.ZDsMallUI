@@ -21,12 +21,27 @@ pub const CultureController = struct {
         const user = admin_area.currentUser(c);
         const culture_id = self.languageIdFor(user);
 
+        // 搜索（对齐 C# `Culture/Index`：name 关键字 + status 有效/无效）
+        const keyword = std.mem.trim(u8, c.queryValue("name") orelse "", " \t\r\n");
+        const status_filter = std.fmt.parseInt(i32, c.queryValue("status") orelse "-1", 10) catch -1;
+
         var rows: std.ArrayList(zzig.web.Value) = .empty;
         for (store.all()) |row| {
+            if (keyword.len > 0) {
+                const hit = containsIgnoreCase(row.name, keyword) or
+                    containsIgnoreCase(row.display_name, keyword) or
+                    containsIgnoreCase(row.english_name, keyword);
+                if (!hit) continue;
+            }
+            if (status_filter == 1 and !row.status) continue;
+            if (status_filter == 0 and row.status) continue;
+
             var builder = zzig.web.ObjectBuilder.init(c.arena);
             try builder.int("id", row.id);
             try builder.str("name", row.name);
+            try builder.str("displayName", if (row.display_name.len > 0) row.display_name else row.name);
             try builder.str("englishName", row.english_name);
+            try builder.str("languageCulture", row.language_culture);
             try builder.str("code", row.code);
             try builder.boolean("enabled", row.status);
             try builder.boolean("isDefault", row.is_default);
@@ -38,6 +53,8 @@ pub const CultureController = struct {
         try model.list("rows", try rows.toOwnedSlice(c.arena));
         try model.str("areaRoute", try areaPrefix(self, c));
         try model.int("currentId", culture_id);
+        try model.str("keyword", keyword);
+        try model.int("statusFilter", status_filter);
         try model.str("saved", c.queryValue("saved") orelse "");
         try model.str("error", c.queryValue("error") orelse "");
         return admin_area.renderView(self, c, "Culture", "Index", model.finish());
@@ -89,12 +106,14 @@ pub const CultureController = struct {
         const store = self.languages orelse return redirectTo(self, c, "/culture/index", "error=未启用多语言");
 
         const name = std.mem.trim(u8, c.formValue("Name") orelse "", " \t\r\n");
+        const display_name = std.mem.trim(u8, c.formValue("DisplayName") orelse "", " \t\r\n");
         const english = std.mem.trim(u8, c.formValue("EnglishName") orelse "", " \t\r\n");
+        const language_culture = std.mem.trim(u8, c.formValue("LanguageCulture") orelse "", " \t\r\n");
         const code = std.mem.trim(u8, c.formValue("UniqueSeoCode") orelse "", " \t\r\n");
-        if (name.len == 0 or code.len == 0) return redirectTo(self, c, "/culture/index", "error=名称与语言代码不能为空");
+        if (name.len == 0 or code.len == 0) return redirectTo(self, c, "/culture/index", "error=标题与 Url 缩写不能为空");
         const order = std.fmt.parseInt(i32, c.formValue("DisplayOrder") orelse "0", 10) catch 0;
 
-        store.addLanguage(name, if (english.len == 0) name else english, code, order) catch |e| {
+        store.addLanguage(name, display_name, english, language_culture, code, order) catch |e| {
             zzig.Logger.err("[ZDsMallUI] 新增语言失败（{s}）：{s}", .{ code, @errorName(e) });
             return redirectTo(self, c, "/culture/index", "error=新增失败（语言代码可能已存在）");
         };
@@ -116,14 +135,22 @@ pub const LanguagesController = struct {
         const culture_id = if (requested > 0) requested else self.languageIdFor(user);
 
         // 键集合 = 内置键 ∪ 自定义键（自定义键可在页面上新增/删除）
+        // 搜索（对齐 C# `Languages/Index`：lanKey + lanValue）
+        const lan_key = std.mem.trim(u8, c.queryValue("lanKey") orelse "", " \t\r\n");
+        const lan_value = std.mem.trim(u8, c.queryValue("lanValue") orelse "", " \t\r\n");
+
         const keys = try store.resourceKeys(c.arena);
         var rows: std.ArrayList(zzig.web.Value) = .empty;
         for (keys) |key| {
+            if (lan_key.len > 0 and std.mem.indexOf(u8, key, lan_key) == null) continue;
+            const text_value = store.text(culture_id, key);
+            if (lan_value.len > 0 and std.mem.indexOf(u8, text_value, lan_value) == null) continue;
+
             var builder = zzig.web.ObjectBuilder.init(c.arena);
             try builder.str("key", key);
             // `ident` = 表单字段后缀（`v_<ident>`），也是视图里 `@Model.lang.<ident>` 用的标识符
             try builder.str("ident", try language_mod.identifier(c.arena, key));
-            try builder.str("value", store.text(culture_id, key));
+            try builder.str("value", text_value);
             try rows.append(c.arena, builder.finish());
         }
 
@@ -142,6 +169,9 @@ pub const LanguagesController = struct {
         try model.list("rows", try rows.toOwnedSlice(c.arena));
         try model.list("cultures", try options.toOwnedSlice(c.arena));
         try model.int("cultureId", culture_id);
+        try model.str("cultureName", if (store.find(std.fmt.allocPrint(c.arena, "{d}", .{culture_id}) catch "") ) |row| row.display_name else "");
+        try model.str("lanKey", lan_key);
+        try model.str("lanValue", lan_value);
         try model.str("areaRoute", try areaPrefix(self, c));
         try model.str("saved", c.queryValue("saved") orelse "");
         try model.str("error", c.queryValue("error") orelse "");
@@ -198,6 +228,17 @@ fn deleteResource(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         return redirectTo(self, c, "/languages/index", "error=删除失败，详见日志");
     };
     return redirectTo(self, c, "/languages/index", "saved=1");
+}
+
+/// 大小写不敏感的子串包含（Zig 0.17 的 std.ascii 没有 indexOfIgnoreCase）。
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
+    }
+    return false;
 }
 
 fn areaPrefix(self: *admin_area.AdminArea, c: *router.Ctx) ![]const u8 {

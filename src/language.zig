@@ -53,6 +53,16 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "common.enabled", .zh = "启用", .en = "Enabled" },
     .{ .key = "common.disabled", .zh = "停用", .en = "Disabled" },
     .{ .key = "common.default", .zh = "默认", .en = "Default" },
+    .{ .key = "common.manage", .zh = "管理", .en = "Manage" },
+    .{ .key = "common.title", .zh = "标题", .en = "Title" },
+    .{ .key = "common.display_name", .zh = "显示名称", .en = "Display name" },
+    .{ .key = "common.keyword", .zh = "关键字", .en = "Keyword" },
+    .{ .key = "common.please_select", .zh = "请选择", .en = "Please select" },
+    .{ .key = "common.yes", .zh = "是", .en = "Yes" },
+    .{ .key = "common.no", .zh = "否", .en = "No" },
+    .{ .key = "common.select_all", .zh = "全选", .en = "Select all" },
+    .{ .key = "common.confirm_delete", .zh = "您确定要删除吗?", .en = "Delete this item?" },
+    .{ .key = "page.culture.language", .zh = "语言缩写", .en = "Language culture" },
     .{ .key = "common.name", .zh = "名称", .en = "Name" },
     .{ .key = "common.order", .zh = "排序", .en = "Order" },
     .{ .key = "common.saved", .zh = "保存成功", .en = "Saved" },
@@ -117,8 +127,14 @@ pub fn identifier(allocator: std.mem.Allocator, key: []const u8) ![]u8 {
 /// 界面语言。
 pub const Language = struct {
     id: i32,
+    /// 标题（C# `Name`）
     name: []const u8,
+    /// 显示名称（C# `DisplayName`）
+    display_name: []const u8,
     english_name: []const u8,
+    /// 语言缩写（C# `LanguageCulture`，如 zh-CN）
+    language_culture: []const u8,
+    /// Url 缩写（C# `UniqueSeoCode`，如 zh）
     code: []const u8,
     status: bool,
     order: i32,
@@ -153,7 +169,9 @@ pub const Store = struct {
 
         for (self.languages) |row| {
             self.allocator.free(row.name);
+            self.allocator.free(row.display_name);
             self.allocator.free(row.english_name);
+            self.allocator.free(row.language_culture);
             self.allocator.free(row.code);
         }
         if (self.languages.len > 0) self.allocator.free(self.languages);
@@ -191,7 +209,7 @@ pub const Store = struct {
         defer db.close();
 
         var langs: std.ArrayList(Language) = .empty;
-        if (db.prepare(self.allocator, "SELECT Id, Name, EnglishName, UniqueSeoCode, Status, DisplayOrder, IsDefault FROM Language ORDER BY DisplayOrder, Id")) |stmt_in| {
+        if (db.prepare(self.allocator, "SELECT Id, Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault FROM Language ORDER BY DisplayOrder, Id")) |stmt_in| {
             var stmt = stmt_in;
             defer stmt.finalize();
             try stmt.bindAll(&.{});
@@ -200,7 +218,9 @@ pub const Store = struct {
                 try langs.append(self.allocator, .{
                     .id = rowInt(row, "Id"),
                     .name = try self.allocator.dupe(u8, rowText(row, "Name")),
+                    .display_name = try self.allocator.dupe(u8, rowText(row, "DisplayName")),
                     .english_name = try self.allocator.dupe(u8, rowText(row, "EnglishName")),
+                    .language_culture = try self.allocator.dupe(u8, rowText(row, "LanguageCulture")),
                     .code = try self.allocator.dupe(u8, rowText(row, "UniqueSeoCode")),
                     .status = rowInt(row, "Status") != 0,
                     .order = rowInt(row, "DisplayOrder"),
@@ -212,7 +232,7 @@ pub const Store = struct {
         }
 
         var resources: std.StringHashMapUnmanaged(std.StringHashMapUnmanaged([]const u8)) = .empty;
-        if (db.prepare(self.allocator, "SELECT CultureId, Key, Value FROM LocaleStringResource")) |stmt_in| {
+        if (db.prepare(self.allocator, "SELECT CultureId, LanKey, LanValue FROM LocaleStringResource")) |stmt_in| {
             var stmt = stmt_in;
             defer stmt.finalize();
             try stmt.bindAll(&.{});
@@ -221,8 +241,8 @@ pub const Store = struct {
                 const culture_key = try std.fmt.allocPrint(self.allocator, "{d}", .{rowInt(row, "CultureId")});
                 const gop = try resources.getOrPut(self.allocator, culture_key);
                 if (!gop.found_existing) gop.value_ptr.* = .empty else self.allocator.free(culture_key);
-                const key_copy = try self.allocator.dupe(u8, rowText(row, "Key"));
-                const value_copy = try self.allocator.dupe(u8, rowText(row, "Value"));
+                const key_copy = try self.allocator.dupe(u8, rowText(row, "LanKey"));
+                const value_copy = try self.allocator.dupe(u8, rowText(row, "LanValue"));
                 if (gop.value_ptr.getEntry(key_copy)) |existing| {
                     self.allocator.free(existing.key_ptr.*);
                     self.allocator.free(existing.value_ptr.*);
@@ -252,15 +272,17 @@ pub const Store = struct {
 
     fn setBuiltinLanguages(self: *Store) !void {
         const rows = [_]Language{
-            .{ .id = 1, .name = "简体中文", .english_name = "Chinese (Simplified)", .code = "zh-CN", .status = true, .order = 1, .is_default = true },
-            .{ .id = 2, .name = "English", .english_name = "English", .code = "en-US", .status = true, .order = 2, .is_default = false },
+            .{ .id = 1, .name = "简体中文", .display_name = "简体中文", .english_name = "Chinese (Simplified)", .language_culture = "zh-CN", .code = "zh", .status = true, .order = 1, .is_default = true },
+            .{ .id = 2, .name = "English", .display_name = "English", .english_name = "English", .language_culture = "en-US", .code = "en", .status = true, .order = 2, .is_default = false },
         };
         var langs: std.ArrayList(Language) = .empty;
         for (rows) |row| {
             try langs.append(self.allocator, .{
                 .id = row.id,
                 .name = try self.allocator.dupe(u8, row.name),
+                .display_name = try self.allocator.dupe(u8, row.display_name),
                 .english_name = try self.allocator.dupe(u8, row.english_name),
+                .language_culture = try self.allocator.dupe(u8, row.language_culture),
                 .code = try self.allocator.dupe(u8, row.code),
                 .status = row.status,
                 .order = row.order,
@@ -279,8 +301,8 @@ pub const Store = struct {
         var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
-        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, EnglishName, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES ('简体中文', 'Chinese (Simplified)', 'zh-CN', 1, 1, 1)");
-        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, EnglishName, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES ('English', 'English', 'en-US', 1, 2, 0)");
+        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES ('简体中文', '简体中文', 'Chinese (Simplified)', 'zh-CN', 'zh', 1, 1, 1)");
+        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES ('English', 'English', 'English', 'en-US', 'en', 1, 2, 0)");
         zzig.Logger.info("[ZDsMallUI] 已初始化多语言：简体中文（默认）+ English", .{});
     }
 
@@ -322,16 +344,31 @@ pub const Store = struct {
     }
 
     /// 新增语言（代码唯一；`order` 决定下拉顺序）。
-    pub fn addLanguage(self: *Store, name: []const u8, english_name: []const u8, code: []const u8, order: i32) !void {
+    pub fn addLanguage(
+        self: *Store,
+        name: []const u8,
+        display_name: []const u8,
+        english_name: []const u8,
+        language_culture: []const u8,
+        code: []const u8,
+        order: i32,
+    ) !void {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
         var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
-        var stmt = try db.prepare(self.allocator, "INSERT INTO Language (Name, EnglishName, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES (?, ?, ?, 1, ?, 0)");
+        var stmt = try db.prepare(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES (?, ?, ?, ?, ?, 1, ?, 0)");
         defer stmt.finalize();
-        try stmt.bindAll(&.{ .{ .text = name }, .{ .text = english_name }, .{ .text = code }, .{ .int = order } });
+        try stmt.bindAll(&.{
+            .{ .text = name },
+            .{ .text = if (display_name.len > 0) display_name else name },
+            .{ .text = if (english_name.len > 0) english_name else name },
+            .{ .text = if (language_culture.len > 0) language_culture else code },
+            .{ .text = code },
+            .{ .int = order },
+        });
         try stmt.run();
 
         try self.reload();
@@ -346,9 +383,9 @@ pub const Store = struct {
         defer db.close();
 
         const sql =
-            \\INSERT INTO LocaleStringResource (CultureId, [Key], Value, UpdateTime)
+            \\INSERT INTO LocaleStringResource (CultureId, [LanKey], LanValue, UpdateTime)
             \\VALUES (?, ?, ?, datetime('now'))
-            \\ON CONFLICT(CultureId, [Key]) DO UPDATE SET Value = excluded.Value, UpdateTime = excluded.UpdateTime
+            \\ON CONFLICT(CultureId, [LanKey]) DO UPDATE SET LanValue = excluded.LanValue, UpdateTime = excluded.UpdateTime
         ;
         var stmt = try db.prepare(self.allocator, sql);
         defer stmt.finalize();
@@ -382,8 +419,12 @@ pub const Store = struct {
                 if (row.id == id) return row;
             }
         } else |_| {}
+        // 同时认 Url 缩写（`en`）与语言缩写（`en-US`），与 C# 两列并存保持一致
         for (self.languages) |row| {
             if (std.ascii.eqlIgnoreCase(row.code, key)) return row;
+        }
+        for (self.languages) |row| {
+            if (std.ascii.eqlIgnoreCase(row.language_culture, key)) return row;
         }
         return null;
     }
@@ -431,7 +472,7 @@ pub const Store = struct {
         var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
-        var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE CultureId = ? AND [Key] = ?");
+        var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE CultureId = ? AND [LanKey] = ?");
         defer stmt.finalize();
         try stmt.bindAll(&.{ .{ .int = culture_id }, .{ .text = key } });
         try stmt.run();
@@ -528,7 +569,9 @@ test "多语言：内置文案按语言代码回退（无 DB）" {
     try store.reload();
 
     const zh = store.defaultLanguage().?;
-    try testing.expectEqualStrings("zh-CN", zh.code);
+    // 两列并存（对齐 C#）：Url 缩写 `zh` + 语言缩写 `zh-CN`
+    try testing.expectEqualStrings("zh", zh.code);
+    try testing.expectEqualStrings("zh-CN", zh.language_culture);
     try testing.expectEqualStrings("设置", store.text(zh.id, "menu.settings"));
 
     const en = store.find("en-US").?;

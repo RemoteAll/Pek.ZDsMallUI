@@ -1,8 +1,9 @@
 @{
     Layout = "Shared/_Layout";
 }
-@* 语言包（对齐 C# `Areas/Admin/Views/Languages/Index.cshtml`）：
-   键由代码定义（视图要引用），这里只改文本；保存后重载语言仓储，无需重启。 *@
+@* 语言包：**结构与类名完全对齐 B2B2CShop `Areas/Admin/Views/Languages/Index.cshtml`**
+   （搜索区 `ds-search-form` 三个字段：翻译键 / 语言 / 翻译值；`table.ds-default-table`；
+   翻译值单元格就地编辑；`ul.pagination`）。字段与 C# 一致：LanKey / LanValue / CultureId。 *@
 <div class="page">
     <div class="fixed-bar">
         <div class="item-title">
@@ -11,11 +12,8 @@
                 <h5></h5>
             </div>
             <ul class="tab-base ds-row">
-                @foreach (var item in Model.cultures) {
-                <li>
-                    <a href="@Model.areaRoute/languages/index?culture=@item.id" class="@if (item.current) {<text>current</text>}"><span>@item.name</span></a>
-                </li>
-                }
+                <li><a href="@Model.areaRoute/languages/index" class="current"><span>@Model.lang.common_manage</span></a></li>
+                <li><a href="#add-language"><span>@Model.lang.common_add</span></a></li>
             </ul>
         </div>
     </div>
@@ -27,23 +25,71 @@
     <div class="explanation"><div class="title"><h4 style="color:#c00;">@Model.error</h4></div></div>
     }
 
-    <form method="post" action="@Model.areaRoute/languages/save">
-        <input type="hidden" name="CultureId" value="@Model.cultureId">
-        <div class="ncap-form-default">
+    <form method="get" name="formSearch" id="formSearch">
+        <div class="ds-search-form">
             <dl>
-                <dt>@Model.lang.page_languages_key</dt>
-                <dd><p class="notic">@Model.lang.page_languages_language：<code>@Model.cultureId</code></p></dd>
+                <dt>@Model.lang.page_languages_key：</dt>
+                <dd><input type="text" value="@Model.lanKey" name="lanKey" class="txt"></dd>
             </dl>
-            @foreach (var row in Model.rows) {
             <dl>
-                <dt><code>@row.key</code></dt>
+                <dt>@Model.lang.page_languages_language：</dt>
                 <dd>
-                    <input name="v_@row.ident" value="@row.value" class="input-txt" type="text">
-                    <span class="err"></span>
-                    <a href="@Model.areaRoute/languages/delete?culture=@Model.cultureId&key=@row.key" onclick="return confirm('@Model.lang.common_delete?')" style="margin-left:8px;">@Model.lang.common_delete</a>
+                    <select name="cultureId" id="cultureId">
+                        <option value="0">@Model.lang.common_please_select</option>
+                        @foreach (var item in Model.cultures) {
+                        <option value="@item.id" @if (item.current) {<text>selected</text>}>@item.name</option>
+                        }
+                    </select>
                 </dd>
             </dl>
-            }
+            <dl>
+                <dt>@Model.lang.page_languages_value：</dt>
+                <dd><input type="text" value="@Model.lanValue" name="lanValue" class="txt"></dd>
+            </dl>
+            <div class="btn_group">
+                <input type="submit" class="btn" value="@Model.lang.common_search">
+            </div>
+        </div>
+    </form>
+
+    <form method="post" action="@Model.areaRoute/languages/save" name="formSave">
+        <input type="hidden" name="CultureId" value="@Model.cultureId">
+        <table class="ds-default-table">
+            <thead>
+                <tr>
+                    <th class="w24"></th>
+                    <th>@Model.lang.page_languages_key</th>
+                    <th>@Model.lang.page_languages_language</th>
+                    <th>@Model.lang.page_languages_value</th>
+                    <th>@Model.lang.common_actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Model.rows) {
+                <tr>
+                    <td><input type="checkbox" class="checkitem" name="nav_id[]" value="@row.ident"></td>
+                    <td style="width:auto;"><code>@row.key</code></td>
+                    <td style="width:100px;">@Model.cultureName</td>
+                    <td>
+                        <input name="v_@row.ident" value="@row.value" class="edit-value" type="text">
+                    </td>
+                    <td style="width:120px;">
+                        <a href="@Model.areaRoute/languages/delete?culture=@Model.cultureId&key=@row.key" onclick="return confirm('@Model.lang.common_confirm_delete')" class="dsui-btn-del">@Model.lang.common_delete</a>
+                    </td>
+                </tr>
+                }
+            </tbody>
+            <tfoot>
+                <tr class="tfoot">
+                    <td><input type="checkbox" class="checkall" id="checkallBottom"></td>
+                    <td colspan="4"><label for="checkallBottom">@Model.lang.common_select_all</label></td>
+                </tr>
+            </tfoot>
+        </table>
+        <ul class="pagination"></ul>
+
+        <a id="add-language"></a>
+        <div class="ncap-form-default">
             <dl>
                 <dt>@Model.lang.common_add</dt>
                 <dd>
@@ -54,7 +100,7 @@
             </dl>
             <dl>
                 <dt></dt>
-                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms[0].submit()">@Model.lang.common_save</a></dd>
+                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms.formSave.submit()">@Model.lang.common_save</a></dd>
             </dl>
         </div>
     </form>
