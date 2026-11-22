@@ -73,6 +73,9 @@ pub const DEFAULT_SETTINGS = [_]SettingsEntry{
     .{ .key = "curDomainUrl", .store_key = "CurDomainUrl", .default = "" },
     // 公司名称（C# 视图 `name="companyname"`，实体属性 `Company`）
     .{ .key = "company", .store_key = "Company", .default = "" },
+    // 会话超时（秒，0 = 不超时）与刷新用户周期（秒）—— C# `DHSetting.SessionTimeout` / `RefreshUserPeriod`
+    .{ .key = "sessionTimeout", .store_key = "SessionTimeout", .default = "0" },
+    .{ .key = "refreshUserPeriod", .store_key = "RefreshUserPeriod", .default = "600" },
 };
 
 /// 表单键（C# 视图字段名）→ `Config.Name`（**PascalCase，与 C# 库里的键一致**）；
@@ -95,6 +98,9 @@ pub fn formKeyToSetting(key: []const u8) ?[]const u8 {
         .{ "FooterCustomHtml", "FooterCustomHtml" },
         .{ "CurDomainUrl", "CurDomainUrl" },
         .{ "companyname", "Company" },
+        // C# 视图的 `id="sessiontimeout"` / `id="refreshuserperiod"`（全小写）
+        .{ "sessiontimeout", "SessionTimeout" },
+        .{ "refreshuserperiod", "RefreshUserPeriod" },
     };
     for (pairs) |pair| {
         if (std.ascii.eqlIgnoreCase(pair[0], key)) return pair[1];

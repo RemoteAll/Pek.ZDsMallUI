@@ -26,6 +26,10 @@ const config_controller = @import("ConfigController.zig");
 const home_controller = @import("HomeController.zig");
 const login_controller = @import("LoginController.zig");
 const role_controller = @import("RoleController.zig");
+// 菜单管理（MenuController.zig）下一批补上，路由挂载同步恢复
+// const menu_controller = @import("MenuController.zig");
+
+const menu_db_mod = @import("../../../src/deps.zig").menu_db;
 
 const router = zzig.web.router;
 const controller_mod = zzig.web.controller;
@@ -69,6 +73,8 @@ pub const AdminArea = struct {
     languages: ?*@import("../../../src/deps.zig").language.Store = null,
     /// 菜单注册表（由门面注入；框架页顶部/左侧菜单从这里生成）
     menus: ?*@import("../../../src/deps.zig").menu.Registry = null,
+    /// `Menu` 表连接（注入后菜单渲染以表为准；未注入则用内存注册表）
+    menu_store: ?@import("../../../src/deps.zig").menu_db.Store = null,
     /// 数据访问（SQLite 后端注入）：角色 / 管理员 / 菜单页直接用 ORM（不手写 SQL）。
     /// `null` = 没启用数据库（内存后端），那几页会提示不可用。
     dal: ?*@import("zcode").Dal = null,
@@ -181,6 +187,13 @@ pub const AdminArea = struct {
         self.menus = registry;
     }
 
+    /// 注入 `Menu` 表的连接：注入后菜单**以表为准**（后台「菜单管理」改完立刻生效）。
+    ///
+    /// 不注入（或表里没数据）时回退到内存注册表，所以库自测 / 未接 DB 的项目照常能跑。
+    pub fn setMenuStore(self: *AdminArea, store: menu_db_mod.Store) void {
+        self.menu_store = store;
+    }
+
     /// 注入 Dal + 长连接（角色 / 管理员 / 菜单页用；`null` = 那几页只显示「数据库未启用」提示，不崩）。
     pub fn setDal(self: *AdminArea, dal: ?*@import("zcode").Dal, session: ?*@import("zcode").Session) void {
         self.dal = dal;
@@ -223,6 +236,9 @@ pub const AdminArea = struct {
     }
 
     /// 当前用户应看到的菜单树（`groups[]`，已是该用户语言）。
+    ///
+    /// **优先读 `Menu` 表**（后台「菜单管理」改完刷新即生效）；表里没有菜单（或库未接 DB）时
+    /// 回退内存注册表（代码 `addMenu` 注册的那份，等价 C# 的 `[DHMenu]` 扫描结果）。
     pub fn menuGroups(
         self: *const AdminArea,
         arena: std.mem.Allocator,
@@ -231,7 +247,16 @@ pub const AdminArea = struct {
         const registry = self.menus orelse return .{ .list = &.{} };
         const store = self.languages orelse return .{ .list = &.{} };
         const prefix = try area_mod.routePrefix(arena, self.areaName());
-        return registry.build(arena, prefix, store, self.languageIdFor(user_name));
+        const culture_id = self.languageIdFor(user_name);
+
+        if (self.menu_store) |db| {
+            const from_db = menu_db_mod.buildValue(db, arena, prefix, store, culture_id) catch |err| blk: {
+                zzig.Logger.warn("[ZDsMallUI] 从 Menu 表构建菜单失败，回退内存注册表：{s}", .{@errorName(err)});
+                break :blk null;
+            };
+            if (from_db) |groups| return groups;
+        }
+        return registry.build(arena, prefix, store, culture_id);
     }
 
     /// 登录页路径（`/{area}/login/index`）。

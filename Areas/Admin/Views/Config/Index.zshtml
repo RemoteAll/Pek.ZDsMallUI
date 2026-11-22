@@ -122,6 +122,15 @@
                     <p class="notic">@T("客服联系电话，将会显示在头部或者底部等位置")</p>
                 </dd>
             </dl>
+            @* 联系邮箱：C# 站点设置页在「客服联系电话」之后（`name="CustomerEmail"`） *@
+            <dl>
+                <dt>@T("联系邮箱")</dt>
+                <dd>
+                    <input id="CustomerEmail" name="CustomerEmail" value="@Model.customerEmail" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">@T("联系邮箱，将会显示在头部或者底部等位置")</p>
+                </dd>
+            </dl>
             <dl>
                 <dt>@T("前台页头")</dt>
                 <dd>
@@ -141,6 +150,23 @@
                 <dd>
                     <textarea name="Statistical" id="Statistical">@Model.statistical</textarea>
                     <span class="err"></span>
+                </dd>
+            </dl>
+            @* 会话超时 / 刷新用户周期：C# `Config/Index.cshtml` 里紧跟「流量统计配置」的两项 *@
+            <dl>
+                <dt>@T("会话超时")</dt>
+                <dd>
+                    <input id="sessiontimeout" name="sessiontimeout" value="@Model.sessionTimeout" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">@T("单点登录后会话超时时间，该时间内可借助Cookie登录，默认0s")</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>@T("刷新用户周期")</dt>
+                <dd>
+                    <input id="refreshuserperiod" name="refreshuserperiod" value="@Model.refreshUserPeriod" class="input-txt" type="text">
+                    <span class="err"></span>
+                    <p class="notic">@T("该周期内多次SSO登录只拉取一次用户信息，默认600秒")</p>
                 </dd>
             </dl>
             <dl>

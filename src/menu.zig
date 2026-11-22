@@ -218,7 +218,9 @@ pub const Registry = struct {
 };
 
 /// `{area}` → 区域前缀（`/admin`）；其余原样。
-fn expandUrl(arena: std.mem.Allocator, url: []const u8, area_prefix: []const u8) ![]const u8 {
+///
+/// 公开给 `menu_db.zig`（表驱动渲染）复用：两条渲染路径必须用同一套 `{area}` 口径。
+pub fn expandUrl(arena: std.mem.Allocator, url: []const u8, area_prefix: []const u8) ![]const u8 {
     const marker = "{area}";
     var out: std.Io.Writer.Allocating = .init(arena);
     defer out.deinit();

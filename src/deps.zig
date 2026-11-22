@@ -15,6 +15,7 @@ pub const captcha = @import("captcha.zig");
 pub const language = @import("language.zig");
 pub const login_guard = @import("login_guard.zig");
 pub const menu = @import("menu.zig");
+pub const menu_db = @import("menu_db.zig");
 pub const password = @import("password.zig");
 pub const sqlite_backend = @import("sqlite_backend.zig");
 pub const sqlite_session_store = @import("sqlite_session_store.zig");

@@ -133,9 +133,15 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "公司名称，将会显示在底部等位置", .en = "Shown in the footer" },
     .{ .key = "客服联系电话", .en = "Service phone" },
     .{ .key = "客服联系电话，将会显示在头部或者底部等位置", .en = "Shown in header or footer" },
+    .{ .key = "联系邮箱", .en = "Contact email" },
+    .{ .key = "联系邮箱，将会显示在头部或者底部等位置", .en = "Shown in header or footer" },
     .{ .key = "前台页头", .en = "Header HTML" },
     .{ .key = "前台页脚", .en = "Footer HTML" },
     .{ .key = "流量统计配置", .en = "Analytics snippet" },
+    .{ .key = "会话超时", .en = "Session timeout" },
+    .{ .key = "单点登录后会话超时时间，该时间内可借助Cookie登录，默认0s", .en = "Session timeout after SSO sign-in, 0s by default" },
+    .{ .key = "刷新用户周期", .en = "User refresh period" },
+    .{ .key = "该周期内多次SSO登录只拉取一次用户信息，默认600秒", .en = "Fetch user info once per period, 600s by default" },
 };
 
 /// 默认语言代码（没有默认语言记录时使用）。
