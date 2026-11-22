@@ -75,7 +75,7 @@
                 @foreach (var group in Model.groups) {
                 <ul class="menu-group" data-group="@group.key">
                     @foreach (var item in group.items) {
-                    <li><a href="javascript:void(0)" data-url="@item.url"><i class="iconfont">@Html.Raw(item.icon)</i>@item.title</a></li>
+                    <li><a href="javascript:void(0)" data-url="@item.url" data-name="@item.name"><i class="iconfont">@Html.Raw(item.icon)</i>@item.title</a></li>
                     }
                 </ul>
                 }
@@ -104,21 +104,51 @@
                 });
             }
 
+            // 按 hash 激活子菜单：支持两种写法（两种都要能用，方便手写链接）
+            //   #/admin/culture/index   —— 完整子页地址
+            //   #culture                —— 菜单标识（`data-name`）
+            function activateByHash(raw) {
+                var key = decodeURIComponent((raw || '').replace(/^#/, ''));
+                if (!key) { return false; }
+                var target = null;
+                items.forEach(function (a) {
+                    if (a.getAttribute('data-url') === key || a.getAttribute('data-name') === key) { target = a; }
+                });
+                if (!target) { return false; }
+                frame.src = target.getAttribute('data-url');
+                items.forEach(function (x) { x.classList.remove('selected'); });
+                target.classList.add('selected');
+                var group = target.closest ? target.closest('.menu-group') : null;
+                if (group && group.getAttribute('data-group')) { showGroup(group.getAttribute('data-group')); }
+                return true;
+            }
+
             navLinks.forEach(function (a) {
                 a.addEventListener('click', function () { showGroup(a.getAttribute('data-group')); });
             });
 
             items.forEach(function (a) {
                 a.addEventListener('click', function () {
-                    frame.src = a.getAttribute('data-url');
+                    var url = a.getAttribute('data-url');
+                    frame.src = url;
                     items.forEach(function (x) { x.classList.remove('selected'); });
                     a.classList.add('selected');
+                    // 地址栏同步（用 replaceState 避免每次点菜单都往历史里塞一条）
+                    if (location.hash !== '#' + url) {
+                        if (history.replaceState) { history.replaceState(null, '', '#' + url); }
+                        else { location.hash = url; }
+                    }
                 });
             });
 
-            // 默认展开第一组，并高亮欢迎页
-            if (groups.length > 0) { showGroup(groups[0].getAttribute('data-group')); }
-            if (items.length > 0) { items[0].classList.add('selected'); }
+            // 浏览器前进/后退、或手改 hash 时跟着切
+            window.addEventListener('hashchange', function () { activateByHash(location.hash); });
+
+            // 初始状态：地址栏带 hash 就直接打开对应子页；否则展开第一组并高亮欢迎页
+            if (!activateByHash(location.hash)) {
+                if (groups.length > 0) { showGroup(groups[0].getAttribute('data-group')); }
+                if (items.length > 0) { items[0].classList.add('selected'); }
+            }
         })();
     </script>
 </body>
