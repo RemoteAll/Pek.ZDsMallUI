@@ -71,6 +71,23 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "page.languages.key", .zh = "资源键", .en = "Key" },
     .{ .key = "page.languages.value", .zh = "翻译文本", .en = "Value" },
     .{ .key = "page.languages.language", .zh = "语言", .en = "Language" },
+    .{ .key = "page.config.site_name", .zh = "网站名称", .en = "Site name" },
+    .{ .key = "page.config.seo_title", .zh = "网站Seo标题", .en = "SEO title" },
+    .{ .key = "page.config.seo_key", .zh = "网站Seo关键字", .en = "SEO keywords" },
+    .{ .key = "page.config.seo_desc", .zh = "网站Seo描述", .en = "SEO description" },
+    .{ .key = "page.config.icp", .zh = "ICP备案号", .en = "ICP license" },
+    .{ .key = "page.config.copyright", .zh = "版权", .en = "Copyright" },
+    .{ .key = "page.config.system_name", .zh = "系统名称", .en = "System name" },
+    .{ .key = "page.config.system_name_tip", .zh = "系统名称，将显示在后台顶部欢迎信息等位置", .en = "Shown in the admin header" },
+    .{ .key = "page.config.domain", .zh = "网站域名", .en = "Site domain" },
+    .{ .key = "page.config.domain_tip", .zh = "网站的域名，必须 http:// 或 https:// 开头", .en = "Must start with http:// or https://" },
+    .{ .key = "page.config.company", .zh = "公司名称", .en = "Company" },
+    .{ .key = "page.config.company_tip", .zh = "公司名称，将会显示在底部等位置", .en = "Shown in the footer" },
+    .{ .key = "page.config.tel", .zh = "客服联系电话", .en = "Service phone" },
+    .{ .key = "page.config.tel_tip", .zh = "客服联系电话，将会显示在头部或者底部等位置", .en = "Shown in header or footer" },
+    .{ .key = "page.config.header_html", .zh = "前台页头", .en = "Header HTML" },
+    .{ .key = "page.config.footer_html", .zh = "前台页脚", .en = "Footer HTML" },
+    .{ .key = "page.config.statistical", .zh = "流量统计配置", .en = "Analytics snippet" },
 };
 
 /// 默认语言代码（没有默认语言记录时使用）。
@@ -405,7 +422,71 @@ pub const Store = struct {
         }
         return builder.finish();
     }
+
+    /// 删除一条语言包（自定义键也能删）。
+    pub fn removeResource(self: *Store, culture_id: i32, key: []const u8) !void {
+        const db_path = self.db_path orelse return;
+        var lib = try sqlite.Lib.load(self.allocator);
+        defer lib.deinit();
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        defer db.close();
+
+        var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE CultureId = ? AND [Key] = ?");
+        defer stmt.finalize();
+        try stmt.bindAll(&.{ .{ .int = culture_id }, .{ .text = key } });
+        try stmt.run();
+        try self.reload();
+    }
+
+    /// 删除语言（**禁止删默认语言**；连同其语言包一起删）。
+    pub fn removeLanguage(self: *Store, id: i32) !void {
+        if (self.defaultLanguage()) |def| {
+            if (def.id == id) return error.CannotRemoveDefaultLanguage;
+        }
+        const db_path = self.db_path orelse return;
+        var lib = try sqlite.Lib.load(self.allocator);
+        defer lib.deinit();
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        defer db.close();
+
+        var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE CultureId = ?");
+        defer stmt.finalize();
+        try stmt.bindAll(&.{.{ .int = id }});
+        try stmt.run();
+
+        var stmt2 = try db.prepare(self.allocator, "DELETE FROM Language WHERE Id = ?");
+        defer stmt2.finalize();
+        try stmt2.bindAll(&.{.{ .int = id }});
+        try stmt2.run();
+
+        try self.reload();
+    }
+
+    /// 语言包键集合：内置键 ∪ 数据库里出现过的自定义键（去重、稳定顺序）。
+    pub fn resourceKeys(self: *const Store, allocator: std.mem.Allocator) ![]const []const u8 {
+        var list: std.ArrayList([]const u8) = .empty;
+        for (BUILTIN_STRINGS) |entry| try list.append(allocator, entry.key);
+        var it = self.resources.iterator();
+        while (it.next()) |entry| {
+            var inner = entry.value_ptr.iterator();
+            while (inner.next()) |kv| {
+                var exists = false;
+                for (list.items) |known| {
+                    if (std.mem.eql(u8, known, kv.key_ptr.*)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) try list.append(allocator, kv.key_ptr.*);
+            }
+        }
+        return list.toOwnedSlice(allocator);
+    }
 };
+
+fn isChinese(code: []const u8) bool {
+    return std.ascii.startsWithIgnoreCase(code, "zh");
+}
 
 fn isEnglish(code: []const u8) bool {
     return std.ascii.startsWithIgnoreCase(code, "en");

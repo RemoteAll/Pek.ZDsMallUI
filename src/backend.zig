@@ -60,6 +60,8 @@ pub const DEFAULT_SETTINGS = [_]SettingsEntry{
     .{ .key = "headerCustomHtml", .default = "" },
     .{ .key = "footerCustomHtml", .default = "" },
     .{ .key = "curDomainUrl", .default = "" },
+    // 公司名称（C# 视图 `name="companyname"`）
+    .{ .key = "company", .default = "" },
 };
 
 /// 表单键（C# 视图字段名）→ 设置键（camelCase）；未识别的键返回 `null`（忽略）。
@@ -80,6 +82,7 @@ pub fn formKeyToSetting(key: []const u8) ?[]const u8 {
         .{ "HeaderCustomHtml", "headerCustomHtml" },
         .{ "FooterCustomHtml", "footerCustomHtml" },
         .{ "curDomainUrl", "curDomainUrl" },
+        .{ "companyname", "company" },
     };
     for (pairs) |pair| {
         if (std.ascii.eqlIgnoreCase(pair[0], key)) return pair[1];

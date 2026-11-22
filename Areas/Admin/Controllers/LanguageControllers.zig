@@ -70,6 +70,19 @@ pub const CultureController = struct {
         return redirectTo(self, c, "/culture/index", "saved=1");
     }
 
+    /// `GET /{area}/culture/delete?id=N`：删除语言（默认语言不可删；连同语言包一起删）。
+    pub fn delete(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
+        const self = admin_area.castSelf(raw);
+        const store = self.languages orelse return redirectTo(self, c, "/culture/index", "error=未启用多语言");
+        const id = std.fmt.parseInt(i32, c.queryValue("id") orelse "", 10) catch 0;
+        if (id <= 0) return redirectTo(self, c, "/culture/index", "error=参数 id 无效");
+        store.removeLanguage(id) catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 删除语言失败（id={d}）：{s}", .{ id, @errorName(e) });
+            return redirectTo(self, c, "/culture/index", if (e == error.CannotRemoveDefaultLanguage) "error=默认语言不可删除" else "error=删除失败，详见日志");
+        };
+        return redirectTo(self, c, "/culture/index", "saved=1");
+    }
+
     /// `POST /{area}/culture/add`：新增语言。
     pub fn add(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);
@@ -91,6 +104,8 @@ pub const CultureController = struct {
 
 /// 语言包（键值翻译）。
 pub const LanguagesController = struct {
+    /// 供路由挂载：删除一条语言包（挂在模块级，见文件末尾 `deleteResource`）。
+    pub const deleteResourceCall = deleteResource;
     /// `GET /{area}/languages?culture=N`：列出内置键在当前语言下的文本。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);
@@ -100,13 +115,15 @@ pub const LanguagesController = struct {
         const requested = std.fmt.parseInt(i32, c.queryValue("culture") orelse "", 10) catch 0;
         const culture_id = if (requested > 0) requested else self.languageIdFor(user);
 
+        // 键集合 = 内置键 ∪ 自定义键（自定义键可在页面上新增/删除）
+        const keys = try store.resourceKeys(c.arena);
         var rows: std.ArrayList(zzig.web.Value) = .empty;
-        for (language_mod.BUILTIN_STRINGS) |entry| {
+        for (keys) |key| {
             var builder = zzig.web.ObjectBuilder.init(c.arena);
-            try builder.str("key", entry.key);
+            try builder.str("key", key);
             // `ident` = 表单字段后缀（`v_<ident>`），也是视图里 `@Model.lang.<ident>` 用的标识符
-            try builder.str("ident", try language_mod.identifier(c.arena, entry.key));
-            try builder.str("value", store.text(culture_id, entry.key));
+            try builder.str("ident", try language_mod.identifier(c.arena, key));
+            try builder.str("value", store.text(culture_id, key));
             try rows.append(c.arena, builder.finish());
         }
 
@@ -140,15 +157,28 @@ pub const LanguagesController = struct {
         const culture_id = std.fmt.parseInt(i32, c.formValue("CultureId") orelse "0", 10) catch 0;
         if (culture_id <= 0) return redirectTo(self, c, "/languages/index", "error=语言参数无效");
 
+        // 1) 已有键（内置 ∪ 自定义）：非空就保存
         var saved: usize = 0;
-        for (language_mod.BUILTIN_STRINGS) |entry| {
-            const ident = try language_mod.identifier(c.arena, entry.key);
+        const keys = try store.resourceKeys(c.arena);
+        for (keys) |key| {
+            const ident = try language_mod.identifier(c.arena, key);
             const field = try std.fmt.allocPrint(c.arena, "v_{s}", .{ident});
             const text = std.mem.trim(u8, c.formValue(field) orelse "", " \t\r\n");
             if (text.len == 0) continue;
-            store.saveResource(culture_id, entry.key, text) catch |e| {
-                zzig.Logger.err("[ZDsMallUI] 保存语言包失败（{s}）：{s}", .{ entry.key, @errorName(e) });
+            store.saveResource(culture_id, key, text) catch |e| {
+                zzig.Logger.err("[ZDsMallUI] 保存语言包失败（{s}）：{s}", .{ key, @errorName(e) });
                 return redirectTo(self, c, "/languages/index", "error=保存失败，详见日志");
+            };
+            saved += 1;
+        }
+
+        // 2) 新增自定义键（`NewKey` + `NewValue`）
+        const new_key = std.mem.trim(u8, c.formValue("NewKey") orelse "", " \t\r\n");
+        const new_value = std.mem.trim(u8, c.formValue("NewValue") orelse "", " \t\r\n");
+        if (new_key.len > 0 and new_value.len > 0) {
+            store.saveResource(culture_id, new_key, new_value) catch |e| {
+                zzig.Logger.err("[ZDsMallUI] 新增语言包键失败（{s}）：{s}", .{ new_key, @errorName(e) });
+                return redirectTo(self, c, "/languages/index", "error=新增键失败，详见日志");
             };
             saved += 1;
         }
@@ -156,6 +186,19 @@ pub const LanguagesController = struct {
         return redirectTo(self, c, "/languages/index", "saved=1");
     }
 };
+
+fn deleteResource(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
+    const self = admin_area.castSelf(raw);
+    const store = self.languages orelse return redirectTo(self, c, "/languages/index", "error=未启用多语言");
+    const culture_id = std.fmt.parseInt(i32, c.queryValue("culture") orelse "0", 10) catch 0;
+    const key = std.mem.trim(u8, c.queryValue("key") orelse "", " \t\r\n");
+    if (culture_id <= 0 or key.len == 0) return redirectTo(self, c, "/languages/index", "error=参数无效");
+    store.removeResource(culture_id, key) catch |e| {
+        zzig.Logger.err("[ZDsMallUI] 删除语言包失败（{s}）：{s}", .{ key, @errorName(e) });
+        return redirectTo(self, c, "/languages/index", "error=删除失败，详见日志");
+    };
+    return redirectTo(self, c, "/languages/index", "saved=1");
+}
 
 fn areaPrefix(self: *admin_area.AdminArea, c: *router.Ctx) ![]const u8 {
     return @import("../../../src/deps.zig").area.routePrefix(c.arena, self.areaName());

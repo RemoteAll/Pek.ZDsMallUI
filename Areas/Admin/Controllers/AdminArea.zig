@@ -342,6 +342,7 @@ pub const AdminArea = struct {
             try ctrl.mapWithContext("GET", "setdefault", @ptrCast(self), guarded(language_controllers.CultureController.setDefault));
             try ctrl.mapWithContext("GET", "togglestatus", @ptrCast(self), guarded(language_controllers.CultureController.toggleStatus));
             try ctrl.mapWithContext("POST", "add", @ptrCast(self), guarded(language_controllers.CultureController.add));
+            try ctrl.mapWithContext("GET", "delete", @ptrCast(self), guarded(language_controllers.CultureController.delete));
             try ctrl.mount(&app.router);
         }
         {
@@ -351,6 +352,7 @@ pub const AdminArea = struct {
             const ctrl = try self.newController(prefix);
             try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(language_controllers.LanguagesController.index));
             try ctrl.mapWithContext("POST", "save", @ptrCast(self), guarded(language_controllers.LanguagesController.save));
+            try ctrl.mapWithContext("GET", "delete", @ptrCast(self), guarded(language_controllers.LanguagesController.deleteResourceCall));
             try ctrl.mount(&app.router);
         }
         {

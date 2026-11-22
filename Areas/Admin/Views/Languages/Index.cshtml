@@ -40,9 +40,18 @@
                 <dd>
                     <input name="v_@row.ident" value="@row.value" class="input-txt" type="text">
                     <span class="err"></span>
+                    <a href="@Model.areaRoute/languages/delete?culture=@Model.cultureId&key=@row.key" onclick="return confirm('@Model.lang.common_delete?')" style="margin-left:8px;">@Model.lang.common_delete</a>
                 </dd>
             </dl>
             }
+            <dl>
+                <dt>@Model.lang.common_add</dt>
+                <dd>
+                    <input name="NewKey" class="input-txt" type="text" placeholder="my.custom.key" style="width:260px;">
+                    <input name="NewValue" class="input-txt" type="text" placeholder="@Model.lang.page_languages_value">
+                    <span class="err"></span>
+                </dd>
+            </dl>
             <dl>
                 <dt></dt>
                 <dd><a href="javascript:void(0)" class="btn" onclick="document.forms[0].submit()">@Model.lang.common_save</a></dd>

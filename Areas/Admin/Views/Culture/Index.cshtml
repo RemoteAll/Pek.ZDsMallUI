@@ -49,6 +49,9 @@
                         } else {
                         <a href="@Model.areaRoute/culture/togglestatus?id=@row.id&enable=1">@Model.lang.common_enabled</a>
                         }
+                        @if (!row.isDefault) {
+                        <a href="@Model.areaRoute/culture/delete?id=@row.id" onclick="return confirm('@Model.lang.common_delete?')">@Model.lang.common_delete</a>
+                        }
                     </td>
                 </tr>
                 }
