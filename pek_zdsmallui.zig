@@ -53,6 +53,16 @@ pub const language = @import("src/language.zig");
 pub const menu = @import("src/menu.zig");
 pub const version_info = @import("src/version.zig");
 
+/// `Areas/Admin/Controllers/AdminArea.zig` 的**模块导出**（不只是 struct 类型）。
+///
+/// 业务项目要加自己的后台页时，需要这几个**模块级函数**（它们不接受 self 作为方法调用）：
+/// - `renderView(area, c, "Controller", "View", model)`：渲染 `Areas/{Area}/Views/...` 并自动补
+/// `lang` / `groups` / 页面耗时（与库内页面完全同一套口径）；
+/// - `currentUser(c)`：读鉴权中间件写入的登录用户；
+/// - `castSelf(raw)` / `guarded(...)`。
+/// 只导出模块、不改任何行为（纯增量）。
+pub const admin_area_mod = @import("Areas/Admin/Controllers/AdminArea.zig");
+
 // ————— C# 风格目录（Areas / Controllers）—————
 pub const Areas = struct {
     pub const Admin = struct {

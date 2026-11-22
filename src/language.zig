@@ -35,6 +35,7 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "menu.site_settings", .zh = "站点设置", .en = "Site settings" },
     .{ .key = "menu.culture", .zh = "多语言", .en = "Cultures" },
     .{ .key = "menu.languages", .zh = "语言包", .en = "Languages" },
+    .{ .key = "menu.article", .zh = "单页文章", .en = "Articles" },
     .{ .key = "menu.admin_user", .zh = "管理员管理", .en = "Administrators" },
     .{ .key = "user.greeting", .zh = "您好", .en = "Hello" },
     .{ .key = "user.home", .zh = "访问首页", .en = "Visit site" },
