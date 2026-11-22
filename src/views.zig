@@ -228,6 +228,20 @@ fn containsKey(keys: []const []const u8, key: []const u8) bool {
 pub const generated_marker_prefix = "@* pek-zdsmallui:generated ";
 pub const generated_marker = "@* pek-zdsmallui:generated v3 *@";
 
+/// 去掉文本开头可能已有的生成标记行（含行尾换行）。
+///
+/// 为什么需要：`DEFAULT_VIEWS` 用 `@embedFile` 直接引用仓库里的模板文件，若开发机在
+/// 库根目录跑过程序，落地逻辑会把标记写回模板文件本身 → 再落地就成了「标记 + 标记 + 内容」。
+/// 写入前统一剥一次，幂等。
+pub fn stripGeneratedMarker(text: []const u8) []const u8 {
+    if (!std.mem.startsWith(u8, text, generated_marker_prefix)) return text;
+    const line_end = std.mem.indexOfScalar(u8, text, '\n') orelse return text;
+    // 手写跳过空行：Zig 0.17 的 std.mem 没有 trimLeft（改名/移除了），别依赖具体名字。
+    var i: usize = line_end + 1;
+    while (i < text.len and (text[i] == '\r' or text[i] == '\n')) i += 1;
+    return text[i..];
+}
+
 /// 把内置默认视图落到**指定区域**目录（只补缺失 / 升级库生成的旧版，不覆盖用户手改）。
 ///
 /// - 共享视图 → `{views_root}/Shared/…`（不随区域变化）；
@@ -261,7 +275,8 @@ pub fn materializeFor(
             defer allocator.free(existing);
             if (!std.mem.startsWith(u8, existing, generated_marker_prefix)) {
                 // 兼容「带标记之前落地的」文件：内容与内置原样一致（= 用户没改过）才覆盖
-                break :blk std.mem.eql(u8, existing, entry.source);
+                break :blk std.mem.eql(u8, existing, entry.source) or
+                    std.mem.eql(u8, existing, stripGeneratedMarker(entry.source));
             }
             // 库生成的旧版 → 升级到当前版本
             break :blk !std.mem.startsWith(u8, existing, generated_marker);
@@ -269,7 +284,7 @@ pub fn materializeFor(
         if (!should_write) continue;
 
         if (std.fs.path.dirname(target_relative)) |parent| try zzig.fsio.makePath(io, parent);
-        const body = try std.fmt.allocPrint(allocator, "{s}\n{s}", .{ generated_marker, entry.source });
+        const body = try std.fmt.allocPrint(allocator, "{s}\n{s}", .{ generated_marker, stripGeneratedMarker(entry.source) });
         defer allocator.free(body);
         try zzig.fsio.writeFile(io, target_relative, body);
         written += 1;
