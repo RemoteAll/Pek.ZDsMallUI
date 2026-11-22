@@ -44,6 +44,10 @@ pub const DEFAULT_VIEWS = [_]DefaultView{
     .{ .relative = "Areas/Admin/Views/Login/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Login/Index.cshtml") },
     .{ .relative = "Areas/Admin/Views/Culture/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Culture/Index.cshtml") },
     .{ .relative = "Areas/Admin/Views/Languages/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Languages/Index.cshtml") },
+    .{ .relative = "Areas/Admin/Views/Culture/AddCulture.cshtml", .source = @embedFile("../Areas/Admin/Views/Culture/AddCulture.cshtml") },
+    .{ .relative = "Areas/Admin/Views/Culture/EditCulture.cshtml", .source = @embedFile("../Areas/Admin/Views/Culture/EditCulture.cshtml") },
+    .{ .relative = "Areas/Admin/Views/Languages/AddLanguages.cshtml", .source = @embedFile("../Areas/Admin/Views/Languages/AddLanguages.cshtml") },
+    .{ .relative = "Areas/Admin/Views/Languages/EditLanguages.cshtml", .source = @embedFile("../Areas/Admin/Views/Languages/EditLanguages.cshtml") },
 };
 
 /// 渲染结果。

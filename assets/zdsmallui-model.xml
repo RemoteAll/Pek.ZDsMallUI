@@ -30,7 +30,7 @@
         <Column Name="IsAdmin" DataType="Boolean" Description="是否管理员" />
         <Column Name="Enable" DataType="Boolean" Description="是否启用" />
         <!-- 后台界面语言（对应 `Language.Id`；0 = 跟默认语言）——每个用户各自一份，与前台语言隔离 -->
-        <Column Name="LanguageId" DataType="Int32" Description="后台界面语言" />
+        <Column Name="LanguageId" DataType="Int32" DefaultValue="0" Description="后台界面语言" />
       </Columns>
       <Indexes>
         <Index Columns="UserName" Unique="True" />

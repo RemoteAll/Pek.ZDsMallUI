@@ -177,7 +177,9 @@ pub const AdminArea = struct {
         for (store.all()) |row| {
             if (!row.status) continue;
             var builder = zzig.web.ObjectBuilder.init(arena);
+            try builder.int("id", row.id);
             try builder.str("name", row.name);
+            try builder.str("displayName", row.display_name);
             try builder.str("code", row.code);
             try builder.str("url", try std.fmt.allocPrint(arena, "{s}/home/setlanguage?culture={s}&returnUrl={s}", .{ prefix, row.code, back }));
             try builder.boolean("current", row.id == current_id);
@@ -343,6 +345,9 @@ pub const AdminArea = struct {
             try ctrl.mapWithContext("GET", "togglestatus", @ptrCast(self), guarded(language_controllers.CultureController.toggleStatus));
             try ctrl.mapWithContext("POST", "add", @ptrCast(self), guarded(language_controllers.CultureController.add));
             try ctrl.mapWithContext("GET", "delete", @ptrCast(self), guarded(language_controllers.CultureController.delete));
+            try ctrl.mapWithContext("GET", "addculture", @ptrCast(self), guarded(language_controllers.CultureController.addCulture));
+            try ctrl.mapWithContext("GET", "editculture", @ptrCast(self), guarded(language_controllers.CultureController.editCulture));
+            try ctrl.mapWithContext("POST", "saveculture", @ptrCast(self), guarded(language_controllers.CultureController.saveCulture));
             try ctrl.mount(&app.router);
         }
         {
@@ -353,6 +358,9 @@ pub const AdminArea = struct {
             try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(language_controllers.LanguagesController.index));
             try ctrl.mapWithContext("POST", "save", @ptrCast(self), guarded(language_controllers.LanguagesController.save));
             try ctrl.mapWithContext("GET", "delete", @ptrCast(self), guarded(language_controllers.LanguagesController.deleteResourceCall));
+            try ctrl.mapWithContext("GET", "addlanguages", @ptrCast(self), guarded(language_controllers.LanguagesController.addLanguagesCall));
+            try ctrl.mapWithContext("GET", "editlanguages", @ptrCast(self), guarded(language_controllers.LanguagesController.editLanguagesCall));
+            try ctrl.mapWithContext("POST", "savelanguages", @ptrCast(self), guarded(language_controllers.LanguagesController.saveLanguagesCall));
             try ctrl.mount(&app.router);
         }
         {

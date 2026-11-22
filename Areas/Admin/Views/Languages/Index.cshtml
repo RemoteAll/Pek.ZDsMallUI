@@ -13,7 +13,7 @@
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/languages/index" class="current"><span>@Model.lang.common_manage</span></a></li>
-                <li><a href="#add-language"><span>@Model.lang.common_add</span></a></li>
+                <li><a href="@Model.areaRoute/languages/addlanguages"><span>@Model.lang.common_add</span></a></li>
             </ul>
         </div>
     </div>
@@ -74,6 +74,7 @@
                         <input name="v_@row.ident" value="@row.value" class="edit-value" type="text">
                     </td>
                     <td style="width:120px;">
+                        <a href="@Model.areaRoute/languages/editlanguages?key=@row.key" class="dsui-btn-edit">@Model.lang.common_edit</a>
                         <a href="@Model.areaRoute/languages/delete?culture=@Model.cultureId&key=@row.key" onclick="return confirm('@Model.lang.common_confirm_delete')" class="dsui-btn-del">@Model.lang.common_delete</a>
                     </td>
                 </tr>

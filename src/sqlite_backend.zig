@@ -66,10 +66,14 @@ pub const SqliteBackend = struct {
             if (dir.len > 0) try zzig.fsio.makePath(io, dir);
         }
 
-        try syncSchema(allocator, path, MODEL_XML, "框架");
-        if (project_xml) |xml| {
-            try syncSchema(allocator, path, xml, "项目");
-        }
+        // **一次建表、一个 Dal 会话**：框架表与项目表在**模型对象层**合并后一起同步。
+        //
+        // 曾经的写法是「跑两遍 `syncSchema`（两套 `Dal`）」，运行时会在第二套处报 `Sqlite` 并回退内存。
+        // 根因**不在本项目**：驱动层 `Lib.load` 每次都会 `LoadLibrary`、`deinit` 就 `FreeLibrary`，
+        // 同一模块「加载 → 卸载 → 再加载」后 `sqlite3_open_v2` 失败。已由 zzig 在驱动层根治
+        // （`Lib` 进程级单例：首次加载后常驻，`deinit` 只减引用计数），**其它项目不必再各自写兜底**。
+        // 这里仍然合并模型跑一次，是为了一次建表、要么全成要么全不动，避免半成品库。
+        try syncSchema(allocator, path, project_xml);
 
         const self = try allocator.create(SqliteBackend);
         errdefer allocator.destroy(self);
@@ -87,11 +91,21 @@ pub const SqliteBackend = struct {
         //
         // 若确认部署在网络盘（SMB/NFS 不支持 `-shm` 共享内存文件），把 `journal_mode` 显式设成
         // `"delete"` 即可；WAL 设置失败时驱动只打日志，不会中断打开。
-        self.db = sqlite.Db.openWithOptions(&self.lib, path, .{
-            .busy_timeout_ms = 8000,
-        }) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 打开 SQLite 数据库失败（{s}，路径 {s}）", .{ @errorName(e), path });
-            return e;
+        // 重试策略针对的是**外部进程**占库（备份脚本 / SQLiteStudio / 旧实例未退）：那是真实场景，
+        // 与「建表会话刚关闭」的驱动层句柄问题无关（后者已在 zzig 根治）。
+        self.db = blk: {
+            var attempt: usize = 0;
+            while (true) : (attempt += 1) {
+                if (sqlite.Db.openWithOptions(&self.lib, path, .{ .busy_timeout_ms = 8000, .journal_mode = null, .synchronous = null })) |db| {
+                    break :blk db;
+                } else |e| {
+                    if (attempt >= 4) {
+                        zzig.Logger.err("[ZDsMallUI] 打开 SQLite 数据库失败（{s}，路径 {s}，已重试 {d} 次）", .{ @errorName(e), path, attempt + 1 });
+                        return e;
+                    }
+                    zzig.compat.sleep(120 * std.time.ns_per_ms);
+                }
+            }
         };
         errdefer self.db.close();
 
@@ -117,11 +131,24 @@ pub const SqliteBackend = struct {
     }
 
     /// 用 `Pek.ZCode` 做增量建表（幂等：再跑一次不会重复建/不会报错）。
-    fn syncSchema(allocator: std.mem.Allocator, path: []const u8, xml: []const u8, label: []const u8) !void {
-        const model = zcode.EntityModel.parse(allocator, xml) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 解析{s} Model.xml 失败（{s}）：结构未变更", .{ label, @errorName(e) });
+    ///
+    /// `project_xml` 非 null 时，先**在模型对象层合并**（不拼 XML 字符串、更不跑两套 Dal），
+    /// 然后只 **一次** `syncSchema` 建出全部表。
+    fn syncSchema(allocator: std.mem.Allocator, path: []const u8, project_xml: ?[]const u8) !void {
+        var model = zcode.EntityModel.parse(allocator, MODEL_XML) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 解析框架 Model.xml 失败（{s}）：内置框架模型损坏", .{@errorName(e)});
             return e;
         };
+        if (project_xml) |xml| {
+            const project = zcode.EntityModel.parse(allocator, xml) catch |e| {
+                zzig.Logger.err("[ZDsMallUI] 解析项目 Model.xml 失败（{s}）：请检查 <EntityModel>/<Tables>/<Table> 结构", .{@errorName(e)});
+                return e;
+            };
+            const merged = try allocator.alloc(zcode.TableMeta, model.tables.len + project.tables.len);
+            @memcpy(merged[0..model.tables.len], model.tables);
+            @memcpy(merged[model.tables.len..], project.tables);
+            model.tables = merged;
+        }
         const conn = try std.fmt.allocPrint(allocator, "Data Source={s};Provider=SQLite;JournalMode=WAL;Synchronous=NORMAL", .{path});
         defer allocator.free(conn);
 
@@ -139,8 +166,8 @@ pub const SqliteBackend = struct {
         };
         if (report.tables_created > 0 or report.columns_added > 0 or report.indexes_created > 0) {
             zzig.Logger.info(
-                "[ZDsMallUI] {s}表结构已同步：新建表 {d} / 补列 {d} / 建索引 {d}",
-                .{ label, report.tables_created, report.columns_added, report.indexes_created },
+                "[ZDsMallUI] 表结构已同步（框架+项目）：新建表 {d} / 补列 {d} / 建索引 {d}",
+                .{ report.tables_created, report.columns_added, report.indexes_created },
             );
         }
     }
@@ -197,15 +224,24 @@ pub const SqliteBackend = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const count = try self.queryScalarInt("SELECT COUNT(*) FROM AdminUser", &.{});
+        const count = self.queryScalarInt("SELECT COUNT(*) FROM AdminUser", &.{}) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 读取 AdminUser 数量失败（{s}）：{s}", .{ @errorName(e), self.db.lastError() });
+            return e;
+        };
         if (count > 0) return;
 
-        const hashed = try password.hash(self.allocator, self.io, "admin123");
+        const hashed = password.hash(self.allocator, self.io, "admin123") catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 生成默认口令哈希失败（{s}）", .{@errorName(e)});
+            return e;
+        };
         defer self.allocator.free(hashed);
-        try self.exec(
-            "INSERT INTO AdminUser (UserName, DisplayName, Password, IsAdmin, Enable) VALUES (?, ?, ?, 1, 1)",
+        self.exec(
+            "INSERT INTO AdminUser (UserName, DisplayName, Password, IsAdmin, Enable, LanguageId) VALUES (?, ?, ?, 1, 1, 0)",
             &.{ .{ .text = "admin" }, .{ .text = "管理员" }, .{ .text = hashed } },
-        );
+        ) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 写入默认账号失败（{s}）：{s}", .{ @errorName(e), self.db.lastError() });
+            return e;
+        };
         zzig.Logger.warn("[ZDsMallUI] 已创建默认账号 admin / admin123（**生产环境请立即修改**）", .{});
     }
 

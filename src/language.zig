@@ -62,6 +62,12 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "common.no", .zh = "否", .en = "No" },
     .{ .key = "common.select_all", .zh = "全选", .en = "Select all" },
     .{ .key = "common.confirm_delete", .zh = "您确定要删除吗?", .en = "Delete this item?" },
+    .{ .key = "common.submit", .zh = "提交", .en = "Submit" },
+    .{ .key = "page.culture.flag", .zh = "旗帜", .en = "Flag" },
+    .{ .key = "page.culture.domain", .zh = "域名", .en = "Domain" },
+    .{ .key = "page.culture.is_default", .zh = "是否默认", .en = "Is default" },
+    .{ .key = "page.culture.remark", .zh = "描述", .en = "Remark" },
+    .{ .key = "page.languages.input", .zh = "请输入内容", .en = "Enter text" },
     .{ .key = "page.culture.language", .zh = "语言缩写", .en = "Language culture" },
     .{ .key = "common.name", .zh = "名称", .en = "Name" },
     .{ .key = "common.order", .zh = "排序", .en = "Order" },
@@ -139,6 +145,14 @@ pub const Language = struct {
     status: bool,
     order: i32,
     is_default: bool,
+    /// 旗帜（C# `Flag`）
+    flag: []const u8 = "",
+    /// 绑定域名（C# `Domain`）
+    domain: []const u8 = "",
+    /// Windows LCID（C# `Lcid`）
+    lcid: i32 = 0,
+    /// 描述（C# `Remark`）
+    remark: []const u8 = "",
 };
 
 /// 语言包读取结果（`culture_id` → 键值）。线程安全：整体替换快照，读路径无锁。
@@ -173,6 +187,9 @@ pub const Store = struct {
             self.allocator.free(row.english_name);
             self.allocator.free(row.language_culture);
             self.allocator.free(row.code);
+            self.allocator.free(row.flag);
+            self.allocator.free(row.domain);
+            self.allocator.free(row.remark);
         }
         if (self.languages.len > 0) self.allocator.free(self.languages);
         self.languages = &.{};
@@ -205,11 +222,14 @@ pub const Store = struct {
 
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        var db = sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null }) catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 多语言库打开失败（{s}，路径 {s}）", .{ @errorName(e), db_path });
+            return e;
+        };
         defer db.close();
 
         var langs: std.ArrayList(Language) = .empty;
-        if (db.prepare(self.allocator, "SELECT Id, Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault FROM Language ORDER BY DisplayOrder, Id")) |stmt_in| {
+        if (db.prepare(self.allocator, "SELECT Id, Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault, Flag, Domain, Lcid, Remark FROM Language ORDER BY DisplayOrder, Id")) |stmt_in| {
             var stmt = stmt_in;
             defer stmt.finalize();
             try stmt.bindAll(&.{});
@@ -225,6 +245,10 @@ pub const Store = struct {
                     .status = rowInt(row, "Status") != 0,
                     .order = rowInt(row, "DisplayOrder"),
                     .is_default = rowInt(row, "IsDefault") != 0,
+                    .flag = try self.allocator.dupe(u8, rowText(row, "Flag")),
+                    .domain = try self.allocator.dupe(u8, rowText(row, "Domain")),
+                    .lcid = rowInt(row, "Lcid"),
+                    .remark = try self.allocator.dupe(u8, rowText(row, "Remark")),
                 });
             }
         } else |err| {
@@ -287,6 +311,10 @@ pub const Store = struct {
                 .status = row.status,
                 .order = row.order,
                 .is_default = row.is_default,
+                .flag = try self.allocator.dupe(u8, row.flag),
+                .domain = try self.allocator.dupe(u8, row.domain),
+                .lcid = row.lcid,
+                .remark = try self.allocator.dupe(u8, row.remark),
             });
         }
         self.mutex.lock();
@@ -298,11 +326,11 @@ pub const Store = struct {
     fn ensureSeedLanguages(self: *Store, db_path: []const u8) !void {
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
         defer db.close();
 
-        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES ('简体中文', '简体中文', 'Chinese (Simplified)', 'zh-CN', 'zh', 1, 1, 1)");
-        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES ('English', 'English', 'English', 'en-US', 'en', 1, 2, 0)");
+        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault, Flag, Domain, Lcid, Remark) VALUES ('简体中文', '简体中文', 'Chinese (Simplified)', 'zh-CN', 'zh', 1, 1, 1, '', '', 0, '')");
+        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault, Flag, Domain, Lcid, Remark) VALUES ('English', 'English', 'English', 'en-US', 'en', 1, 2, 0, '', '', 0, '')");
         zzig.Logger.info("[ZDsMallUI] 已初始化多语言：简体中文（默认）+ English", .{});
     }
 
@@ -311,7 +339,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "UPDATE Language SET IsDefault = 0");
@@ -332,7 +360,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "UPDATE Language SET Status = ? WHERE Id = ?");
@@ -356,7 +384,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES (?, ?, ?, ?, ?, 1, ?, 0)");
@@ -379,7 +407,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
         defer db.close();
 
         const sql =
@@ -464,12 +492,52 @@ pub const Store = struct {
         return builder.finish();
     }
 
+    /// 更新语言（编辑页保存；只改传入的字段，`IsDefault` 由「设为默认」单独管）。
+    pub fn updateLanguage(
+        self: *Store,
+        id: i32,
+        name: []const u8,
+        display_name: []const u8,
+        english_name: []const u8,
+        language_culture: []const u8,
+        code: []const u8,
+        status: bool,
+        order: i32,
+        remark: []const u8,
+    ) !void {
+        const db_path = self.db_path orelse return;
+        var lib = try sqlite.Lib.load(self.allocator);
+        defer lib.deinit();
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        defer db.close();
+
+        const sql =
+            \\UPDATE Language SET Name = ?, DisplayName = ?, EnglishName = ?, LanguageCulture = ?,
+            \\UniqueSeoCode = ?, Status = ?, DisplayOrder = ?, Remark = ? WHERE Id = ?
+        ;
+        var stmt = try db.prepare(self.allocator, sql);
+        defer stmt.finalize();
+        try stmt.bindAll(&.{
+            .{ .text = name },
+            .{ .text = display_name },
+            .{ .text = english_name },
+            .{ .text = language_culture },
+            .{ .text = code },
+            .{ .int = if (status) 1 else 0 },
+            .{ .int = order },
+            .{ .text = remark },
+            .{ .int = id },
+        });
+        try stmt.run();
+        try self.reload();
+    }
+
     /// 删除一条语言包（自定义键也能删）。
     pub fn removeResource(self: *Store, culture_id: i32, key: []const u8) !void {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE CultureId = ? AND [LanKey] = ?");
@@ -487,7 +555,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE CultureId = ?");

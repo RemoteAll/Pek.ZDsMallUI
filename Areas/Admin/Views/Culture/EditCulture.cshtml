@@ -1,0 +1,119 @@
+@{
+    Layout = "Shared/_Layout";
+}
+@* 多语言-编辑：结构与 `AddCulture.cshtml` 完全一致（C# 也是同一套 `ds-default-table` 骨架）
+   - 页签：管理（跳 index）/ 添加（current）
+   - 表单：`form#doc_form > table.ds-default-table`
+     每项两行：`tr > td.required > label.validation` + `tr.noborder > td.vatop.rowform > input.infoTableInput.w300`
+     开关：`td.vatop.rowform.onoff > label.cb-enable/cb-disable + input[type=radio]`
+   - 页脚：`tfoot > tr.tfoot > td[colspan] > input.btn[type=submit]`
+   **不要自行改动版式**（用户要求与 C# 完全一致）。 *@
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>@Model.lang.menu_culture</h3>
+                <h5></h5>
+            </div>
+            <ul class="tab-base ds-row">
+                <li><a href="@Model.areaRoute/culture/index"><span>@Model.lang.common_manage</span></a></li>
+                <li><a href="javascript:void(0)" class="current"><span>@Model.lang.common_edit</span></a></li>
+            </ul>
+        </div>
+    </div>
+
+    <form id="doc_form" method="post" action="@Model.areaRoute/culture/saveculture">
+        <input type="hidden" name="Id" value="@Model.row.id" />
+        <table class="ds-default-table">
+            <tbody>
+                <tr>
+                    <td class="required"><label class="validation">@Model.lang.common_title</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="text" value="" name="Name" id="Name" class="infoTableInput w300" value="@Model.row.name"></td>
+                </tr>
+                <tr>
+                    <td class="required"><label class="validation">@Model.lang.common_display_name</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="text" value="" name="DisplayName" id="DisplayName" class="infoTableInput w300" value="@Model.row.displayName"></td>
+                </tr>
+                <tr>
+                    <td class="required"><label class="validation">@Model.lang.page_culture_english</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="text" value="" name="EnglishName" id="EnglishName" class="infoTableInput w300" value="@Model.row.englishName"></td>
+                </tr>
+                <tr>
+                    <td class="required"><label class="validation">@Model.lang.page_culture_language</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="text" value="" name="LanguageCulture" id="LanguageCulture" class="infoTableInput w300" value="@Model.row.languageCulture"></td>
+                </tr>
+                <tr>
+                    <td class="required"><label class="validation">@Model.lang.page_culture_code</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="text" value="" name="UniqueSeoCode" id="UniqueSeoCode" class="infoTableInput w300" value="@Model.row.code"></td>
+                </tr>
+                <tr>
+                    <td><label>@Model.lang.page_culture_flag</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="text" value="" name="Flag" id="Flag" class="infoTableInput w300" value="@Model.row.flag"></td>
+                </tr>
+                <tr>
+                    <td><label>@Model.lang.page_culture_domain</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="text" value="" name="Domain" id="Domain" class="infoTableInput w300" value="@Model.row.domain"></td>
+                </tr>
+                <tr>
+                    <td><label>LCID</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="text" value="" name="Lcid" id="Lcid" class="infoTableInput w300" value="@Model.row.lcid"></td>
+                </tr>
+                <tr>
+                    <td><label>@Model.lang.common_status:</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform onoff">
+                        <label for="isbuy_1" class="cb-enable selected"><span>@Model.lang.common_enabled</span></label>
+                        <label for="isbuy_2" class="cb-disable"><span>@Model.lang.common_disabled</span></label>
+                        <input id="isbuy_1" name="Status" value="1" type="radio" @if (Model.row.enabled) {<text>checked="checked"</text>}>
+                        <input id="isbuy_2" name="Status" value="0" type="radio" @if (!Model.row.enabled) {<text>checked="checked"</text>}>
+                    </td>
+                </tr>
+                <tr>
+                    <td><label>@Model.lang.page_culture_is_default:</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform onoff">
+                        <label for="isdefault_1" class="cb-enable"><span>@Model.lang.common_yes</span></label>
+                        <label for="isdefault_2" class="cb-disable selected"><span>@Model.lang.common_no</span></label>
+                        <input id="isdefault_1" name="IsDefault" value="1" type="radio" @if (Model.row.isDefault) {<text>checked="checked"</text>}>
+                        <input id="isdefault_2" name="IsDefault" value="0" type="radio" @if (!Model.row.isDefault) {<text>checked="checked"</text>}>
+                    </td>
+                </tr>
+                <tr>
+                    <td><label>@Model.lang.common_order</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="text" value="100" name="DisplayOrder" id="DisplayOrder" class="infoTableInput w300" value="@Model.row.order"></td>
+                </tr>
+                <tr>
+                    <td><label>@Model.lang.page_culture_remark</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><textarea name="Remark" id="Remark" style="min-width: 800px; min-height: 100px;">@Model.row.remark</textarea></td>
+                </tr>
+            </tbody>
+            <tfoot>
+                <tr class="tfoot">
+                    <td colspan="15"><input class="btn" type="submit" value="@Model.lang.common_submit" /></td>
+                </tr>
+            </tfoot>
+        </table>
+    </form>
+</div>

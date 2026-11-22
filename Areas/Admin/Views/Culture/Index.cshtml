@@ -14,7 +14,7 @@
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/culture/index" class="current"><span>@Model.lang.common_manage</span></a></li>
-                <li><a href="#add-culture"><span>@Model.lang.common_add</span></a></li>
+                <li><a href="@Model.areaRoute/culture/addculture"><span>@Model.lang.common_add</span></a></li>
             </ul>
         </div>
     </div>
@@ -71,8 +71,9 @@
                 <td>@if (row.isDefault) {<span>@Model.lang.common_yes</span>} else {<span>@Model.lang.common_no</span>}</td>
                 <td>@if (row.enabled) {<span>@Model.lang.common_enabled</span>} else {<span>@Model.lang.common_disabled</span>}</td>
                 <td>
+                    <a href="@Model.areaRoute/culture/editculture?id=@row.id" class="dsui-btn-edit">@Model.lang.common_edit</a>
                     @if (!row.isDefault) {
-                    <a href="@Model.areaRoute/culture/setdefault?id=@row.id" class="dsui-btn-edit">@Model.lang.common_default</a>
+                    <a href="@Model.areaRoute/culture/setdefault?id=@row.id">@Model.lang.common_default</a>
                     }
                     @if (row.enabled) {
                     <a href="@Model.areaRoute/culture/togglestatus?id=@row.id&enable=0">@Model.lang.common_disabled</a>

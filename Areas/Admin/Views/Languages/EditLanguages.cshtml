@@ -1,0 +1,45 @@
+@{
+    Layout = "Shared/_Layout";
+}
+@* 语言包-编辑：结构同 `AddLanguages.cshtml`（C# 也是同一套 layui-form-item 骨架），翻译键只读
+   - 页签：管理（跳 index）/ 添加（current）
+   - 表单：`form#doc_form`，翻译键用 `div.layui-form-item > label.layui-form-label + div.layui-input-inline > input#LanKey.w830`
+   - 每种语言一个 `div.layui-form-item.layui-form-text > textarea.layui-textarea`
+   - 底部 `input.btn[type=submit]`
+   **不要自行改动版式**（用户要求与 C# 完全一致）。 *@
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>@Model.lang.menu_languages</h3>
+                <h5></h5>
+            </div>
+            <ul class="tab-base ds-row">
+                <li><a href="@Model.areaRoute/languages/index"><span>@Model.lang.common_manage</span></a></li>
+                <li><a href="javascript:void(0)" class="current"><span>@Model.lang.common_edit</span></a></li>
+            </ul>
+        </div>
+    </div>
+    <form id="doc_form" method="post" action="@Model.areaRoute/languages/savelanguages">
+        <input type="hidden" name="document_id" value="1" />
+        <div class="layui-form-item">
+            <label class="layui-form-label"><span class="red">*</span>@Model.lang.page_languages_key</label>
+            <div class="layui-input-inline">
+                <input type="text" id="LanKey" name="LanKey" autocomplete="off" class="w830" value="@Model.lanKey" readonly>
+            </div>
+        </div>
+        @foreach (var item in Model.languages) {
+        <div class="layui-form-item layui-form-text">
+            <label class="layui-form-label">@item.name</label>
+            <div class="layui-input-block">
+                <input type="hidden" name="c_@item.id" value="@item.id" />
+                <textarea placeholder="@Model.lang.page_languages_input" class="layui-textarea" name="v_@item.id">@item.value</textarea>
+            </div>
+            <div class="col-sm-3"></div>
+        </div>
+        }
+        <div>
+            <input class="btn" type="submit" value="@Model.lang.common_submit" />
+        </div>
+    </form>
+</div>
