@@ -25,8 +25,8 @@ const Value = zzig.db.Value;
 
 /// 内置模型（`Model.xml`，与 C# 同格式）。
 ///
-/// **只是兜底**：部署目录（程序目录）下若有 `Model.xml` 就优先用它（对齐 C# —— 每个项目自带一份同名
-/// `Model.xml`，项目可自行加表/加列）。
+/// **只管框架自己的表**（`Setting` / `AdminUser` / `Session`）——相当于 C# 的 `Membership` 那部分；
+/// 业务表与多语言表由**项目自己的 `Model.xml`** 定义（两边的模型会各跑一次增量同步，结果是并集）。
 pub const MODEL_XML = @embedFile("../assets/zdsmallui-model.xml");
 
 /// 默认模型文件名（C# 同构，项目目录下同名文件优先）。
@@ -49,18 +49,27 @@ pub const SqliteBackend = struct {
         return initWithModel(allocator, io, path, null);
     }
 
-    /// 同上，但显式指定模型 XML（项目自己的 `Model.xml`）。
+    /// 同上，但额外带上**项目自己的模型**（项目 `Model.xml`）。
+    ///
+    /// 建表口径（对齐 C#：模型是项目级结构唯一来源，框架表由库负责）：
+    /// 1. 先跑框架内置模型（`Setting` / `AdminUser` / `Session` …）；
+    /// 2. 再跑项目模型（业务表 / 语言表 …）。
+    /// `syncSchema` 是增量的（缺表建表、缺列补列、不删列），所以两次结果就是**并集**，
+    /// 项目 `Model.xml` 不需要再把 `AdminUser` 这些框架表复制一遍。
     pub fn initWithModel(
         allocator: std.mem.Allocator,
         io: std.Io,
         path: []const u8,
-        model_xml: ?[]const u8,
+        project_xml: ?[]const u8,
     ) !*SqliteBackend {
         if (std.fs.path.dirname(path)) |dir| {
             if (dir.len > 0) try zzig.fsio.makePath(io, dir);
         }
 
-        try syncSchema(allocator, path, model_xml orelse MODEL_XML);
+        try syncSchema(allocator, path, MODEL_XML, "框架");
+        if (project_xml) |xml| {
+            try syncSchema(allocator, path, xml, "项目");
+        }
 
         const self = try allocator.create(SqliteBackend);
         errdefer allocator.destroy(self);
@@ -108,9 +117,9 @@ pub const SqliteBackend = struct {
     }
 
     /// 用 `Pek.ZCode` 做增量建表（幂等：再跑一次不会重复建/不会报错）。
-    fn syncSchema(allocator: std.mem.Allocator, path: []const u8, xml: []const u8) !void {
+    fn syncSchema(allocator: std.mem.Allocator, path: []const u8, xml: []const u8, label: []const u8) !void {
         const model = zcode.EntityModel.parse(allocator, xml) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 解析 Model.xml 失败（{s}）：结构未变更", .{@errorName(e)});
+            zzig.Logger.err("[ZDsMallUI] 解析{s} Model.xml 失败（{s}）：结构未变更", .{ label, @errorName(e) });
             return e;
         };
         const conn = try std.fmt.allocPrint(allocator, "Data Source={s};Provider=SQLite;JournalMode=WAL;Synchronous=NORMAL", .{path});
@@ -130,8 +139,8 @@ pub const SqliteBackend = struct {
         };
         if (report.tables_created > 0 or report.columns_added > 0 or report.indexes_created > 0) {
             zzig.Logger.info(
-                "[ZDsMallUI] 表结构已同步：新建表 {d} / 补列 {d} / 建索引 {d}",
-                .{ report.tables_created, report.columns_added, report.indexes_created },
+                "[ZDsMallUI] {s}表结构已同步：新建表 {d} / 补列 {d} / 建索引 {d}",
+                .{ label, report.tables_created, report.columns_added, report.indexes_created },
             );
         }
     }
