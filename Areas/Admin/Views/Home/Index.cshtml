@@ -38,12 +38,18 @@
         /* Language 二级菜单：主下拉贴着视口右边，所以二级**向左**弹出（否则出屏） */
         .admincp-header .navbar .fr li dl dd.has-child { position: relative; }
         .admincp-header .navbar .fr li dl dd.has-child > a::after { content: "\25C2"; float: right; margin-right: 4px; opacity: .85; }
+        /* 关键：admin.css 给 `dl` 设了 `overflow:hidden`（为了圆角裁切），
+           而二级菜单绝对定位到了 `dl` 外面 → 会被**裁掉**（computed style 看着是 block，肉眼却看不见）。
+           这里放开裁剪，并把圆角补到首尾 dd 上，视觉效果不变。 */
+        .admincp-header .navbar .fr li dl:has(dd.has-child) { overflow: visible; border-radius: 0; }
+        .admincp-header .navbar .fr li dl:has(dd.has-child) > dd:first-child { border-radius: 5px 5px 0 0; }
+        .admincp-header .navbar .fr li dl:has(dd.has-child) > dd:last-child { border-radius: 0 0 5px 5px; }
         .admincp-header .navbar .fr li dl dd.has-child > .sub-meun2 {
-            position: absolute; top: -10px; right: 100%; margin-right: 4px; display: none;
+            position: absolute; top: -10px; right: 100%; display: none;
         }
         .admincp-header .navbar .fr li dl dd.has-child:hover > .sub-meun2,
         .admincp-header .navbar .fr li dl dd.has-child.open > .sub-meun2 { display: block; }
-        .admincp-header .navbar .fr li dl .sub-meun2 dl { min-width: 110px; }
+        .admincp-header .navbar .fr li dl .sub-meun2 dl { min-width: 110px; overflow: hidden; border-radius: 5px; }
         /* 内联 SVG 图标：尺寸/间距对齐 iconfont（`dl dd i` 是 float:left + margin-right:5px） */
         .admincp-header .navbar .fr li dl dd svg.nav-svg { width: 14px; height: 14px; margin-right: 5px; vertical-align: -2px; }
     </style>
