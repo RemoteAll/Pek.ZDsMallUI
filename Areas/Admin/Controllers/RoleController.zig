@@ -57,6 +57,9 @@ pub const RoleController = struct {
             }
         }
         try putRole(&builder, row, id);
+        // 权限勾选树：来自 `Menu` 表（目录分组 + 菜单项），勾选值 = 该菜单 URL 的**控制器段**
+        // （与 `AdminArea.canAccess` 同一口径，所以勾完立刻生效）
+        try builder.list("permissionGroups", permissionTree(self, arena, row.permission) catch &.{});
         return admin_area.renderView(self, c, "Role", "Edit", builder.finish());
     }
 
@@ -68,7 +71,9 @@ pub const RoleController = struct {
         const name = std.mem.trim(u8, c.formValue("name") orelse "", " \t\r\n");
         const sort = std.fmt.parseInt(i32, std.mem.trim(u8, c.formValue("sort") orelse "0", " \t\r\n"), 10) catch 0;
         const enable = isOn(c.formValue("enable"));
-        const permission = c.formValue("permission") orelse "";
+        // 权限：界面上是复选框 `permission[]`（可多值），存盘为逗号分隔的控制器段串。
+        // 兼容旧的手填方式（单值 `permission` 且不是复选框）。
+        const permission = try collectPermissions(c.arena, c);
 
         if (self.dal == null or self.session == null) {
             return renderSaveError(self, c, id, .{ .id = id, .name = name, .sort = sort, .enable = enable, .permission = permission }, "数据库未启用，无法保存角色");
@@ -175,6 +180,100 @@ fn putRole(builder: *zzig.web.ObjectBuilder, row: RoleRow, id: i32) !void {
 fn isOn(raw: ?[]const u8) bool {
     const value = raw orelse return false;
     return std.mem.eql(u8, value, "1") or std.mem.eql(u8, value, "on") or std.mem.eql(u8, value, "true");
+}
+
+/// 从表单收集权限（`permission[]` 多值 / 兼容旧的单个 `permission` 手填串），去重后拼成逗号串。
+fn collectPermissions(arena: std.mem.Allocator, c: *router.Ctx) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var seen = std.StringHashMapUnmanaged(void).empty;
+    defer seen.deinit(arena);
+
+    for (c.form) |field| {
+        const is_multi = std.mem.eql(u8, field.name, "permission[]");
+        const is_single = std.mem.eql(u8, field.name, "permission");
+        if (!is_multi and !is_single) continue;
+
+        // 单值可能本身就是逗号串（旧数据/手填）→ 逐段拆
+        var it = std.mem.splitScalar(u8, field.value, ',');
+        while (it.next()) |raw| {
+            const one = std.mem.trim(u8, raw, " \t\r\n");
+            if (one.len == 0) continue;
+            if (seen.contains(one)) continue;
+            try seen.put(arena, try arena.dupe(u8, one), {});
+            if (out.items.len > 0) try out.append(arena, ',');
+            try out.appendSlice(arena, one);
+        }
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// 权限勾选树：`[{ name: 目录名, items: [{ key: 控制器段, title: 菜单标题, checked }] }]`。
+///
+/// `key` 取菜单 URL 的第二段（`{area}/role/index` → `role`）—— 与 `AdminArea.canAccess` 完全同口径。
+fn permissionTree(
+    self: *admin_area.AdminArea,
+    arena: std.mem.Allocator,
+    current: []const u8,
+) ![]const zzig.web.Value {
+    const dal = self.dal orelse return &.{};
+    const s = self.session orelse return &.{};
+
+    var q = zcode.Query.init(arena);
+    defer q.deinit();
+    _ = try q.orderBy("Sort", false);
+    _ = try q.orderBy("ID", false);
+
+    const ref = try dal.table("Menu");
+    s.resetResults();
+    const rows = try ref.queryRows(s, &q);
+
+    var groups: std.ArrayList(zzig.web.Value) = .empty;
+    for (rows) |row| {
+        if (columnInt(row, "Type") != 1) continue;
+        if (columnInt(row, "ParentID") != 0) continue;
+        const group_id = columnInt(row, "ID");
+
+        var items: std.ArrayList(zzig.web.Value) = .empty;
+        for (rows) |child| {
+            if (columnInt(child, "Type") != 2) continue;
+            if (columnInt(child, "ParentID") != group_id) continue;
+            const key = controllerOfUrl(columnText(child, "Url"));
+            if (key.len == 0) continue; // 目录/外链之类没有控制器段，跳过
+            const title = columnText(child, "DisplayName");
+            var b = zzig.web.ObjectBuilder.init(arena);
+            try b.str("key", key);
+            try b.str("title", if (title.len == 0) key else title);
+            try b.boolean("checked", permissionHas(current, key));
+            try items.append(arena, b.finish());
+        }
+        if (items.items.len == 0) continue;
+
+        const group_title = columnText(row, "DisplayName");
+        var gb = zzig.web.ObjectBuilder.init(arena);
+        try gb.str("name", if (group_title.len == 0) try arena.dupe(u8, columnText(row, "Name")) else group_title);
+        try gb.list("items", try items.toOwnedSlice(arena));
+        try groups.append(arena, gb.finish());
+    }
+    return groups.toOwnedSlice(arena);
+}
+
+/// `{area}/role/index` → `role`；`{area}/home/dashboard` → `home`；解析不出返回空串。
+fn controllerOfUrl(url: []const u8) []const u8 {
+    var it = std.mem.splitScalar(u8, url, '/');
+    _ = it.next(); // `{area}` 段
+    const seg = it.next() orelse return "";
+    return std.mem.trim(u8, seg, " \t\r\n");
+}
+
+fn permissionHas(permission: []const u8, key: []const u8) bool {
+    var it = std.mem.splitScalar(u8, permission, ',');
+    while (it.next()) |raw| {
+        const one = std.mem.trim(u8, raw, " \t\r\n");
+        if (one.len == 0) continue;
+        if (std.mem.eql(u8, one, "*")) return true; // 超级管理员 = 全选
+        if (std.ascii.eqlIgnoreCase(one, key)) return true;
+    }
+    return false;
 }
 
 /// 读全部角色（按 Sort、ID 升序）。

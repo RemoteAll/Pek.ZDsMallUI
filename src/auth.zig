@@ -25,6 +25,9 @@ const router = zzig.web.router;
 pub const STATE_UID = perms.http_auth.STATE_UID;
 /// 链路状态键：登录名（模板 `@Model.userName` 的来源）。
 pub const STATE_USER = "user";
+
+/// 是否管理员（`"1"` / `"0"`）：RBAC 判定用 —— 管理员绕过菜单权限检查。
+pub const STATE_IS_ADMIN = "auth.isAdmin";
 /// 链路状态键：当前令牌（登出用）。
 pub const STATE_TOKEN = "auth.token";
 
@@ -330,6 +333,7 @@ pub const Auth = struct {
             c.setState(STATE_UID, identity.uid) catch {};
             c.setState(STATE_USER, identity.user_name) catch {};
             c.setState(STATE_TOKEN, identity.token) catch {};
+            c.setState(STATE_IS_ADMIN, if (identity.is_admin) "1" else "0") catch {};
         } else if (self.require_login and self.isGuardedPath(c.req.path)) {
             const target = try std.fmt.allocPrint(
                 c.arena,

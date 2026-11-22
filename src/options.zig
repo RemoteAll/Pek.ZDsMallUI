@@ -36,6 +36,7 @@ const views_mod = @import("views.zig");
 const login_guard_mod = @import("login_guard.zig");
 const language_mod = @import("language.zig");
 const menu_mod = @import("menu.zig");
+const menu_db_mod = @import("menu_db.zig");
 const pek_zwaf = @import("pek_zwaf");
 
 /// 默认上传目录名（C# `UploadPath` 默认值同为 `upload`）。
@@ -174,6 +175,8 @@ pub const DsMallUi = struct {
     languages: language_mod.Store,
     /// 后台菜单注册表（库自带默认菜单，项目可 `addMenu` 追加）
     menus: menu_mod.Registry,
+    /// `Menu` 表连接（接库后菜单以表为准；`addMenu` 注册时同步写表）
+    menu_store: ?menu_db_mod.Store = null,
 
     /// 构造门面（默认配置）。
     pub fn builder(allocator: std.mem.Allocator, io: std.Io) Builder {
@@ -225,13 +228,28 @@ pub const DsMallUi = struct {
     }
 
     /// 注册后台菜单项（等价 C# 控制器上的 `[DHMenu(...)]`，项目启动时调用）。
+    ///
+    /// **注册即落库**：菜单渲染以 `Menu` 表为准，若只写内存注册表，项目在 `build()` 之后
+    /// 注册的菜单（如文章管理）就不会出现在后台（2026-11-23 踩过）。
     pub fn addMenu(self: *DsMallUi, item: menu_mod.Item) !void {
         try self.menus.addItem(item);
+        self.seedMenuSlice(&.{}, &.{item});
     }
 
-    /// 注册一级菜单分组（默认已有 `console` / `settings`）。
+    /// 注册一级菜单分组（默认已有 `console` / `settings`）。注册即落库。
     pub fn addMenuGroup(self: *DsMallUi, group: menu_mod.Group) !void {
         try self.menus.addGroup(group);
+        self.seedMenuSlice(&.{group}, &.{});
+    }
+
+    /// 把刚注册的分组/菜单项 upsert 进 `Menu` 表（幂等；未接库时什么也不做）。
+    fn seedMenuSlice(self: *DsMallUi, groups: []const menu_mod.Group, items: []const menu_mod.Item) void {
+        const st = self.menu_store orelse return;
+        const n = menu_db_mod.seedFromRegistry(st, self.allocator, groups, items) catch |err| {
+            zzig.Logger.warn("[ZDsMallUI] 菜单落库失败（继续用内存注册表）：{s}", .{@errorName(err)});
+            return;
+        };
+        if (n == 0) return;
     }
 
     /// 上传物理根（`<web_root>/<upload_path>`）。
@@ -867,7 +885,27 @@ pub const Builder = struct {
         ui.admin_area.setLanguages(&ui.languages);
         ui.admin_area.setMenus(&ui.menus);
         // 角色 / 管理员 / 菜单页用 ORM；复用后端的同一条长连接（没有 SQLite 时保持 null，页面显示提示）
-        if (ui.sqlite_backend_ptr) |be| ui.admin_area.setDal(be.dbDal(), be.dbSession());
+        if (ui.sqlite_backend_ptr) |be| {
+            const dal = be.dbDal();
+            const session = be.dbSession();
+            ui.admin_area.setDal(dal, session);
+
+            // 菜单「表驱动」：把代码注册的菜单 seed 进 `Menu` 表（只补缺，不覆盖后台改过的名称/显隐），
+            // 然后让后台菜单**以表为准** —— 这样「菜单管理」改完刷新即生效。
+            const menu_store = menu_db_mod.Store{ .dal = dal, .session = session };
+            ui.menu_store = menu_store;
+            ui.admin_area.setMenuStore(menu_store);
+            const seeded = menu_db_mod.seedFromRegistry(
+                menu_store,
+                self.allocator,
+                ui.menus.groupList(),
+                ui.menus.itemList(),
+            ) catch |err| blk: {
+                zzig.Logger.warn("[ZDsMallUI] 菜单写入 Menu 表失败（继续用内存注册表）：{s}", .{@errorName(err)});
+                break :blk @as(usize, 0);
+            };
+            if (seeded > 0) zzig.Logger.info("[ZDsMallUI] 菜单已同步到 Menu 表：{d} 项", .{seeded});
+        }
 
         // 图形验证码（可选）：失败 3 次后登录页要求输入，挡住「换 IP 继续撞库」
         if (self.captcha_enabled) {

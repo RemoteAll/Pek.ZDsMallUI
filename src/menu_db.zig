@@ -91,9 +91,9 @@ pub fn seedFromRegistry(
 
     // ————— 2. 菜单项（Type=2, ParentID=分组 ID）—————
     for (items) |item| {
-        const parent = (try loadByPath(allocator, store, 0, item.group)) orelse continue;
-        defer freeMaybe(allocator, parent);
-        const parent_id = parent.?.id;
+        const parent_row = (try loadByPath(allocator, store, 0, item.group)) orelse continue;
+        defer allocator.free(parent_row.display_name);
+        const parent_id = parent_row.id;
 
         const existing = try loadByPath(allocator, store, parent_id, item.name);
         defer freeMaybe(allocator, existing);

@@ -1,0 +1,73 @@
+@{
+    Layout = "Shared/_Layout";
+}
+@* 菜单管理 —— 版式与 `Role/Index.zshtml` 一致（`.page > .fixed-bar`、`table.ds-default-table`）。
+   数据来自 `Menu` 表（C# 同源）：目录 `Type=1`、菜单项 `Type=2`；`level` 用于缩进表示层级。 *@
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>@T("菜单管理")</h3>
+                <h5>@T("后台所有菜单：目录 / 菜单项，改完刷新即生效（渲染以本表为准）")</h5>
+            </div>
+            <ul class="tab-base ds-row">
+                <li><a href="@Model.areaRoute/menu/index" class="current"><span>@T("管理")</span></a></li>
+                <li><a href="@Model.areaRoute/menu/edit"><span>@T("新增")</span></a></li>
+            </ul>
+        </div>
+    </div>
+
+    @if (Model.saved != "") {
+    <div class="explanation"><div class="title"><h4>@T("保存成功")</h4></div></div>
+    }
+    @if (Model.deleted != "") {
+    <div class="explanation"><div class="title"><h4>@T("已删除")</h4></div></div>
+    }
+    @if (Model.children != "") {
+    <div class="explanation"><div class="title"><h4 style="color:#c00;">@T("该目录下还有菜单项，请先删除子项")</h4></div></div>
+    }
+    @if (Model.denied != "") {
+    <div class="explanation"><div class="title"><h4 style="color:#c00;">@T("操作被拒绝（菜单不存在或不可删除）")</h4></div></div>
+    }
+    @if (Model.ready == false) {
+    <div class="explanation"><div class="title"><h4 style="color:#c00;">@T("数据库未启用：无法管理菜单")</h4></div></div>
+    }
+
+    <table class="ds-default-table">
+        <thead>
+            <tr>
+                <th class="w48">ID</th>
+                <th>@T("名称")</th>
+                <th>@T("显示名称")</th>
+                <th class="w80">@T("标题")</th>
+                <th>@T("链接")</th>
+                <th class="w60">@T("排序")</th>
+                <th class="w80">@T("状态")</th>
+                <th class="w160">@T("操作")</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (Model.count == 0) {
+            <tr><td colspan="8" style="text-align:center;padding:24px;">@T("菜单表为空（启动时会把代码注册的菜单写入本表）")</td></tr>
+            }
+            @foreach (var row in Model.rows) {
+            <tr>
+                <td>@row.id</td>
+                <td>
+                    @if (row.level == 1) { <text>&nbsp;&nbsp;&nbsp;&nbsp;└ </text> }
+                    @row.name
+                </td>
+                <td>@row.displayName</td>
+                <td>@if (row.type == 1) { <text>目录</text> } else { <text>菜单</text> }</td>
+                <td>@row.url</td>
+                <td>@row.sort</td>
+                <td>@if (row.visible) { <span style="color:#1a7f37;">@T("启用")</span> } else { <span style="color:#999;">@T("停用")</span> }</td>
+                <td>
+                    <a href="@Model.areaRoute/menu/edit?id=@row.id" class="dsui-btn-edit">@T("编辑")</a>
+                    <a href="javascript:;" onclick="javascript:dsLayerConfirm('@Model.areaRoute/menu/delete?id=@row.id','@T("您确定要删除吗?")',@row.id)" class="dsui-btn-del">@T("删除")</a>
+                </td>
+            </tr>
+            }
+        </tbody>
+    </table>
+</div>

@@ -60,6 +60,16 @@ pub const Registry = struct {
         return .{ .allocator = allocator, .io = io };
     }
 
+    /// 注册项快照（**只在启动期 seed 数据库时用**，不加锁；请求期请走 `build`）。
+    pub fn groupList(self: *Registry) []const Group {
+        return self.groups.items;
+    }
+
+    /// 菜单项快照（同上，仅启动期使用）。
+    pub fn itemList(self: *Registry) []const Item {
+        return self.items.items;
+    }
+
     pub fn deinit(self: *Registry) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -158,6 +168,15 @@ pub const Registry = struct {
             .url = "{area}/role/index",
             .icon = "&#xe67b;",
             .order = 38,
+        });
+        // 菜单管理：C# 在 Membership 通用模块（`MenuController`），随库注册
+        try self.addItem(.{
+            .group = "settings",
+            .name = "menu",
+            .title_key = "菜单管理",
+            .url = "{area}/menu/index",
+            .icon = "&#xe6a1;",
+            .order = 39,
         });
     }
 
@@ -272,8 +291,8 @@ test "菜单：注册 + 排序 + {area} 替换 + 空分组过滤" {
         .list => |items| items,
         else => @panic("items 不是列表"),
     };
-    // settings 组现在有「站点设置 + 角色权限管理」两项（role 是 2026-11-23 新增的通用后台能力）
-    try testing.expectEqual(@as(usize, 2), settings_items.len);
+    // settings 组现在有「站点设置 + 角色权限管理 + 菜单管理」三项
+    try testing.expectEqual(@as(usize, 3), settings_items.len);
     try testing.expectEqualStrings("/biz/config/index", settings_items[0].get("url").?.asString().?);
 
     const product_items = switch (groups[2].get("items").?) {
@@ -303,8 +322,8 @@ test "菜单：重复注册同名项是 upsert，不产生重复" {
         else => @panic("groups 不是列表"),
     };
     try testing.expectEqual(@as(usize, 2), groups.len);
-    // settings 组：站点设置 + 角色权限管理（重复 addDefaults 不应叠加）
-    try testing.expectEqual(@as(usize, 2), switch (groups[1].get("items").?) {
+    // settings 组：站点设置 + 角色权限 + 菜单管理（重复 addDefaults 不应叠加）
+    try testing.expectEqual(@as(usize, 3), switch (groups[1].get("items").?) {
         .list => |items| items.len,
         else => 0,
     });

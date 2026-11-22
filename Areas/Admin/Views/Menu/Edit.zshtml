@@ -1,0 +1,127 @@
+@{
+    Layout = "Shared/_Layout";
+}
+@* 菜单 - 新增/编辑（版式照抄 `Role/Edit.zshtml`）。
+   字段与 `Menu` 表一致：目录 `type=1`、菜单项 `type=2`（菜单项必须有上级目录）。 *@
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>@T("菜单管理")</h3>
+                <h5>@T("显示名称就是语言包键（中文源文），视图里的 @T 会按它翻译")</h5>
+            </div>
+            <ul class="tab-base ds-row">
+                <li><a href="@Model.areaRoute/menu/index"><span>@T("管理")</span></a></li>
+                <li><a href="javascript:void(0)" class="current"><span>@Model.title</span></a></li>
+            </ul>
+        </div>
+    </div>
+
+    @if (Model.error != "") {
+    <div class="explanation"><div class="title"><h4 style="color:#c00;">@Model.error</h4></div></div>
+    }
+    @if (Model.ready == false) {
+    <div class="explanation"><div class="title"><h4 style="color:#c00;">@T("数据库未启用：无法保存菜单")</h4></div></div>
+    }
+
+    <form id="doc_form" method="post" action="@Model.areaRoute/menu/save">
+        <input type="hidden" name="id" value="@Model.id" />
+        <table class="ds-default-table">
+            <tbody>
+                <tr>
+                    <td class="required"><label class="validation">@T("类型")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform onoff">
+                        <label for="type_1" class="cb-enable @if (Model.row.type == 1) {<text>selected</text>}"><span>@T("目录")</span></label>
+                        <label for="type_2" class="cb-disable @if (Model.row.type != 1) {<text>selected</text>}"><span>@T("菜单")</span></label>
+                        <input id="type_1" name="type" value="1" type="radio" @if (Model.row.type == 1) {<text>checked</text>}>
+                        <input id="type_2" name="type" value="2" type="radio" @if (Model.row.type != 1) {<text>checked</text>}>
+                    </td>
+                </tr>
+                <tr>
+                    <td><label class="validation">@T("上级")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform">
+                        <select name="parentId" id="parentId" class="infoTableInput w300">
+                            @foreach (var item in Model.parents) {
+                            <option value="@item.id" @if (item.id == Model.row.parentId) {<text>selected</text>}>@item.name</option>
+                            }
+                        </select>
+                        <span style="color:#888;">@T("「菜单」类型必须选一个目录；「目录」忽略此项")</span>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="required"><label class="validation">@T("名称")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform">
+                        <input type="text" value="@Model.row.name" name="name" id="name" class="infoTableInput w300" required>
+                        <span style="color:#888;">@T("菜单键（英文/数字/下划线），同目录下唯一，如 settings")</span>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="required"><label class="validation">@T("显示名称")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform">
+                        <input type="text" value="@Model.row.displayName" name="displayName" id="displayName" class="infoTableInput w300" required>
+                        <span style="color:#888;">@T("中文标题（同时是语言包键），如 站点设置")</span>
+                    </td>
+                </tr>
+                <tr>
+                    <td><label class="validation">@T("链接")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform">
+                        <input type="text" value="@Model.row.url" name="url" id="url" class="infoTableInput w300">
+                        <span style="color:#888;">@T("菜单项必填，可含 {area}，如 {area}/config/index")</span>
+                    </td>
+                </tr>
+                <tr>
+                    <td><label class="validation">@T("图标")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform">
+                        <input type="text" value="@Model.row.icon" name="icon" id="icon" class="infoTableInput w300">
+                        <span style="color:#888;">@T("iconfont 实体，如 &amp;#xe614;")</span>
+                    </td>
+                </tr>
+                <tr>
+                    <td><label class="validation">@T("状态")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform onoff">
+                        <label for="visible_1" class="cb-enable @if (Model.row.visible) {<text>selected</text>}"><span>@T("启用")</span></label>
+                        <label for="visible_0" class="cb-disable @if (Model.row.visible == false) {<text>selected</text>}"><span>@T("停用")</span></label>
+                        <input id="visible_1" name="visible" value="1" type="radio" @if (Model.row.visible) {<text>checked</text>}>
+                        <input id="visible_0" name="visible" value="0" type="radio" @if (Model.row.visible == false) {<text>checked</text>}>
+                    </td>
+                </tr>
+                <tr>
+                    <td><label class="validation">@T("排序")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="number" value="@Model.row.sort" name="sort" id="sort" class="infoTableInput w100"></td>
+                </tr>
+                <tr>
+                    <td><label class="validation">@T("描述")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform">
+                        <textarea name="remark" id="remark" class="infoTableInput" rows="3" style="width:100%;">@Model.row.remark</textarea>
+                    </td>
+                </tr>
+            </tbody>
+            <tfoot>
+                <tr class="tfoot">
+                    <td>
+                        <input type="submit" class="btn" value="@T("保存")">
+                        <a class="btn" href="@Model.areaRoute/menu/index">@T("返回")</a>
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </form>
+</div>

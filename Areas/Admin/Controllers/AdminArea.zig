@@ -14,10 +14,12 @@
 
 const std = @import("std");
 const zzig = @import("zzig");
+const zcode = @import("zcode");
 
 const area_mod = @import("../../../src/deps.zig").area;
 const auth_mod = @import("../../../src/deps.zig").auth;
 const backend_mod = @import("../../../src/deps.zig").backend;
+const zcode_mod = zcode;
 const captcha_mod = @import("../../../src/deps.zig").captcha;
 const views_mod = @import("../../../src/deps.zig").views;
 const language_controllers = @import("LanguageControllers.zig");
@@ -26,8 +28,7 @@ const config_controller = @import("ConfigController.zig");
 const home_controller = @import("HomeController.zig");
 const login_controller = @import("LoginController.zig");
 const role_controller = @import("RoleController.zig");
-// 菜单管理（MenuController.zig）下一批补上，路由挂载同步恢复
-// const menu_controller = @import("MenuController.zig");
+const menu_controller = @import("MenuController.zig");
 
 const menu_db_mod = @import("../../../src/deps.zig").menu_db;
 
@@ -439,6 +440,17 @@ pub const AdminArea = struct {
             try ctrl.mount(&app.router);
         }
         {
+            // 菜单管理（对齐 C# `MenuController`）：列表 / 新增 / 编辑 / 删除
+            const prefix = try std.fmt.allocPrint(self.allocator, "{s}/menu", .{segment});
+            defer self.allocator.free(prefix);
+            const ctrl = try self.newController(prefix);
+            try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(menu_controller.MenuController.index));
+            try ctrl.mapWithContext("GET", "edit", @ptrCast(self), guarded(menu_controller.MenuController.edit));
+            try ctrl.mapWithContext("POST", "save", @ptrCast(self), guarded(menu_controller.MenuController.save));
+            try ctrl.mapWithContext("GET", "delete", @ptrCast(self), guarded(menu_controller.MenuController.delete));
+            try ctrl.mount(&app.router);
+        }
+        {
             const prefix = try std.fmt.allocPrint(self.allocator, "{s}/login", .{segment});
             defer self.allocator.free(prefix);
             const ctrl = try self.newController(prefix);
@@ -456,6 +468,69 @@ pub const AdminArea = struct {
     pub fn areaMatches(c: *router.Ctx, area: []const u8) bool {
         const segment = c.param("area") orelse return false;
         return std.ascii.eqlIgnoreCase(segment, area);
+    }
+
+    /// RBAC 判定：当前登录用户能否访问这个请求对应的页面。
+    ///
+    /// 规则（简化 RBAC，不比 C# 复杂但**真实生效**）：
+    /// - 管理员（`isAdmin`）→ 全放行；
+    /// - 没接数据库 / 取不到用户 → 放行（不因基建缺失把后台锁死）；
+    /// - `home`、`login` 恒放行（框架页 / 登出 / 改密 / 切语言不该被菜单权限卡住）；
+    /// - 其余按「用户 → `User.RoleID` → `Role.Permission`」判定：权限串是逗号分隔的**菜单键**，
+    ///   命中当前路径的控制器段（`/{area}/role/index` → `role`）即放行。
+    pub fn canAccess(self: *AdminArea, c: *router.Ctx) bool {
+        if (c.stateValue(auth_mod.STATE_IS_ADMIN)) |flag| {
+            if (std.mem.eql(u8, flag, "1")) return true;
+        }
+        const controller_segment = controllerSegment(c.req.path) orelse return true;
+        if (std.mem.eql(u8, controller_segment, "home") or std.mem.eql(u8, controller_segment, "login")) return true;
+
+        const user_name = currentUser(c);
+        if (user_name.len == 0) return true; // 未登录由中间件负责跳登录页，这里不重复拦
+        const permissions = self.permissionsOf(user_name) orelse return true; // 查不到 → 放行（避免锁死）
+
+        var it = std.mem.splitScalar(u8, permissions, ',');
+        while (it.next()) |raw| {
+            const one = std.mem.trim(u8, raw, " \t\r\n");
+            if (one.len == 0) continue;
+            // `*` = 全部权限（超级管理员）；其余按**控制器段**精确匹配
+            if (std.mem.eql(u8, one, "*")) return true;
+            if (std.ascii.eqlIgnoreCase(one, controller_segment)) return true;
+        }
+        return false;
+    }
+
+    /// 取用户的角色权限串（`Role.Permission`）；查不到返回 `null`（= 放行）。
+    fn permissionsOf(self: *AdminArea, user_name: []const u8) ?[]const u8 {
+        const dal = self.dal orelse return null;
+        const s = self.session orelse return null;
+
+        const users = dal.table("User") catch return null;
+        var wu = zcode_mod.Where.init(s.gpa);
+        defer wu.deinit();
+        _ = wu.eq("Name", .{ .text = user_name }) catch return null;
+        var qu = zcode_mod.Query.init(s.gpa);
+        defer qu.deinit();
+        _ = qu.filterWhere(&wu);
+        _ = qu.take(1);
+        s.resetResults();
+        const user_rows = users.queryRows(s, &qu) catch return null;
+        if (user_rows.len == 0) return null;
+        const role_id = rowInt(user_rows[0], "RoleID");
+        if (role_id == 0) return "";
+
+        const roles = dal.table("Role") catch return null;
+        var wr = zcode_mod.Where.init(s.gpa);
+        defer wr.deinit();
+        _ = wr.eq("ID", .{ .int = role_id }) catch return null;
+        var qr = zcode_mod.Query.init(s.gpa);
+        defer qr.deinit();
+        _ = qr.filterWhere(&wr);
+        _ = qr.take(1);
+        s.resetResults();
+        const role_rows = roles.queryRows(s, &qr) catch return null;
+        if (role_rows.len == 0) return "";
+        return rowText(role_rows[0], "Permission");
     }
 
     /// 区域根（`/{area}` / `/{area}/`）→ 302 到 `/{area}/home/index`；区域不匹配则 404。
@@ -506,6 +581,8 @@ pub const AdminArea = struct {
             fn call(raw: ?*anyopaque, c: *router.Ctx) anyerror!controller_mod.ActionResult {
                 const self = castSelf(raw);
                 if (!areaMatches(c, self.areaName())) return .{ .response = router.Response.notFound() };
+                // RBAC：管理员放行；其他人按「角色权限串」校验当前页面
+                if (!self.canAccess(c)) return .{ .response = forbiddenPage() };
                 return action(raw, c);
             }
         }.call;
@@ -664,6 +741,57 @@ pub fn isAjax(c: *router.Ctx) bool {
 /// 站内跳转目标校验（转发 `zzig.web.router.safeLocalPath`，防开放重定向）。
 pub fn safeRedirect(target: []const u8) ?[]const u8 {
     return router.safeLocalPath(target);
+}
+
+// ————— RBAC 小工具 —————
+
+/// `/{area}/{controller}/…` 里的控制器段；路径太短返回 `null`。
+fn controllerSegment(path: []const u8) ?[]const u8 {
+    var it = std.mem.splitScalar(u8, path, '/');
+    _ = it.next(); // 前导空段
+    _ = it.next(); // {area}
+    const seg = it.next() orelse return null;
+    if (seg.len == 0) return null;
+    return seg;
+}
+
+/// 403 提示页（受保护页面无权限时）。
+fn forbiddenPage() zzig.web.Response {
+    const html =
+        \\<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>没有访问权限</title></head>
+        \\<body style="font-family:'Microsoft Yahei',Arial,sans-serif;background:#fff;">
+        \\<div style="margin:100px auto;width:420px;border:1px solid #d4d4d4;border-radius:5px;overflow:hidden;">
+        \\<h1 style="margin:0;padding:10px 16px;font-size:16px;font-weight:normal;background:#ff9933;color:#fff;">没有访问权限</h1>
+        \\<div style="padding:24px 16px;text-align:center;">
+        \\<p>当前账号所属角色没有这个页面的权限，请联系管理员在「角色权限管理」里勾选。</p>
+        \\<p><a href="javascript:history.back()" style="color:#1677ff;">返回上一页</a></p>
+        \\</div></div></body></html>
+    ;
+    return router.Response.bytes(.forbidden, "text/html; charset=utf-8", html);
+}
+
+fn rowIndex(row: anytype, name: []const u8) ?usize {
+    for (row.names, 0..) |n, i| {
+        if (std.ascii.eqlIgnoreCase(n, name)) return i;
+    }
+    return null;
+}
+
+fn rowInt(row: anytype, name: []const u8) i32 {
+    const idx = rowIndex(row, name) orelse return 0;
+    return switch (row.values[idx]) {
+        .int => |v| @intCast(v),
+        .boolean => |v| if (v) 1 else 0,
+        else => 0,
+    };
+}
+
+fn rowText(row: anytype, name: []const u8) []const u8 {
+    const idx = rowIndex(row, name) orelse return "";
+    return switch (row.values[idx]) {
+        .text => |v| v,
+        else => "",
+    };
 }
 
 // ————— 测试 —————

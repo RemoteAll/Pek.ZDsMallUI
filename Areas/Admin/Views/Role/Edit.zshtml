@@ -58,11 +58,27 @@
                     <td class="vatop rowform"><input type="number" value="@Model.row.sort" name="sort" id="sort" class="infoTableInput w100"></td>
                 </tr>
                 <tr>
-                    <td><label class="validation">权限串（与 C# `Role.Permission` 同格式，可留空）</label></td>
+                    <td><label class="validation">@T("权限（勾选这个角色能进的页面）")</label></td>
                 </tr>
                 <tr class="noborder">
                     <td class="vatop rowform">
-                        <textarea name="permission" id="permission" class="infoTableInput" rows="6" style="width:100%;font-family:Consolas,monospace;">@Model.row.permission</textarea>
+                        @if (Model.row.permission == "*") {
+                        <div style="padding:8px 0;color:#1a7f37;">@T("该角色拥有全部权限（超级管理员，权限串为 *）")</div>
+                        <input type="hidden" name="permission[]" value="*" />
+                        }
+                        @if (Model.row.permission != "*") {
+                        @foreach (var group in Model.permissionGroups) {
+                        <div style="margin:6px 0 2px;font-weight:600;">@group.name</div>
+                        <div style="padding-left:18px;">
+                            @foreach (var item in group.items) {
+                            <label style="display:inline-block;min-width:180px;margin:2px 0;">
+                                <input type="checkbox" name="permission[]" value="@item.key" @if (item.checked) {<text>checked</text>}> @item.title
+                            </label>
+                            }
+                        </div>
+                        }
+                        <div style="color:#888;margin-top:8px;">@T("勾选后，该角色的用户才能进入对应页面；未勾选一律 403。管理员账号不受此限制。")</div>
+                        }
                     </td>
                 </tr>
             </tbody>

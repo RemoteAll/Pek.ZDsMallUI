@@ -1,4 +1,4 @@
-//! 数据访问后端：**表结构由 `Pek.ZCode` 的 `syncSchema` 同步，读写一律走 ORM**
+﻿//! 数据访问后端：**表结构由 `Pek.ZCode` 的 `syncSchema` 同步，读写一律走 ORM**
 //! （`Dal.table()` + `TableRef`，账号用生成实体 `zcode.membership.entities.User`）。
 //!
 //! # 为什么必须走 ORM（用户要求，2026-11-22）
@@ -278,12 +278,14 @@ pub const SqliteBackend = struct {
         defer self.mutex.unlock();
 
         const ref = try self.dal.table("Role");
+        // 表里有角色就不再 seed（新库首次启动才建默认角色；不做老库兼容）
         if (try ref.count(self.session, null) > 0) return;
 
-        const rows = [_]struct { name: []const u8, role_type: i32, sort: i32 }{
-            .{ .name = "系统管理员", .role_type = 1, .sort = 1 },
-            .{ .name = "管理员", .role_type = 1, .sort = 2 },
-            .{ .name = "普通用户", .role_type = 2, .sort = 3 },
+        const rows = [_]struct { name: []const u8, role_type: i32, sort: i32, permission: []const u8 }{
+            // 超级管理员：`Permission = "*"` = 全权限（含菜单管理 / 角色管理本身），不可删不可改名
+            .{ .name = "超级管理员", .role_type = 1, .sort = 1, .permission = "*" },
+            .{ .name = "管理员", .role_type = 1, .sort = 2, .permission = "" },
+            .{ .name = "普通用户", .role_type = 2, .sort = 3, .permission = "" },
         };
         for (rows) |row| {
             const now = zcode.DateTime.nowLocal();
@@ -294,13 +296,39 @@ pub const SqliteBackend = struct {
                 // 内置角色：允许改排序/启用/权限，但不允许改名与删除（C# `Role.IsSystem` 语义）
                 zcode.dbtable.field("IsSystem", .{ .int = 1 }),
                 zcode.dbtable.field("Sort", .{ .int = row.sort }),
+                zcode.dbtable.field("Permission", .{ .text = row.permission }),
                 // `CreateTime` / `UpdateTime` 在表上是 **NOT NULL 且无默认**（C# 由拦截器填），
                 // 走 `TableRef.insert` 不会自动带审计列 —— 必须显式传（否则 NOT NULL constraint failed）。
                 zcode.dbtable.field("CreateTime", .{ .datetime = now }),
                 zcode.dbtable.field("UpdateTime", .{ .datetime = now }),
             });
         }
-        zzig.Logger.info("[ZDsMallUI] 已初始化 {d} 个内置角色（系统管理员 / 管理员 / 普通用户）", .{rows.len});
+        zzig.Logger.info("[ZDsMallUI] 已初始化 {d} 个内置角色（超级管理员 / 管理员 / 普通用户）", .{rows.len});
+    }
+
+    /// 超级管理员角色的 ID（按名字查；查不到回退 1）。默认账号的 `User.RoleID` 用它。
+    fn superAdminRoleId(self: *SqliteBackend) !i32 {
+        const ref = self.dal.table("Role") catch return 1;
+        var w = zcode.Where.init(self.session.gpa);
+        defer w.deinit();
+        _ = w.eq("Name", .{ .text = "超级管理员" }) catch return 1;
+        var q = zcode.Query.init(self.session.gpa);
+        defer q.deinit();
+        _ = q.filterWhere(&w);
+        _ = q.take(1);
+        self.session.resetResults();
+        const rows = ref.queryRows(self.session, &q) catch return 1;
+        if (rows.len == 0) return 1;
+        const idx = blk: {
+            for (rows[0].names, 0..) |n, i| {
+                if (std.ascii.eqlIgnoreCase(n, "ID")) break :blk i;
+            }
+            return 1;
+        };
+        return switch (rows[0].values[idx]) {
+            .int => |v| @intCast(v),
+            else => 1,
+        };
     }
 
     fn seedDefaultUser(self: *SqliteBackend) !void {
@@ -317,13 +345,14 @@ pub const SqliteBackend = struct {
         defer self.allocator.free(hashed);
 
         // 写 **C# 的 `User` 表**（字段与 C# `DHStartup` 初始化管理员一致）：
-        // `RoleID=1` 超级管理员 + `Ex1=1` 后台管理员标记（C# `AdminUserController.CreateAdmin` 同口径）。
+        // `RoleID` = 超级管理员角色 + `Ex1=1` 后台管理员标记（C# `AdminUserController.CreateAdmin` 同口径）。
+        // ★ 角色 ID 必须**查出来**：自增值不保证从 1 开始（测试库重建过就是 5/6/7），硬编码 1 会让用户指向不存在的角色。
         var user = User{
             .Name = "admin",
             .Password = hashed,
             .DisplayName = "管理员",
             .Sex = 0,
-            .RoleID = 1,
+            .RoleID = try self.superAdminRoleId(),
             .Enable = true,
             .Ex1 = 1,
             .Logins = 0,
@@ -532,12 +561,45 @@ pub const SqliteBackend = struct {
             zzig.Logger.warn("[ZDsMallUI] 更新用户 {s} 的登录信息失败（{s}）", .{ user.Name, @errorName(e) });
         };
 
-        return .{ .ok = .{
-            .id = user.ID,
-            .user_name = try arena.dupe(u8, user.Name),
-            .display_name = try arena.dupe(u8, user.DisplayName),
-            .is_admin = user.RoleID == 1 or user.Ex1 != 0,
-        } };
+        return .{
+            .ok = .{
+                .id = user.ID,
+                .user_name = try arena.dupe(u8, user.Name),
+                .display_name = try arena.dupe(u8, user.DisplayName),
+                // 「超级管理员」= **所属角色的权限串是通配 `*`**（不是 `Ex1`！`Ex1=1` 只表示「能进后台」）。
+                // 这样任意角色都能被授予权限（含菜单管理/角色管理本身），只有超级管理员绕过菜单校验。
+                .is_admin = self.roleIsSuper(user.RoleID),
+            },
+        };
+    }
+
+    /// 角色是否是超级管理员（`Role.Permission` 含 `*`）；查不到按「否」处理。
+    fn roleIsSuper(self: *SqliteBackend, role_id: i32) bool {
+        if (role_id == 0) return false;
+        const ref = self.dal.table("Role") catch return false;
+        var w = zcode.Where.init(self.session.gpa);
+        defer w.deinit();
+        _ = w.eq("ID", .{ .int = role_id }) catch return false;
+        var q = zcode.Query.init(self.session.gpa);
+        defer q.deinit();
+        _ = q.filterWhere(&w);
+        _ = q.take(1);
+        self.session.resetResults();
+        const rows = ref.queryRows(self.session, &q) catch return false;
+        if (rows.len == 0) return false;
+        for (rows[0].names, 0..) |n, i| {
+            if (!std.ascii.eqlIgnoreCase(n, "Permission")) continue;
+            const permission = switch (rows[0].values[i]) {
+                .text => |t| t,
+                else => return false,
+            };
+            var it = std.mem.splitScalar(u8, permission, ',');
+            while (it.next()) |raw| {
+                if (std.mem.eql(u8, std.mem.trim(u8, raw, " \t\r\n"), "*")) return true;
+            }
+            return false;
+        }
+        return false;
     }
 
     fn displayNameImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const u8 {
