@@ -60,12 +60,15 @@ pub const Views = struct {
     areas_root: []const u8,
     renderer: zzig.web.ViewRenderer,
 
-    /// 创建渲染器（默认 `Views` + `Areas`）。
+    /// 创建渲染器（默认 `Views` + `Areas`），并注册内置默认视图（不落盘）。
     pub fn init(allocator: std.mem.Allocator, io: std.Io, root: []const u8, areas_root: []const u8) Views {
         var renderer = zzig.web.ViewRenderer.init(allocator, io);
         renderer.setRoot(root);
         renderer.setAreasRoot(areas_root);
         renderer.setFallbackArea(area.DEFAULT_AREA);
+        registerDefaults(&renderer, area.DEFAULT_AREA) catch |err| {
+            zzig.Logger.warn("[ZDsMallUI] 内置默认视图注册失败（{s}）：后台页面会报「视图不存在」", .{@errorName(err)});
+        };
         return .{
             .allocator = allocator,
             .io = io,
@@ -90,6 +93,15 @@ pub const Views = struct {
         self.renderer.setRoot(self.root);
         self.renderer.setAreasRoot(self.areas_root);
         self.renderer.setFallbackArea(area.DEFAULT_AREA);
+        registerDefaults(&self.renderer, area.DEFAULT_AREA) catch |err| {
+            zzig.Logger.warn("[ZDsMallUI] 清缓存后重注内置视图失败（{s}）", .{@errorName(err)});
+        };
+    }
+
+    /// 设置应用根（对应 ASP.NET Core 的 `~`）：视图里 `~/static/x` 展开成 `{path_base}/static/x`。
+    /// 默认 `""`（域名根）；部署在子目录时传 `/pek`。
+    pub fn setPathBase(self: *Views, base: []const u8) void {
+        self.renderer.setPathBase(base);
     }
 
     /// 按 Area 约定渲染：`Areas/{Area}/Views/{Controller}/{Action}.cshtml`
@@ -219,22 +231,91 @@ fn containsKey(keys: []const []const u8, key: []const u8) bool {
     return false;
 }
 
-/// 内置默认视图的**生成标记**（写入磁盘时放在首行）。
+/// 历史遗留：早期版本会把内置视图**落到磁盘**并在首行写生成标记。
 ///
-/// 为什么需要：`materializeFor` 过去只补缺失，**库升级改了视图后，老部署永远是旧版**
-/// （2026-11-22 连踩两次：登录验证码、后台框架页都因为磁盘上是旧文件而「改了没效果」）。
-/// 规则：文件首行是本标记 → 视为「库生成」，版本不同就自动升级；用户手改过的（没有标记）一律保留。
-/// 库再改视图时把 `v` 后面的数字递增即可。
-pub const generated_marker_prefix = "@* pek-zdsmallui:generated ";
-pub const generated_marker = "@* pek-zdsmallui:generated v3 *@";
+/// 现在已改为「不落盘、直接渲染内置源」（见 [`registerDefaults`]），
+/// 本前缀只用于**一次性清理**老部署留下的副本，不再写入任何新文件。
+pub const legacy_marker_prefix = "@* pek-zdsmallui:generated ";
+
+/// 把内置默认视图注册到渲染器（**不落盘**，对齐 C# 把视图编译进程序集的做法）。
+///
+/// 语义：磁盘上有同名文件 → 用磁盘（项目覆盖，改了立即生效）；
+///       磁盘没有 → 直接用编译进二进制的源码渲染。
+/// 因此库升级视图后老部署立刻生效，部署目录也不会多出一套副本，
+/// 更不需要在视图首行塞版本号（2026-11-22 的标记机制就是为了绕开「副本不更新」，
+/// 顺带把标记写回过模板源，已废弃）。
+pub fn registerDefaults(renderer: *zzig.web.ViewRenderer, area_name: []const u8) !void {
+    const trimmed = std.mem.trim(u8, area_name, " \t/");
+    const target_area = if (trimmed.len == 0) area.DEFAULT_AREA else trimmed;
+
+    renderer.clearFallbackSources();
+    for (DEFAULT_VIEWS) |entry| {
+        if (std.mem.startsWith(u8, entry.relative, "Areas/Admin/Views/")) {
+            const rest = entry.relative["Areas/Admin/Views/".len..];
+            const key = try std.fmt.allocPrint(renderer.allocator, "{s}/Views/{s}", .{ target_area, rest });
+            defer renderer.allocator.free(key);
+            try renderer.addFallbackSource(key, entry.source);
+        } else if (std.mem.startsWith(u8, entry.relative, "Views/")) {
+            try renderer.addFallbackSource(entry.relative["Views/".len..], entry.source);
+        } else {
+            try renderer.addFallbackSource(entry.relative, entry.source);
+        }
+    }
+}
+
+/// 一次性清理老版本落地的默认视图副本（首行带 [`legacy_marker_prefix`] 的文件）。
+///
+/// 只删「我们自己生成的」那 7 个默认视图；用户按模板改过的（没有标记）一律保留。
+/// 幂等：没有可删的返回 0。
+pub fn cleanupGeneratedCopies(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    views_root: []const u8,
+    areas_root: []const u8,
+    area_name: []const u8,
+) usize {
+    const trimmed = std.mem.trim(u8, area_name, " \t/");
+    const target_area = if (trimmed.len == 0) area.DEFAULT_AREA else trimmed;
+
+    var removed: usize = 0;
+    for (DEFAULT_VIEWS) |entry| {
+        const relative = if (std.mem.startsWith(u8, entry.relative, "Areas/Admin/Views/"))
+            std.fmt.allocPrint(allocator, "{s}/{s}/Views/{s}", .{
+                areas_root,
+                target_area,
+                entry.relative["Areas/Admin/Views/".len..],
+            }) catch continue
+        else if (std.mem.startsWith(u8, entry.relative, "Views/"))
+            std.fmt.allocPrint(allocator, "{s}/{s}", .{ views_root, entry.relative["Views/".len..] }) catch continue
+        else
+            continue;
+        defer allocator.free(relative);
+
+        const data = zzig.fsio.readFileAlloc(io, allocator, relative, 1024 * 1024) catch continue;
+        defer allocator.free(data);
+        if (!std.mem.startsWith(u8, data, legacy_marker_prefix)) continue;
+        // 保护：若剥掉标记后**与当前内置源一模一样**，说明这多半就是模板源本身
+        // （开发机在库/仓库根目录跑程序时 `Views`/`Areas` 正好指向源文件），不要删。
+        const body = stripGeneratedMarker(data);
+        var is_source_itself = false;
+        for (DEFAULT_VIEWS) |candidate| {
+            if (std.mem.eql(u8, body, candidate.source)) {
+                is_source_itself = true;
+                break;
+            }
+        }
+        if (is_source_itself) continue;
+        zzig.fsio.deleteFile(io, relative) catch continue;
+        removed += 1;
+    }
+    return removed;
+}
 
 /// 去掉文本开头可能已有的生成标记行（含行尾换行）。
 ///
-/// 为什么需要：`DEFAULT_VIEWS` 用 `@embedFile` 直接引用仓库里的模板文件，若开发机在
-/// 库根目录跑过程序，落地逻辑会把标记写回模板文件本身 → 再落地就成了「标记 + 标记 + 内容」。
-/// 写入前统一剥一次，幂等。
+/// 仅在**一次性清理**历史副本时用得到（见 [`cleanupGeneratedCopies`]），新代码不再写标记。
 pub fn stripGeneratedMarker(text: []const u8) []const u8 {
-    if (!std.mem.startsWith(u8, text, generated_marker_prefix)) return text;
+    if (!std.mem.startsWith(u8, text, legacy_marker_prefix)) return text;
     const line_end = std.mem.indexOfScalar(u8, text, '\n') orelse return text;
     // 手写跳过空行：Zig 0.17 的 std.mem 没有 trimLeft（改名/移除了），别依赖具体名字。
     var i: usize = line_end + 1;
@@ -242,10 +323,11 @@ pub fn stripGeneratedMarker(text: []const u8) []const u8 {
     return text[i..];
 }
 
-/// 把内置默认视图落到**指定区域**目录（只补缺失 / 升级库生成的旧版，不覆盖用户手改）。
+/// 老版本 `materializeFor` 的兼容壳：**不再写盘**，改为注册内置源 + 清理历史副本。
 ///
-/// - 共享视图 → `{views_root}/Shared/…`（不随区域变化）；
-/// - 区域视图 → `{areas_root}/{Area}/Views/…`（默认区域落 `Areas/Admin/Views/…`）。
+/// 保留它是因为调用方（`options.materializeDefaults` / `AdminArea.setAreaName`）
+/// 与旧项目代码里仍有引用；新代码请直接用 [`registerDefaults`]。
+/// 返回值 = 本次清理掉的历史副本数（老逻辑返回「写入数」）。
 pub fn materializeFor(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -253,46 +335,10 @@ pub fn materializeFor(
     areas_root: []const u8,
     area_name: []const u8,
 ) !usize {
-    const normalized = try area.normalize(allocator, area_name);
-    defer allocator.free(normalized);
-
-    var written: usize = 0;
-    for (DEFAULT_VIEWS) |entry| {
-        const target_relative = if (std.mem.startsWith(u8, entry.relative, "Areas/Admin/Views/"))
-            try std.fmt.allocPrint(allocator, "{s}/{s}/Views/{s}", .{
-                areas_root,
-                normalized,
-                entry.relative["Areas/Admin/Views/".len..],
-            })
-        else if (std.mem.startsWith(u8, entry.relative, "Views/"))
-            try std.fmt.allocPrint(allocator, "{s}/{s}", .{ views_root, entry.relative["Views/".len..] })
-        else
-            entry.relative;
-        defer if (target_relative.ptr != entry.relative.ptr) allocator.free(target_relative);
-
-        const should_write = blk: {
-            const existing = zzig.fsio.readFileAlloc(io, allocator, target_relative, 4 * 1024 * 1024) catch break :blk true;
-            defer allocator.free(existing);
-            if (!std.mem.startsWith(u8, existing, generated_marker_prefix)) {
-                // 兼容「带标记之前落地的」文件：内容与内置原样一致（= 用户没改过）才覆盖
-                break :blk std.mem.eql(u8, existing, entry.source) or
-                    std.mem.eql(u8, existing, stripGeneratedMarker(entry.source));
-            }
-            // 库生成的旧版 → 升级到当前版本
-            break :blk !std.mem.startsWith(u8, existing, generated_marker);
-        };
-        if (!should_write) continue;
-
-        if (std.fs.path.dirname(target_relative)) |parent| try zzig.fsio.makePath(io, parent);
-        const body = try std.fmt.allocPrint(allocator, "{s}\n{s}", .{ generated_marker, stripGeneratedMarker(entry.source) });
-        defer allocator.free(body);
-        try zzig.fsio.writeFile(io, target_relative, body);
-        written += 1;
-    }
-    return written;
+    return cleanupGeneratedCopies(allocator, io, views_root, areas_root, area_name);
 }
 
-/// 落地到**默认目录**（`Views` + `Areas`）的默认区域（`Admin`）。
+/// 默认目录（`Views` + `Areas`）的兼容壳，同样**不写盘**。
 pub fn materialize(allocator: std.mem.Allocator, io: std.Io) !usize {
     return materializeFor(allocator, io, DEFAULT_VIEWS_ROOT, DEFAULT_AREAS_ROOT, area.DEFAULT_AREA);
 }
@@ -331,37 +377,67 @@ const Fixture = struct {
     }
 };
 
-test "视图：落地默认视图是幂等的（Areas + Views）" {
-    var fixture = try Fixture.init("materialize");
+test "视图：内置源直接渲染（磁盘无副本，对齐 C# 预编译视图）" {
+    var fixture = try Fixture.init("builtin");
     defer fixture.deinit();
     const arena = fixture.arena_state.allocator();
 
     const views_root = fixture.viewsRoot(arena);
     const areas_root = fixture.areasRoot(arena);
 
-    const first = try materializeFor(arena, testing.io, views_root, areas_root, "Admin");
-    try testing.expectEqual(DEFAULT_VIEWS.len, first);
+    var views = Views.init(testing.allocator, testing.io, views_root, areas_root);
+    defer views.deinit();
 
-    const second = try materializeFor(arena, testing.io, views_root, areas_root, "Admin");
-    try testing.expectEqual(@as(usize, 0), second);
+    // 磁盘上没有任何视图文件，依然能渲染出框架页
+    try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Index.cshtml", .{areas_root})));
 
-    try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Config/Index.cshtml", .{areas_root})));
-    try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Shared/_Layout.cshtml", .{views_root})));
+    var builder = zzig.web.ObjectBuilder.init(arena);
+    try builder.str("title", "管理后台");
+    // 欢迎页（iframe 内容）不依赖 groups，适合验证「磁盘无副本也能渲染」
+    const outcome = views.render(arena, "Admin", "Home", "Dashboard", builder.finish());
+    switch (outcome) {
+        .html => {},
+        .fail => |message| std.debug.print("[builtin-view-test] {s}\n", .{message}),
+    }
+    try testing.expect(outcome == .html);
+    try testing.expect(std.mem.indexOf(u8, outcome.html, "ncap-form-default") != null);
 }
 
-test "视图：非默认区域落地到该区域目录" {
-    var fixture = try Fixture.init("area");
+test "视图：磁盘文件优先于内置源（项目覆盖）" {
+    var fixture = try Fixture.init("diskwin");
     defer fixture.deinit();
     const arena = fixture.arena_state.allocator();
 
     const views_root = fixture.viewsRoot(arena);
     const areas_root = fixture.areasRoot(arena);
 
-    const written = try materializeFor(arena, testing.io, views_root, areas_root, "Biz");
-    try testing.expectEqual(DEFAULT_VIEWS.len, written);
-    try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Biz/Views/Config/Index.cshtml", .{areas_root})));
-    try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Shared/_Layout.cshtml", .{views_root})));
-    try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Biz/Views/Shared/_Layout.cshtml", .{areas_root})));
+    try zzig.fsio.makePath(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home", .{areas_root}));
+    try zzig.fsio.writeFile(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Index.cshtml", .{areas_root}), "<p>DISK-WIN</p>");
+
+    var views = Views.init(testing.allocator, testing.io, views_root, areas_root);
+    defer views.deinit();
+    const outcome = views.render(arena, "Admin", "Home", "Index", .null);
+    try testing.expect(std.mem.indexOf(u8, outcome.html, "DISK-WIN") != null);
+}
+
+test "视图：清理历史落盘副本（只删带标记的）" {
+    var fixture = try Fixture.init("cleanup");
+    defer fixture.deinit();
+    const arena = fixture.arena_state.allocator();
+
+    const views_root = fixture.viewsRoot(arena);
+    const areas_root = fixture.areasRoot(arena);
+
+    const marked = try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Index.cshtml", .{areas_root});
+    const custom = try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home/Dashboard.cshtml", .{areas_root});
+    try zzig.fsio.makePath(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Home", .{areas_root}));
+    try zzig.fsio.writeFile(testing.io, marked, legacy_marker_prefix ++ "v2 *@\n<p>old</p>");
+    try zzig.fsio.writeFile(testing.io, custom, "<p>MINE</p>");
+
+    const removed = try materializeFor(arena, testing.io, views_root, areas_root, "Admin");
+    try testing.expectEqual(@as(usize, 1), removed);
+    try testing.expect(!zzig.fsio.exists(testing.io, marked));
+    try testing.expect(zzig.fsio.exists(testing.io, custom));
 }
 
 test "视图：非默认区域回退到 Admin 模板渲染" {
@@ -371,7 +447,6 @@ test "视图：非默认区域回退到 Admin 模板渲染" {
 
     const views_root = fixture.viewsRoot(arena);
     const areas_root = fixture.areasRoot(arena);
-    _ = try materializeFor(arena, testing.io, views_root, areas_root, "Admin");
 
     var views = Views.init(testing.allocator, testing.io, views_root, areas_root);
     defer views.deinit();
@@ -391,7 +466,6 @@ test "视图：区域专属模板覆盖 Admin" {
 
     const views_root = fixture.viewsRoot(arena);
     const areas_root = fixture.areasRoot(arena);
-    _ = try materializeFor(arena, testing.io, views_root, areas_root, "Admin");
 
     try zzig.fsio.makePath(testing.io, try std.fmt.allocPrint(arena, "{s}/Biz/Views/Config", .{areas_root}));
     try zzig.fsio.writeFile(testing.io, try std.fmt.allocPrint(arena, "{s}/Biz/Views/Config/Index.cshtml", .{areas_root}), "<p>BIZ-OVERRIDE</p>");
@@ -410,7 +484,6 @@ test "视图：首页模型（菜单循环 + 条件）" {
 
     const views_root = fixture.viewsRoot(arena);
     const areas_root = fixture.areasRoot(arena);
-    _ = try materializeFor(arena, testing.io, views_root, areas_root, "Admin");
 
     var views = Views.init(testing.allocator, testing.io, views_root, areas_root);
     defer views.deinit();
@@ -456,7 +529,6 @@ test "视图：共享提示页" {
 
     const views_root = fixture.viewsRoot(arena);
     const areas_root = fixture.areasRoot(arena);
-    _ = try materializeFor(arena, testing.io, views_root, areas_root, "Admin");
 
     var views = Views.init(testing.allocator, testing.io, views_root, areas_root);
     defer views.deinit();
@@ -479,7 +551,6 @@ test "视图：缺失视图时错误信息带路径" {
 
     const views_root = fixture.viewsRoot(arena);
     const areas_root = fixture.areasRoot(arena);
-    _ = try materializeFor(arena, testing.io, views_root, areas_root, "Admin");
 
     var views = Views.init(testing.allocator, testing.io, views_root, areas_root);
     defer views.deinit();

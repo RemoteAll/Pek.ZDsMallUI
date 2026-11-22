@@ -249,15 +249,16 @@ pub const DsMallUi = struct {
         try self.admin_area.mount(app);
     }
 
-    /// 首次部署：把内置视图与 `ueconfig.json` 落到磁盘（**只补缺失，不覆盖**）。
+    /// 启动准备：清理历史落盘的视图副本 + 把 `ueconfig.json` / 后台脚本落地（**只补缺失，不覆盖**）。
     ///
-    /// - 区域视图 → `{areas_root}/{Area}/Views/…`（默认 `Areas/Admin/Views/…`）；
-    /// - 共享视图 → `{views_root}/Shared/…`（默认 `Views/Shared/…`）；
+    /// - **视图不落盘**：内置视图直接编译进二进制，磁盘缺失时由渲染器回退（对齐 C# 预编译视图）；
+    ///   老版本落下的副本（首行带 `@* pek-zdsmallui:generated`）会被删掉，避免盖住库里的新版本；
+    ///   用户在项目里手写的同名视图（无标记）保留并优先使用；
     /// - 配置 → `<web_root>/ueconfig.json`；
-    /// - 脚本 → `<web_root>/static/admin/js/admin-config.js`（设置页客户端校验）。
+    /// - 脚本 → `<web_root>/static/admin/js/admin-config.js`、`login-md5.js`（设置页/登录页用）。
     pub fn materializeDefaults(self: *DsMallUi) !usize {
         try zzig.fsio.makePath(self.io, self.web_root);
-        var written = try views_mod.materializeFor(
+        var written = views_mod.cleanupGeneratedCopies(
             self.allocator,
             self.io,
             self.views_root,
@@ -370,6 +371,9 @@ pub const Builder = struct {
     download_extensions: []const []const u8 = &controllers.upload.DEFAULT_DOWNLOAD_EXTENSIONS,
     /// 在默认白名单基础上追加的扩展名
     extra_download_extensions: []const []const u8 = &.{},
+    /// 应用根（对应 ASP.NET Core 的 `~`）：视图里 `~/static/x` → `{path_base}/static/x`。
+    /// `null` = 域名根（展开为 `/static/x`）；部署在子目录时传 `/pek`。
+    path_base: ?[]const u8 = null,
 
     /// 站点物理根（默认 `wwwroot`；**业务系统按自己的配置改成任意路径**）。
     pub fn webRoot(self: Builder, root: []const u8) Builder {
@@ -389,6 +393,13 @@ pub const Builder = struct {
     pub fn viewsRoot(self: Builder, root: []const u8) Builder {
         var copy = self;
         copy.views_root = root;
+        return copy;
+    }
+
+    /// 应用根（对应 C# 的 `~/`）：部署在子目录时传 `/pek`，视图里 `~/static/x` 会自动加前缀。
+    pub fn pathBase(self: Builder, base: []const u8) Builder {
+        var copy = self;
+        copy.path_base = base;
         return copy;
     }
 
@@ -583,7 +594,8 @@ pub const Builder = struct {
             service = try service.tryWithConfigPath(config_path);
         }
 
-        const ui_views = views_mod.Views.init(self.allocator, self.io, views_root, areas_root);
+        var ui_views = views_mod.Views.init(self.allocator, self.io, views_root, areas_root);
+        if (self.path_base) |base| ui_views.renderer.setPathBase(base);
 
         ui.* = .{
             .allocator = self.allocator,
@@ -791,7 +803,7 @@ test "门面：缺失 ueconfig 路径是错误" {
         .build());
 }
 
-test "门面：落地默认视图与配置是幂等的" {
+test "门面：视图不落盘、静态资源落地且幂等" {
     var fixture = try Fixture.init("materialize");
     defer fixture.deinit();
     const arena = fixture.arena_state.allocator();
@@ -807,14 +819,14 @@ test "门面：落地默认视图与配置是幂等的" {
         .build();
     defer ui.deinit();
 
-    const first = try ui.materializeDefaults();
-    try testing.expect(first >= views_mod.DEFAULT_VIEWS.len + 1);
+    _ = try ui.materializeDefaults();
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/ueconfig.json", .{web_root})));
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/js/admin-config.js", .{web_root})));
     try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/js/login-md5.js", .{web_root})));
     // 自造样式已废弃：不再落地（旧版本留下的会被清理）
     try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/static/admin/css/admin-ui.css", .{web_root})));
-    try testing.expect(zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Config/Index.cshtml", .{areas_root})));
+    // 视图**不再落地**：磁盘无副本，渲染走内置源（对齐 C# 预编译视图）
+    try testing.expect(!zzig.fsio.exists(testing.io, try std.fmt.allocPrint(arena, "{s}/Admin/Views/Config/Index.cshtml", .{areas_root})));
 
     const second = try ui.materializeDefaults();
     try testing.expectEqual(@as(usize, 0), second);

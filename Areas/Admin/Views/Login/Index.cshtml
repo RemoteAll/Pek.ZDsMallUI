@@ -1,4 +1,3 @@
-@* pek-zdsmallui:generated v3 *@
 @* 登录页：**版式复用参考工程 C# `Areas/Admin/Views/Login/Index.cshtml`**
    （`admin.css` 里的 `.login / .login_body / .login_header / .login_content`，
    表单项 `.form-group` + `input.text`，按钮 `.btn`，背景图 `/static/admin/images/wallpage/bg_1.jpg`）。
@@ -11,8 +10,8 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport">
     <title>登录 - @Model.displayName</title>
-    <link rel="stylesheet" href="/static/admin/css/admin.css">
-    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
+    <link rel="stylesheet" href="~/static/admin/css/admin.css">
+    <link rel="stylesheet" href="~/static/plugins/js/layui/css/layui.css">
     <style>
         body { background-image: url('/static/admin/images/wallpage/bg_1.jpg'); background-size: cover; background-position: center; }
         .login_content .err-tip { color: #d93026; margin-bottom: 12px; }
@@ -25,7 +24,7 @@
     <div class="login">
         <div class="login_body">
             <div class="login_header">
-                <img src="/static/admin/images/logo.png" alt="@Model.displayName">
+                <img src="~/static/admin/images/logo.png" alt="@Model.displayName">
             </div>
             <div class="login_content">
                 @if (Model.hasError) {
@@ -55,7 +54,7 @@
         </div>
     </div>
 
-    <script src="/static/plugins/jquery214.min.js"></script>
-    <script src="/static/admin/js/login-md5.js"></script>
+    <script src="~/static/plugins/jquery214.min.js"></script>
+    <script src="~/static/admin/js/login-md5.js"></script>
 </body>
 </html>
