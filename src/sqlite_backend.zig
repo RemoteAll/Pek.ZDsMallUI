@@ -9,7 +9,7 @@
 //!   早期版本每个请求都 `Dal.openSession()`，实测单条 INSERT 要 ~1.1s（方言探测 + 建连），
 //!   而 `Session` 按值拷进结构体会让它内部的指针失效（`prepare` 段错误），所以运行期不再用它。
 //!
-//! - 模型：`assets/zdsmallui-model.xml`；库文件：`Data/{区域}.db`
+//! - 模型：`assets/Model.xml`（**框架自己的表**，编译进二进制）；库文件：`Data/{区域}.db`
 //! - 种子：库里没有用户时插入 `admin` / `admin123`（口令走 [`password`]，与 C# 字节级互通）
 
 const std = @import("std");
@@ -23,11 +23,15 @@ const sqlite = zzig.db.sqlite;
 const router = zzig.web.router;
 const Value = zzig.db.Value;
 
-/// 内置模型（`Model.xml`，与 C# 同格式）。
+/// 内置模型（`assets/Model.xml`，与 C# 同格式、同名）。
 ///
 /// **只管框架自己的表**（`Setting` / `AdminUser` / `Session`）——相当于 C# 的 `Membership` 那部分；
-/// 业务表与多语言表由**项目自己的 `Model.xml`** 定义（两边的模型会各跑一次增量同步，结果是并集）。
-pub const MODEL_XML = @embedFile("../assets/zdsmallui-model.xml");
+/// 业务表与多语言表由**项目自己的 `Model.xml`** 定义（两份在各自身上的模型会合并后一次同步，结果是并集）。
+///
+/// 两个文件同名不会冲突：库这份是 `@embedFile` 编进二进制的（只在库仓库里，不随部署流出去），
+/// 项目那份在工作目录下运行时读取——跟 C#「框架自带 `Model.xml` + 项目根 `Model.xml`」一个口径，
+/// 靠**位置**区分归属。
+pub const MODEL_XML = @embedFile("../assets/Model.xml");
 
 /// 默认模型文件名（C# 同构，项目目录下同名文件优先）。
 pub const DEFAULT_MODEL_FILE = "Model.xml";

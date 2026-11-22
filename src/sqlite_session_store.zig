@@ -3,7 +3,7 @@
 //! 为什么需要：`Keeper.revoke` 把吊销记录写进 Store，默认的 `MemoryStore` **重启就丢** ——
 //! 面板重启后，已登出的令牌又能用（在 JWT 自己的有效期内）。落库后重启仍失效。
 //!
-//! 表结构由 `assets/zdsmallui-model.xml` 的 `Session` 表提供（`Pek.ZCode` 的 `syncSchema`
+//! 表结构由 `assets/Model.xml` 的 `Session` 表提供（`Pek.ZCode` 的 `syncSchema`
 //! 幂等建表，和 `Setting` / `AdminUser` 一个库）。
 //!
 //! 只实现 KV 三件套（`get` / `set` / `del`）：`sadd`/`srem`/`smembers` 用于「在线会话列表」，
@@ -98,8 +98,7 @@ pub const SqliteSessionStore = struct {
         var arena_state = std.heap.ArenaAllocator.init(self.allocator);
         defer arena_state.deinit();
 
-        const row = self.queryOne(arena_state.allocator(),
-            "SELECT Value, ExpireAt FROM Session WHERE Key = ?", &.{.{ .text = key }}) catch |e| {
+        const row = self.queryOne(arena_state.allocator(), "SELECT Value, ExpireAt FROM Session WHERE Key = ?", &.{.{ .text = key }}) catch |e| {
             zzig.Logger.warn("[ZDsMallUI] 会话读取失败（{s}）：{s}", .{ key, @errorName(e) });
             return null;
         };
@@ -157,7 +156,7 @@ test "sqlite 会话存储：set/get/del 与 TTL 过期" {
 
     // 表结构用与生产一致的方式建（ZCode syncSchema）
     const zcode = @import("zcode");
-    const model = try zcode.EntityModel.parse(testing.allocator, @embedFile("../assets/zdsmallui-model.xml"));
+    const model = try zcode.EntityModel.parse(testing.allocator, @embedFile("../assets/Model.xml"));
     const conn = try std.fmt.allocPrint(testing.allocator, "Data Source={s};Provider=SQLite", .{path});
     defer testing.allocator.free(conn);
     var dal = try zcode.Dal.initWithModel(testing.allocator, conn, model);
