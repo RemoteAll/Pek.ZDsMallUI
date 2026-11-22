@@ -153,6 +153,23 @@ pub const AdminArea = struct {
 
         const old = self.state.swap(next, .acq_rel);
         self.retired_states.append(self.allocator, @constCast(old)) catch {};
+
+        // 切换后**立即**把默认视图落到新区域目录（只补缺失，不覆盖）。
+        // 否则「切过去后的第一个请求」会撞上「视图不存在」，第二个请求才正常
+        // （2026-11-22 冒烟日志：渲染 Admin/Login/Index 失败 → 下一次 200）。
+        _ = views_mod.materializeFor(
+            self.allocator,
+            self.io,
+            self.views.root,
+            self.views.areas_root,
+            normalized,
+        ) catch |err| blk: {
+            zzig.Logger.warn(
+                "[ZDsMallUI] 区域 {s} 默认视图落地失败（{s}）：该区域首个请求可能回退到 Admin 视图",
+                .{ normalized, @errorName(err) },
+            );
+            break :blk 0;
+        };
     }
 
     /// 覆盖登录成功后的落地页（默认 `/{area}/home/index`）。
