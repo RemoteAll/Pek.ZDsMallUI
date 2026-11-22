@@ -547,15 +547,26 @@ pub const SqliteBackend = struct {
         if (!result.ok) return not_found;
 
         // 旧算法自动升级（一次性回写）—— C# `LoginCore` 同口径
-        var to_save = user;
+        //
+        // **必须走 `updateOne` 显式列**：生成的实体 `dirty` 位图只由 setter 置位，
+        // 直接赋值字段不算脏列，`entity.update` 会「无脏列 → 不发 SQL」（踩过：改密「成功」却登不上）。
+        const ref = try self.dal.table("User");
+        var wu = zcode.Where.init(self.allocator);
+        defer wu.deinit();
+        _ = try wu.eq("ID", .{ .int = user.ID });
+        var sets: [3]zcode.sqlbuild.Field = undefined;
+        var n: usize = 0;
         if (result.upgraded) |upgraded| {
             defer self.allocator.free(upgraded);
-            to_save.Password = upgraded;
+            sets[n] = zcode.dbtable.field("Password", .{ .text = upgraded });
+            n += 1;
         }
-        to_save.Logins = user.Logins + 1;
-        to_save.Online = true;
-        _ = zcode.entity.update(&self.dal, &to_save, self.session) catch |e| {
-            zzig.Logger.warn("[ZDsMallUI] 更新用户 {s} 的登录统计失败（{s}）", .{ user.Name, @errorName(e) });
+        sets[n] = zcode.dbtable.field("Logins", .{ .int = user.Logins + 1 });
+        n += 1;
+        sets[n] = zcode.dbtable.field("Online", .{ .int = 1 });
+        n += 1;
+        _ = ref.updateOne(self.session, sets[0..n], &wu, user.ID) catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 更新用户 {s} 的登录信息失败（{s}）", .{ user.Name, @errorName(e) });
         };
 
         return .{ .ok = .{
@@ -606,9 +617,16 @@ pub const SqliteBackend = struct {
         const hashed = try password.hash(self.allocator, self.io, new_pass);
         defer self.allocator.free(hashed);
 
-        var updated = users[0];
-        updated.Password = hashed;
-        _ = try zcode.entity.update(&self.dal, &updated, self.session);
+        // 显式列更新（不依赖实体脏位图：直接赋字段不会置脏，会变成「不发 SQL」）
+        const ref = try self.dal.table("User");
+        var wu = zcode.Where.init(self.allocator);
+        defer wu.deinit();
+        _ = try wu.eq("ID", .{ .int = users[0].ID });
+        const affected = try ref.updateOne(self.session, &.{zcode.dbtable.field("Password", .{ .text = hashed })}, &wu, users[0].ID);
+        if (affected == 0) {
+            zzig.Logger.warn("[ZDsMallUI] 改密影响 0 行（用户 {s}）：口令未落库", .{users[0].Name});
+            return false;
+        }
         return true;
     }
 
@@ -760,6 +778,21 @@ test "后端：ORM 建表 + 设置读写 + 登录 + 重开数据仍在" {
     // 语言偏好落在 C# 的 UserDetail.LanguageId
     be.backend().setLanguageId("admin", 2);
     try testing.expectEqual(@as(i32, 2), be.backend().languageId("admin"));
+
+    // 改密：**必须真的能登进来**（踩过：直接赋字段不置脏位 → entity.update 不发 SQL → 「成功」却登不上）
+    {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        try testing.expect(try be.backend().changePassword(arena, "admin", "admin123", "newpass123"));
+    }
+    {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        try testing.expect((try be.backend().login(arena, "admin", "newpass123")) == .ok);
+        try testing.expect((try be.backend().login(arena, "admin", "admin123")) == .err);
+    }
 
     be.deinit();
     be_opt = null;
