@@ -168,6 +168,14 @@ pub const SqliteBackend = struct {
         return .{ .ptr = @ptrCast(self), .vtable = &vtable };
     }
 
+    /// 底层 `Dal`（供**项目自己的业务表**使用：模型来自项目 `Model.xml` / 注入的实体）。
+    ///
+    /// 只给 `Dal`、不暴露库内部的 session：那是一个长生命周期会话，与业务会话混用会互相
+    /// `resetResults()` 把对方的行集冲掉。调用方用 `dal.openSession()` 自己开一个（并自己负责 deinit）。
+    pub fn dbDal(self: *SqliteBackend) *zcode.Dal {
+        return &self.dal;
+    }
+
     // ───────────────────────── 公共小工具 ─────────────────────────
 
     /// 读一条 `Config`（不存在返回 `null`）。给库内部用（JWT 密钥、配置快照等）。
