@@ -27,6 +27,7 @@
         "build.zig",
         "build.zig.zon",
         "pek_zdsmallui.zig",
+        "views_generated.zig",
         "src",
         "Areas",
         "Controllers",

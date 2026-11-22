@@ -15,6 +15,13 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // 视图清单自动生成：扫描 `Views/**` 与 `Areas/**/Views/**` 下的 `.zshtml`，
+    // 产出 `views_generated.zig`（里面是 `@embedFile` 列表）。内容不变则不写文件，
+    // 所以不会因为 mtime 抖动触发重编 —— 运行时零开销，与手写清单等价。
+    generateViewsManifest(b) catch |err| {
+        std.debug.print("生成 views_generated.zig 失败（{s}）：仍可用上次生成的文件\n", .{@errorName(err)});
+    };
+
     const zzig_dep = b.dependency("zzig", .{
         .target = target,
         .optimize = optimize,
@@ -142,4 +149,121 @@ pub fn build(b: *std.Build) void {
     // 结论是 std.http 的解析需要 >64 KiB 协程栈。zzig 已于 2026-11-19 把 lighting 的
     // 解析器收编进 src/http/{head_parser,body_reader}.zig（零分配、无外部依赖），
     // 本库 `zio-server` 就是收编后的实现，对照程序已无保留价值。
+}
+
+/// 扫描视图目录，生成 `views_generated.zig`（包内相对路径的 `@embedFile` 清单）。
+///
+/// 为什么不用手写清单：新增一个 `.zshtml` 就得记得去 `src/views.zig` 加一行，
+/// 漏了就是「视图不存在」的运行时 500（2026-11-23 反复踩）。
+///
+/// 为什么放在**库里**（而不是 zig-cache）：`@embedFile` 只接受**包内**路径
+/// （实测绝对路径报 `embed of file outside package path`），
+/// 所以生成物必须与 `Views/`、`Areas/` 同级；放在 `zig-cache` 会编译不过。
+///
+/// 性能：生成物是**静态数组**，运行时零开销；内容相同就**不写文件**，
+/// 所以不会因为 mtime 变化触发无谓重编。
+fn generateViewsManifest(b: *std.Build) !void {
+    const allocator = b.allocator;
+    const io = b.graph.io;
+
+    var entries: std.ArrayList([]const u8) = .empty;
+    defer entries.deinit(allocator);
+
+    // `zig build` 的 cwd 就是库根（`@embedFile` 也只能引用包内路径，
+    // 所以生成物必须落在库根、路径必须相对库根）。
+    var cwd = std.Io.Dir.cwd();
+
+    // 1) 共享视图 `Views/**/*.zshtml`
+    if (cwd.openDir(io, "Views", .{ .iterate = true })) |dir_const| {
+        var dir = dir_const;
+        defer dir.close(io);
+        var walker = try dir.walk(allocator);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.path, ".zshtml")) continue;
+            // normalize 成 `/`：`relative` 是**规范路径**（前缀匹配靠它），Windows 原生分隔符是 `\`
+            const normalized = try normalizeSlashes(allocator, entry.path);
+            try entries.append(allocator, try std.fmt.allocPrint(allocator, "Views/{s}", .{normalized}));
+        }
+    } else |_| {}
+
+    // 2) 区域视图 `Areas/**/Views/**/*.zshtml`
+    if (cwd.openDir(io, "Areas", .{ .iterate = true })) |dir_const| {
+        var dir = dir_const;
+        defer dir.close(io);
+        var walker = try dir.walk(allocator);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.path, ".zshtml")) continue;
+            const normalized = try normalizeSlashes(allocator, entry.path);
+            // 只要 `.../Views/...` 下的：`Admin/Views/Home/Index.zshtml`
+            if (std.mem.indexOf(u8, normalized, "Views/") == null) continue;
+            try entries.append(allocator, try std.fmt.allocPrint(allocator, "Areas/{s}", .{normalized}));
+        }
+    } else |_| {}
+
+    // 稳定顺序（生成文件可 diff；测试输出可复现）
+    std.mem.sort([]const u8, entries.items, {}, struct {
+        fn lessThan(_: void, a: []const u8, c: []const u8) bool {
+            return std.mem.lessThan(u8, a, c);
+        }
+    }.lessThan);
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    const writer = &out.writer;
+    try writer.writeAll(
+        \\//! **自动生成，请勿手改** —— `zig build` 时由 `build.zig` 扫描
+        \\//! `Views/**` 与 `Areas/**/Views/**` 下的 `.zshtml` 生成；新增视图不用改任何清单。
+        \\
+        \\pub const Entry = struct {
+        \\    /// 相对库根的规范路径（`/` 分隔）
+        \\    relative: []const u8,
+        \\    /// 模板源码（编译期内嵌）
+        \\    source: []const u8,
+        \\};
+        \\
+        \\pub const ENTRIES = [_]Entry{
+        \\
+    );
+    for (entries.items) |relative| {
+        try writer.print("    .{{ .relative = \"{s}\", .source = @embedFile(\"{s}\") }},\n", .{ relative, relative });
+    }
+    try writer.writeAll("};\n");
+
+    // 内容相同就不写（避免每次 build 都改 mtime → 触发下游重编）
+    const target_path = "views_generated.zig";
+    const existing = cwd.readFileAlloc(io, target_path, allocator, .limited(4 * 1024 * 1024)) catch null;
+    const content = out.written();
+    if (existing) |old| {
+        defer allocator.free(old);
+        if (std.mem.eql(u8, old, content)) return;
+    }
+    try cwd.writeFile(io, .{ .sub_path = target_path, .data = content });
+}
+
+/// 递归收集一个目录下的 `.zshtml`（`prefix` 是相对库根的路径前缀，不含尾斜杠）。
+fn collectViews(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    dir: *std.Io.Dir,
+    prefix: []const u8,
+    entries: *std.ArrayList([]const u8),
+) !void {
+    var walker = try dir.walk(allocator);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.path, ".zshtml")) continue;
+        try entries.append(allocator, try std.fmt.allocPrint(allocator, "{s}/{s}", .{ prefix, entry.path }));
+    }
+}
+
+/// 把 Windows 原生分隔符 `\` 换成 `/`（`relative` 是跨平台的**规范路径**）。
+fn normalizeSlashes(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    var out = try allocator.alloc(u8, path.len);
+    for (path, 0..) |c, i| out[i] = if (c == '\\') '/' else c;
+    return out;
 }

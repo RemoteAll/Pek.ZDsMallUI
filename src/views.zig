@@ -17,6 +17,8 @@ const zzig = @import("zzig");
 const area = @import("area.zig");
 const backend_mod = @import("backend.zig");
 const version = @import("version.zig");
+/// 自动生成的视图清单（`zig build` 时由 `build.zig` 扫描生成，见 `DEFAULT_VIEWS`）。
+const generated_views = @import("../views_generated.zig");
 
 /// 默认区域（与 C# `Areas/Admin` 对齐）。
 pub const DEFAULT_AREA = area.DEFAULT_AREA;
@@ -26,35 +28,18 @@ pub const DEFAULT_AREAS_ROOT = "Areas";
 pub const DEFAULT_VIEWS_ROOT = "Views";
 
 /// 内置默认视图（相对**项目根**的规范路径 → 模板源码）。
-pub const DefaultView = struct {
-    /// 相对项目根的规范路径（`/` 分隔）
-    relative: []const u8,
-    /// 模板源码（编译期嵌入）
-    source: []const u8,
-};
+pub const DefaultView = generated_views.Entry;
 
-/// 内置默认视图清单（与 C# 参考工程同一份，仅改为 Razor 子集语法）。
-pub const DEFAULT_VIEWS = [_]DefaultView{
-    .{ .relative = "Views/Shared/_Layout.zshtml", .source = @embedFile("../Views/Shared/_Layout.zshtml") },
-    .{ .relative = "Views/Shared/Prompt.zshtml", .source = @embedFile("../Views/Shared/Prompt.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Home/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Home/Index.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Home/Dashboard.zshtml", .source = @embedFile("../Areas/Admin/Views/Home/Dashboard.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Home/ModifyPw.zshtml", .source = @embedFile("../Areas/Admin/Views/Home/ModifyPw.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Config/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Config/Index.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Login/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Login/Index.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Culture/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Culture/Index.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Languages/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Languages/Index.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Role/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Role/Index.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Role/Edit.zshtml", .source = @embedFile("../Areas/Admin/Views/Role/Edit.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Menu/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/Menu/Index.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Menu/Edit.zshtml", .source = @embedFile("../Areas/Admin/Views/Menu/Edit.zshtml") },
-    .{ .relative = "Areas/Admin/Views/AdminUser/Index.zshtml", .source = @embedFile("../Areas/Admin/Views/AdminUser/Index.zshtml") },
-    .{ .relative = "Areas/Admin/Views/AdminUser/Edit.zshtml", .source = @embedFile("../Areas/Admin/Views/AdminUser/Edit.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Culture/AddCulture.zshtml", .source = @embedFile("../Areas/Admin/Views/Culture/AddCulture.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Culture/EditCulture.zshtml", .source = @embedFile("../Areas/Admin/Views/Culture/EditCulture.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Languages/AddLanguages.zshtml", .source = @embedFile("../Areas/Admin/Views/Languages/AddLanguages.zshtml") },
-    .{ .relative = "Areas/Admin/Views/Languages/EditLanguages.zshtml", .source = @embedFile("../Areas/Admin/Views/Languages/EditLanguages.zshtml") },
-};
+/// 内置默认视图清单 —— **自动生成，不要手写**。
+///
+/// `build.zig` 每次 `zig build` 都会扫描 `Views/**` 与 `Areas/**/Views/**` 下的
+/// `.zshtml`，产出库根目录的 `views_generated.zig`（内容是 `@embedFile` 清单）。
+/// 新增一个视图**不需要**改这里，也不会再出现「忘了加一行 → 运行时视图不存在」。
+///
+/// 为什么生成物放在库根而不是 `zig-cache`：`@embedFile` 只接受**包内**路径
+/// （实测绝对路径报 `embed of file outside package path`），放缓存目录编译不过。
+/// 为什么运行时没有开销：生成物就是一份 `[_]Entry` 静态数组，与手写清单完全等价。
+pub const DEFAULT_VIEWS = generated_views.ENTRIES;
 
 /// 渲染结果。
 pub const RenderOutcome = union(enum) {
