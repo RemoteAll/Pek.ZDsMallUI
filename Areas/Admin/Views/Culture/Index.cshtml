@@ -61,7 +61,7 @@
         </thead>
         <tbody>
             @foreach (var row in Model.rows) {
-            <tr>
+            <tr id="ds_row_@row.id">
                 <td><input type="checkbox" class="checkitem" name="nav_id[]" value="@row.id"></td>
                 <td>@row.name</td>
                 <td>@row.displayName</td>
@@ -72,17 +72,7 @@
                 <td>@if (row.enabled) {<span>@Model.lang.common_enabled</span>} else {<span>@Model.lang.common_disabled</span>}</td>
                 <td>
                     <a href="@Model.areaRoute/culture/editculture?id=@row.id" class="dsui-btn-edit">@Model.lang.common_edit</a>
-                    @if (!row.isDefault) {
-                    <a href="@Model.areaRoute/culture/setdefault?id=@row.id">@Model.lang.common_default</a>
-                    }
-                    @if (row.enabled) {
-                    <a href="@Model.areaRoute/culture/togglestatus?id=@row.id&enable=0">@Model.lang.common_disabled</a>
-                    } else {
-                    <a href="@Model.areaRoute/culture/togglestatus?id=@row.id&enable=1">@Model.lang.common_enabled</a>
-                    }
-                    @if (!row.isDefault) {
-                    <a href="@Model.areaRoute/culture/delete?id=@row.id" onclick="return confirm('@Model.lang.common_confirm_delete')" class="dsui-btn-del">@Model.lang.common_delete</a>
-                    }
+                    <a href="javascript:;" onclick="javascript:dsLayerConfirm('@Model.areaRoute/culture/delete?Ids=@row.id','@Model.lang.common_confirm_delete',@row.id)" class="dsui-btn-del">@Model.lang.common_delete</a>
                 </td>
             </tr>
             }
@@ -90,43 +80,20 @@
         <tfoot>
             <tr class="tfoot">
                 <td><input type="checkbox" class="checkall" id="checkallBottom"></td>
-                <td colspan="8"><label for="checkallBottom">@Model.lang.common_select_all</label></td>
+                <td colspan="8">
+                    <label for="checkallBottom">@Model.lang.common_select_all</label>
+                    &nbsp;&nbsp;<a href="JavaScript:void(0);" class="btn btn-small" onclick="submit_delete_batch()"><span>@Model.lang.common_delete</span></a>
+                </td>
             </tr>
         </tfoot>
     </table>
-    <ul class="pagination"></ul>
-
-    <a id="add-culture"></a>
-    <form method="post" action="@Model.areaRoute/culture/add" name="formAdd">
-        <div class="ncap-form-default">
-            <dl>
-                <dt>@Model.lang.common_title</dt>
-                <dd><input name="Name" class="input-txt" type="text" placeholder="简体中文"><span class="err"></span></dd>
-            </dl>
-            <dl>
-                <dt>@Model.lang.common_display_name</dt>
-                <dd><input name="DisplayName" class="input-txt" type="text" placeholder="简体中文"><span class="err"></span></dd>
-            </dl>
-            <dl>
-                <dt>@Model.lang.page_culture_english</dt>
-                <dd><input name="EnglishName" class="input-txt" type="text" placeholder="Chinese (Simplified)"><span class="err"></span></dd>
-            </dl>
-            <dl>
-                <dt>@Model.lang.page_culture_language</dt>
-                <dd><input name="LanguageCulture" class="input-txt" type="text" placeholder="zh-CN"><span class="err"></span></dd>
-            </dl>
-            <dl>
-                <dt>@Model.lang.page_culture_code</dt>
-                <dd><input name="UniqueSeoCode" class="input-txt" type="text" placeholder="zh"><span class="err"></span></dd>
-            </dl>
-            <dl>
-                <dt>@Model.lang.common_order</dt>
-                <dd><input name="DisplayOrder" class="input-txt" type="text" value="100"><span class="err"></span></dd>
-            </dl>
-            <dl>
-                <dt></dt>
-                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms.formAdd.submit()">@Model.lang.common_add</a></dd>
-            </dl>
-        </div>
-    </form>
+    <ul class="pagination">@Model.pageHtml</ul>
 </div>
+<script>
+    // 与 C# `Culture/Index.cshtml` 一致：删除走 `Delete?Ids=`，由 `dsLayerConfirm` 发 AJAX（JSON 回执）。
+    // 注意：**不要**改成原生 confirm —— 全项目禁止原生弹窗，且 JSON 回执不会刷新整页。
+    function submit_delete(ids_str) {
+        var _uri = "@Model.areaRoute/culture/delete?Ids=" + ids_str;
+        dsLayerConfirm(_uri, '@Model.lang.common_confirm_delete');
+    }
+</script>

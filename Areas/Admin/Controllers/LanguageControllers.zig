@@ -25,7 +25,11 @@ pub const CultureController = struct {
         const keyword = std.mem.trim(u8, c.queryValue("name") orelse "", " \t\r\n");
         const status_filter = std.fmt.parseInt(i32, c.queryValue("status") orelse "-1", 10) catch -1;
 
-        var rows: std.ArrayList(zzig.web.Value) = .empty;
+        // 分页（对齐 C# `Model.PageHtml`：当前页用 `<span class="currentpage">`，其余 `<a>`）
+        const page_size: usize = std.fmt.parseInt(usize, c.queryValue("pageSize") orelse "20", 10) catch 20;
+        const want_page = std.fmt.parseInt(usize, c.queryValue("page") orelse "1", 10) catch 1;
+
+        var matched: std.ArrayList(language_mod.Language) = .empty;
         for (store.all()) |row| {
             if (keyword.len > 0) {
                 const hit = containsIgnoreCase(row.name, keyword) or
@@ -35,7 +39,18 @@ pub const CultureController = struct {
             }
             if (status_filter == 1 and !row.status) continue;
             if (status_filter == 0 and row.status) continue;
+            try matched.append(c.arena, row);
+        }
 
+        const all_rows = try matched.toOwnedSlice(c.arena);
+        const page_size_eff = if (page_size == 0) @as(usize, 20) else page_size;
+        const pages = if (all_rows.len == 0) @as(usize, 1) else (all_rows.len + page_size_eff - 1) / page_size_eff;
+        const cur_page = @min(@max(want_page, 1), pages);
+        const start = (cur_page - 1) * page_size_eff;
+        const page_rows = all_rows[start..@min(start + page_size_eff, all_rows.len)];
+
+        var rows: std.ArrayList(zzig.web.Value) = .empty;
+        for (page_rows) |row| {
             var builder = zzig.web.ObjectBuilder.init(c.arena);
             try builder.int("id", row.id);
             try builder.str("name", row.name);
@@ -55,6 +70,10 @@ pub const CultureController = struct {
         try model.int("currentId", culture_id);
         try model.str("keyword", keyword);
         try model.int("statusFilter", status_filter);
+        try model.int("total", @intCast(all_rows.len));
+        try model.int("page", @intCast(cur_page));
+        try model.int("pages", @intCast(pages));
+        try model.str("pageHtml", try pageHtml(c.arena, try areaPrefix(self, c), "/culture/index", keyword, status_filter, page_size_eff, cur_page, pages));
         try model.str("saved", c.queryValue("saved") orelse "");
         try model.str("error", c.queryValue("error") orelse "");
         return admin_area.renderView(self, c, "Culture", "Index", model.finish());
@@ -155,17 +174,52 @@ pub const CultureController = struct {
         return redirectTo(self, c, "/culture/index", "saved=1");
     }
 
-    /// `GET /{area}/culture/delete?id=N`：删除语言（默认语言不可删；连同语言包一起删）。
+    /// `GET /{area}/culture/delete?Ids=1,2`：删除语言（默认语言不可删；连同语言包一起删）。
+    ///
+    /// **返回 JSON（对齐 C#）**：页面上走 `dsLayerConfirm(url, msg, id)` / `submit_delete_batch()`，
+    /// 前端需要 `{success, code, msg}`（`code == 10000` 时删掉对应的 `#ds_row_<id>`）。
+    /// 旧链接 `?id=N` 仍然兼容。
     pub fn delete(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);
-        const store = self.languages orelse return redirectTo(self, c, "/culture/index", "error=未启用多语言");
-        const id = std.fmt.parseInt(i32, c.queryValue("id") orelse "", 10) catch 0;
-        if (id <= 0) return redirectTo(self, c, "/culture/index", "error=参数 id 无效");
-        store.removeLanguage(id) catch |e| {
-            zzig.Logger.warn("[ZDsMallUI] 删除语言失败（id={d}）：{s}", .{ id, @errorName(e) });
-            return redirectTo(self, c, "/culture/index", if (e == error.CannotRemoveDefaultLanguage) "error=默认语言不可删除" else "error=删除失败，详见日志");
-        };
-        return redirectTo(self, c, "/culture/index", "saved=1");
+        const store = self.languages orelse return jsonEnvelope(c, false, 1, "未启用多语言");
+        const ids_raw = c.queryValue("Ids") orelse c.queryValue("id") orelse "";
+
+        var removed: usize = 0;
+        var blocked_default = false;
+        var failed = false;
+        var missing = false;
+        var it = std.mem.tokenizeAny(u8, ids_raw, ", \t\r\n");
+        while (it.next()) |token| {
+            const id = std.fmt.parseInt(i32, token, 10) catch continue;
+            if (id <= 0) continue;
+            // 先确认存在：`removeLanguage` 对不存在的 id 也是「删 0 行不报错」，
+            // 不先查会把「什么都没删」误报成删除成功。
+            const id_text = std.fmt.allocPrint(c.arena, "{d}", .{id}) catch continue;
+            if (store.find(id_text) == null) {
+                missing = true;
+                continue;
+            }
+            store.removeLanguage(id) catch |e| {
+                if (e == error.CannotRemoveDefaultLanguage) {
+                    blocked_default = true;
+                } else {
+                    failed = true;
+                    zzig.Logger.warn("[ZDsMallUI] 删除语言失败（id={d}）：{s}", .{ id, @errorName(e) });
+                }
+                continue;
+            };
+            removed += 1;
+        }
+
+        if (removed == 0) {
+            if (blocked_default) return jsonEnvelope(c, false, 1, "默认语言不可删除");
+            if (failed) return jsonEnvelope(c, false, 1, "删除失败，详见日志");
+            if (missing) return jsonEnvelope(c, false, 1, "要删除的语言不存在");
+            return jsonEnvelope(c, false, 1, "参数 ids 无效");
+        }
+        if (blocked_default) return jsonEnvelope(c, true, 10000, "已删除，默认语言已跳过");
+        if (failed) return jsonEnvelope(c, true, 10000, "部分删除成功，其余详见日志");
+        return jsonEnvelope(c, true, 10000, "删除成功");
     }
 
     /// `POST /{area}/culture/add`：新增语言。
@@ -241,7 +295,7 @@ pub const LanguagesController = struct {
         try model.list("rows", try rows.toOwnedSlice(c.arena));
         try model.list("cultures", try options.toOwnedSlice(c.arena));
         try model.int("cultureId", culture_id);
-        try model.str("cultureName", if (store.find(std.fmt.allocPrint(c.arena, "{d}", .{culture_id}) catch "") ) |row| row.display_name else "");
+        try model.str("cultureName", if (store.find(std.fmt.allocPrint(c.arena, "{d}", .{culture_id}) catch "")) |row| row.display_name else "");
         try model.str("lanKey", lan_key);
         try model.str("lanValue", lan_value);
         try model.str("areaRoute", try areaPrefix(self, c));
@@ -384,4 +438,92 @@ fn redirectTo(self: *admin_area.AdminArea, c: *router.Ctx, path: []const u8, que
 
 fn renderMissing(self: *admin_area.AdminArea, c: *router.Ctx) !ActionResult {
     return admin_area.renderPrompt(self, c, "当前数据源未启用多语言（需要在 Builder 里设置 storage）", false, "");
+}
+
+/// 生成 `ul.pagination` 内部 HTML（对齐 C# `PageHtml`：当前页是 `<span class="currentpage">`，
+/// 其余是 `<a>`；`admin.css` 里就是这么设色的）。
+///
+/// 只输出「上一页 / 页码（最多 10 个，首尾页用省略号）」——与 C# `PageSplit` 同属一个组件，
+/// 样式完全走现有 css，不新增任何自定义样式。
+fn pageHtml(
+    arena: std.mem.Allocator,
+    prefix: []const u8,
+    path: []const u8,
+    keyword: []const u8,
+    status_filter: i32,
+    page_size: usize,
+    cur_page: usize,
+    pages: usize,
+) ![]const u8 {
+    var parts: std.ArrayList([]const u8) = .empty;
+
+    // 保留搜索条件（翻页不丢关键字 / 状态 / 每页条数）
+    var keep: std.ArrayList([]const u8) = .empty;
+    if (keyword.len > 0) try keep.append(arena, try std.fmt.allocPrint(arena, "&name={s}", .{try urlEncode(arena, keyword)}));
+    if (status_filter >= 0) try keep.append(arena, try std.fmt.allocPrint(arena, "&status={d}", .{status_filter}));
+    if (page_size != 20) try keep.append(arena, try std.fmt.allocPrint(arena, "&pageSize={d}", .{page_size}));
+    const extra = try std.mem.concat(arena, u8, keep.items);
+
+    const href = struct {
+        fn make(a: std.mem.Allocator, p: []const u8, pa: []const u8, e: []const u8, page: usize) ![]const u8 {
+            return std.fmt.allocPrint(a, "{s}{s}?page={d}{s}", .{ p, pa, page, e });
+        }
+    }.make;
+
+    if (pages > 1) {
+        if (cur_page > 1) {
+            try parts.append(arena, try std.fmt.allocPrint(arena, "<li><a href=\"{s}\">上一页</a></li>", .{try href(arena, prefix, path, extra, cur_page - 1)}));
+        }
+        var page: usize = 1;
+        while (page <= pages) : (page += 1) {
+            if (page == cur_page) {
+                try parts.append(arena, try std.fmt.allocPrint(arena, "<li><span class=\"currentpage\">{d}</span></li>", .{page}));
+            } else if (page == 1 or page == pages or (page + 6 > cur_page and page < cur_page + 6)) {
+                try parts.append(arena, try std.fmt.allocPrint(arena, "<li><a href=\"{s}\">{d}</a></li>", .{ try href(arena, prefix, path, extra, page), page }));
+            } else if (page + 6 == cur_page or page == cur_page + 6) {
+                try parts.append(arena, "<li><span>...</span></li>");
+            }
+        }
+        if (cur_page < pages) {
+            try parts.append(arena, try std.fmt.allocPrint(arena, "<li><a href=\"{s}\">下一页</a></li>", .{try href(arena, prefix, path, extra, cur_page + 1)}));
+        }
+    }
+    return std.mem.concat(arena, u8, parts.items);
+}
+
+/// 仅转义 URL 查询值里必须转义的字符（关键字里的中文由浏览器负责编码，这里保持原样）。
+fn urlEncode(arena: std.mem.Allocator, text: []const u8) ![]const u8 {
+    var parts: std.ArrayList([]const u8) = .empty;
+    for (text) |ch| {
+        switch (ch) {
+            ' ', '&', '#', '+', '=', '%', '?', '/' => try parts.append(arena, try std.fmt.allocPrint(arena, "%{X:0>2}", .{ch})),
+            else => try parts.append(arena, try std.fmt.allocPrint(arena, "{c}", .{ch})),
+        }
+    }
+    return std.mem.concat(arena, u8, parts.items);
+}
+
+/// 统一 JSON 信封：`{success, code, msg}`（对齐 C# 前端 `dsLayerConfirm` 的判定：
+/// `success` 为真且 `code == 10000` 时删掉 `#ds_row_<id>`）。
+///
+/// `msg` 只在内部用固定文案，不含引号/反斜杠；仍做一次最小转义以防将来加动态文本。
+fn jsonEnvelope(c: *router.Ctx, success: bool, code: i32, msg: []const u8) !ActionResult {
+    var escaped_parts: std.ArrayList([]const u8) = .empty;
+    for (msg) |ch| {
+        const piece: []const u8 = switch (ch) {
+            '"' => "\\\"",
+            '\\' => "\\\\",
+            '\n' => "\\n",
+            else => try std.fmt.allocPrint(c.arena, "{c}", .{ch}),
+        };
+        try escaped_parts.append(c.arena, piece);
+    }
+    const escaped = try std.mem.concat(c.arena, u8, escaped_parts.items);
+    const body = try std.fmt.allocPrint(
+        c.arena,
+        "{{\"success\":{s},\"code\":{d},\"msg\":\"{s}\"}}",
+        .{ if (success) "true" else "false", code, escaped },
+    );
+    // 复用 `router.Response.json`（200 + application/json），不自己拼 status/content_type
+    return .{ .response = router.Response.json(body) };
 }
