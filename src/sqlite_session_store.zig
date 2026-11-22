@@ -4,7 +4,7 @@
 //! 面板重启后，已登出的令牌又能用（在 JWT 自己的有效期内）。落库后重启仍失效。
 //!
 //! 表结构由 `assets/Model.xml` 的 `Session` 表提供（`Pek.ZCode` 的 `syncSchema`
-//! 幂等建表，和 `Setting` / `AdminUser` 一个库）。
+//! 幂等建表，和 `Config` / `User` 一个库）。
 //!
 //! 只实现 KV 三件套（`get` / `set` / `del`）：`sadd`/`srem`/`smembers` 用于「在线会话列表」，
 //! 属可选能力，这里不实现（`supportsSets()` 为 false，在线列表降级，**吊销不受影响**）。

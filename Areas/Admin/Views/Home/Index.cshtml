@@ -5,7 +5,11 @@
    顶部 `.admincp-header`（logo + 一级导航 + 用户菜单）+ 左侧 `.admincp-container-left` 菜单
    + 右侧 iframe（`name="main-frame"`）。
    版式全部来自随包下发的 C# 原版 `admin.css`（`.admincp-*` / `.navbar` / `.sub-meun` 等类名一致），
-   不依赖 jQuery —— 分组切换与 iframe 导航用原生 JS 实现。 *@
+   分组切换与 iframe 导航用原生 JS 实现。
+
+   **必须引入 jQuery + layer + admin.js**：右上角下拉里的「安全退出」调的是
+   `dsLayerConfirm(url, msg, 'logout')`（C# 原版函数，定义在 `admin.js`，内部用 `layer.confirm`）。
+   早先没引这三样 → 点击时报 `ReferenceError: dsLayerConfirm is not defined`，退出完全没反应。 *@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -16,6 +20,10 @@
     <link rel="stylesheet" href="~/static/admin/css/admin.css">
     <link rel="stylesheet" href="~/static/plugins/js/layui/css/layui.css">
     <link rel="stylesheet" href="~/static/plugins/iconfont/iconfont.css">
+    @* 「安全退出」依赖 `dsLayerConfirm`（admin.js → layer.confirm），与 C# 原版一致 *@
+    <script src="~/static/plugins/jquery214.min.js"></script>
+    <script src="~/static/plugins/layer/layer.js"></script>
+    <script src="~/static/admin/js/admin.js"></script>
     <style>
         html, body { height: 100%; margin: 0; }
         /* 框架页自身**不滚动**：滚动只发生在右侧 iframe 里。

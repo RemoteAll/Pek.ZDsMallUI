@@ -50,6 +50,39 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "运行单元测试");
     test_step.dependOn(&run_lib_tests.step);
 
+    // 实体生成（**规范**：实体一律由 `Pek.ZCode` 的 `zcodegen` 从 `Model.xml` 生成，不手写）。
+    //   zig build codegen           → `src/entities/{表}.zig` + `{表}.biz.zig` + `mod.zig`
+    // 用户 / 角色 / 菜单等 Membership 表**不在这里重复生成**：直接用
+    // `zcode.membership.entities`（本库已由同一生成器从 C# 同源 `Member.xml` 生成）。
+    const gen_exe = zcode_dep.artifact("zcodegen");
+    const gen_run = b.addRunArtifact(gen_exe);
+    gen_run.setCwd(b.path("."));
+    gen_run.addArg("--model");
+    gen_run.addFileArg(b.path("assets/Model.xml"));
+    gen_run.addArg("--out");
+    gen_run.addArg("src/entities");
+    const codegen_step = b.step("codegen", "按 assets/Model.xml 生成实体（*.zig + *.biz.zig + mod.zig）");
+    codegen_step.dependOn(&gen_run.step);
+
+    // 反向工程（与 C# `XCode` / Rust `Pek.RCode` 的 reverse 同口径）：
+    //   zig build reverse -Dconn="Data Source=Data/Admin.db;Provider=SQLite" -Dout=Model.xml
+    // 把现有库的表结构导成 `Model.xml`，作为「建表 / 改表」的起点；
+    // 实际改不改结构、能不能删列，**由连接串里的 `Migration=` 决定**（Off / ReadOnly / On / Full，
+    // 与 C# `ResolveMigration` 一致：只有 `Full` 才会删列 / 删索引 / 改列类型）。
+    const rev_run = b.addRunArtifact(gen_exe);
+    rev_run.setCwd(b.path("."));
+    rev_run.addArg("--reverse");
+    rev_run.addArg(b.option([]const u8, "conn", "反向工程连接串（Data Source=...;Provider=SQLite|MySQL|...）") orelse "");
+    rev_run.addArg("--out");
+    rev_run.addArg(b.option([]const u8, "out", "实体输出目录（默认 src/entities）") orelse "src/entities");
+    rev_run.addArg("--model-out");
+    rev_run.addArg(b.option([]const u8, "model-out", "导出的 Model.xml 路径（默认 Model.xml）") orelse "Model.xml");
+    if (b.option(bool, "model-only", "只导出 Model.xml，不生成实体（看/比结构用）") orelse false) {
+        rev_run.addArg("--model-only");
+    }
+    const reverse_step = b.step("reverse", "反向工程：库 → Model.xml（可选 → 实体）；改表前先反查现状");
+    reverse_step.dependOn(&rev_run.step);
+
     // 可运行示例（`zig build run -- 18080 Biz`）：起服务 + 全部入口
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("examples/admin_server.zig"),

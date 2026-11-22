@@ -41,7 +41,7 @@ pub const HomeController = struct {
 
     /// `GET /{area}/home/setlanguage`：切换**当前用户**的后台界面语言。
     ///
-    /// 只写这个用户自己的偏好（`AdminUser.LanguageId`），不影响别人、也不影响前台语言。
+    /// 只 写这个用户自己的偏好（C# `UserDetail.LanguageId`），不影响别人、也不影响前台语言。
     pub fn setLanguage(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);
         const route = try area_mod.routePrefix(c.arena, self.areaName());

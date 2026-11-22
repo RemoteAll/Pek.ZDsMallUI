@@ -1,16 +1,22 @@
-//! SQLite 后端：**表结构由 `Pek.ZCode` 的 `Dal.syncSchema` 同步**（模型是唯一真相源：
-//! 缺表建表、缺列 `ALTER TABLE ... ADD COLUMN`、缺索引建索引；**不删列、不改类型**），
-//! 本文件里不写任何 `CREATE TABLE`。
+//! 数据访问后端：**表结构由 `Pek.ZCode` 的 `syncSchema` 同步，读写一律走 ORM**
+//! （`Dal.table()` + `TableRef`，账号用生成实体 `zcode.membership.entities.User`）。
 //!
-//! 分工（都实测过）：
-//! - **建表/迁移**：`Pek.ZCode`（`EntityModel` + `Dal.syncSchema`），只在启动时跑一次，
-//!   用完就把它的连接关掉；
-//! - **运行期读写**：直接用 `zzig.db.sqlite`（一次 prepare + bind + step，没有 session 建连开销）。
-//!   早期版本每个请求都 `Dal.openSession()`，实测单条 INSERT 要 ~1.1s（方言探测 + 建连），
-//!   而 `Session` 按值拷进结构体会让它内部的指针失效（`prepare` 段错误），所以运行期不再用它。
+//! # 为什么必须走 ORM（用户要求，2026-11-22）
+//! 手写 SQL 会夹带**方言专有语法**（`[User]` 方括号、`datetime('now','localtime')`、
+//! `ON CONFLICT`、`INSERT OR IGNORE`、`PRAGMA`…），一旦换 MySQL / PostgreSQL 就得重写一遍。
+//! 走 `TableRef` 后 SQL 由 `dialect.zig` 按 `DatabaseKind` 生成，**换库只改连接串**。
 //!
-//! - 模型：`assets/Model.xml`（**框架自己的表**，编译进二进制）；库文件：`Data/{区域}.db`
-//! - 种子：库里没有用户时插入 `admin` / `admin123`（口令走 [`password`]，与 C# 字节级互通）
+//! # 模型来源（三层合并，一次 `syncSchema`）
+//! 1. `MEMBER_XML`：C# 同源 `Pek.ZCode/membership/Member.xml`（`User` / `Role` / `Menu` …）；
+//! 2. `MODEL_XML`：库自有 `Config` / `Session` / `UserDetail`；
+//! 3. `project_xml`：项目自己的 `Model.xml`（业务表 / 多语言表）。
+//!
+//! 合并后**按 C# XCode 语义补全列属性**（`EntityModel.applyCsharpColumnDefaults`），
+//! 保证「Zig 建出的表」与「C# 建出的表」逐列一致 —— 同一份库两边都能用。
+//!
+//! # 会话
+//! 全进程**一条** `Session`（堆分配，地址稳定）：`Dal.openSession()` 每次都新建连接，
+//! 早期「每请求 openSession」实测单条 INSERT ~1.1s，所以这里只开一次，用 `mutex` 串行化。
 
 const std = @import("std");
 const zzig = @import("zzig");
@@ -19,19 +25,16 @@ const zcode = @import("zcode");
 const backend_mod = @import("backend.zig");
 const password = @import("password.zig");
 
-const sqlite = zzig.db.sqlite;
 const router = zzig.web.router;
-const Value = zzig.db.Value;
 
-/// 内置模型（`assets/Model.xml`，与 C# 同格式、同名）。
-///
-/// **只管框架自己的表**（`Config` / `AdminUser` / `Session`）——相当于 C# 的 `Membership` 那部分；
-/// 业务表与多语言表由**项目自己的 `Model.xml`** 定义（两份在各自身上的模型会合并后一次同步，结果是并集）。
-///
-/// 两个文件同名不会冲突：库这份是 `@embedFile` 编进二进制的（只在库仓库里，不随部署流出去），
-/// 项目那份在工作目录下运行时读取——跟 C#「框架自带 `Model.xml` + 项目根 `Model.xml`」一个口径，
-/// 靠**位置**区分归属。
+/// C# 同源 `User` 实体（由 `zcodegen` 从 `Member.xml` 生成，**不要手写**）。
+const User = zcode.membership.entities.User;
+
+/// 库内置模型：`Config`（站点配置）/ `Session`（令牌吊销）/ `UserDetail`（用户扩展）。
 pub const MODEL_XML = @embedFile("../assets/Model.xml");
+
+/// C# 同源 Membership 模型（9 张表）。**不在本库重复定义**，详见 `Pek.ZCode`。
+pub const MEMBER_XML = zcode.membership.MemberXml;
 
 /// 默认模型文件名（C# 同构，项目目录下同名文件优先）。
 pub const DEFAULT_MODEL_FILE = "Model.xml";
@@ -42,24 +45,22 @@ pub const DEFAULT_DB_DIR = "Data";
 pub const SqliteBackend = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
-    lib: sqlite.Lib,
-    db: sqlite.Db,
+    dal: zcode.Dal,
+    /// 长生命周期会话。**必须堆分配**：`Session` 的语句缓存持有指向自身 `Db` 的句柄，
+    /// 按值搬进别处会让那些指针失效（见 `Session.clearStmtCache` 的注释）。
+    session: *zcode.Session,
+    /// 三层模型合并后的内存（`Dal` 按值持有 `EntityModel`，其内部切片来自本 arena）。
+    /// **必须是堆指针**：`ArenaAllocator.allocator()` 的 `ptr` 指向 arena 自身地址，
+    /// 按值复制进结构体后那个地址就悬垂了（free 时报 `attempt to use null value`）。
+    model_arena: *std.heap.ArenaAllocator,
     mutex: zzig.compat.Mutex = .{},
 
-    /// 打开（不存在则创建）数据库：先用 `Pek.ZCode` 同步表结构，再建运行期连接。
-    ///
-    /// `model_xml = null` 时用库内置模型；传磁盘 `Model.xml` 的内容则用项目自己的模型。
+    /// 按 SQLite 文件路径打开（不存在则创建目录与库文件）。
     pub fn init(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !*SqliteBackend {
         return initWithModel(allocator, io, path, null);
     }
 
-    /// 同上，但额外带上**项目自己的模型**（项目 `Model.xml`）。
-    ///
-    /// 建表口径（对齐 C#：模型是项目级结构唯一来源，框架表由库负责）：
-    /// 1. 先跑框架内置模型（`Config` / `AdminUser` / `Session` …）；
-    /// 2. 再跑项目模型（业务表 / 语言表 …）。
-    /// `syncSchema` 是增量的（缺表建表、缺列补列、不删列），所以两次结果就是**并集**，
-    /// 项目 `Model.xml` 不需要再把 `AdminUser` 这些框架表复制一遍。
+    /// 同上，并额外带上**项目自己的 `Model.xml`**（业务表 / 多语言表）。
     pub fn initWithModel(
         allocator: std.mem.Allocator,
         io: std.Io,
@@ -69,66 +70,75 @@ pub const SqliteBackend = struct {
         if (std.fs.path.dirname(path)) |dir| {
             if (dir.len > 0) try zzig.fsio.makePath(io, dir);
         }
+        const conn = try std.fmt.allocPrint(allocator, "Data Source={s};Provider=SQLite", .{path});
+        defer allocator.free(conn);
+        return initWithConnection(allocator, io, conn, project_xml);
+    }
 
-        // **一次建表、一个 Dal 会话**：框架表与项目表在**模型对象层**合并后一起同步。
-        //
-        // 曾经的写法是「跑两遍 `syncSchema`（两套 `Dal`）」，运行时会在第二套处报 `Sqlite` 并回退内存。
-        // 根因**不在本项目**：驱动层 `Lib.load` 每次都会 `LoadLibrary`、`deinit` 就 `FreeLibrary`，
-        // 同一模块「加载 → 卸载 → 再加载」后 `sqlite3_open_v2` 失败。已由 zzig 在驱动层根治
-        // （`Lib` 进程级单例：首次加载后常驻，`deinit` 只减引用计数），**其它项目不必再各自写兜底**。
-        // 这里仍然合并模型跑一次，是为了一次建表、要么全成要么全不动，避免半成品库。
-        try syncSchema(allocator, path, project_xml);
+    /// **任意连接串**（`Provider=SQLite|MySQL|PostgreSQL|...`）——这也是「切库」的唯一入口：
+    /// 换个连接串即可，代码与模型都不用改。
+    pub fn initWithConnection(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        conn_str: []const u8,
+        project_xml: ?[]const u8,
+    ) !*SqliteBackend {
+        const model_arena = try allocator.create(std.heap.ArenaAllocator);
+        model_arena.* = std.heap.ArenaAllocator.init(allocator);
+        errdefer {
+            model_arena.deinit();
+            allocator.destroy(model_arena);
+        }
+        const model = try mergeModel(model_arena.allocator(), project_xml);
 
         const self = try allocator.create(SqliteBackend);
         errdefer allocator.destroy(self);
-        self.* = .{ .allocator = allocator, .io = io, .lib = undefined, .db = undefined };
+        self.* = .{ .allocator = allocator, .io = io, .dal = undefined, .session = undefined, .model_arena = model_arena };
 
-        self.lib = sqlite.Lib.load(allocator) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 加载 SQLite 失败（{s}）：把 sqlite3.dll 放到程序目录即可", .{@errorName(e)});
+        self.dal = zcode.Dal.initWithModel(allocator, conn_str, model) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 打开数据库失败（{s}）：连接串 {s}", .{ @errorName(e), conn_str });
             return e;
         };
-        errdefer self.lib.deinit();
+        errdefer self.dal.deinit();
 
-        // **不显式指定 journal_mode/synchronous**：`zzig.db.sqlite.Options` 的默认值已经是
-        // 最快的 `WAL + NORMAL`（2026-11-19 改）。这里只覆盖 busy_timeout —— 面板启动时常有
-        // 外部工具（备份脚本、SQLiteStudio）占着库，8 秒等待比默认 5 秒更不容易误报失败。
-        //
-        // 若确认部署在网络盘（SMB/NFS 不支持 `-shm` 共享内存文件），把 `journal_mode` 显式设成
-        // `"delete"` 即可；WAL 设置失败时驱动只打日志，不会中断打开。
-        // 重试策略针对的是**外部进程**占库（备份脚本 / SQLiteStudio / 旧实例未退）：那是真实场景，
-        // 与「建表会话刚关闭」的驱动层句柄问题无关（后者已在 zzig 根治）。
-        self.db = blk: {
-            var attempt: usize = 0;
-            while (true) : (attempt += 1) {
-                if (sqlite.Db.openWithOptions(&self.lib, path, .{ .busy_timeout_ms = 8000, .journal_mode = null, .synchronous = null })) |db| {
-                    break :blk db;
-                } else |e| {
-                    if (attempt >= 4) {
-                        zzig.Logger.err("[ZDsMallUI] 打开 SQLite 数据库失败（{s}，路径 {s}，已重试 {d} 次）", .{ @errorName(e), path, attempt + 1 });
-                        return e;
-                    }
-                    zzig.compat.sleep(120 * std.time.ns_per_ms);
-                }
-            }
+        const s = self.dal.openSession() catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 建立数据库会话失败（{s}）：连接串 {s}", .{ @errorName(e), conn_str });
+            return e;
         };
-        errdefer self.db.close();
+        const sp = try allocator.create(zcode.Session);
+        sp.* = s; // 刚 open，语句缓存为空 —— 此刻搬动是安全的
+        self.session = sp;
+        errdefer {
+            sp.deinit();
+            allocator.destroy(sp);
+        }
 
+        const report = self.dal.syncSchema(self.session) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 同步表结构失败（{s}）：连接串 {s}", .{ @errorName(e), conn_str });
+            return e;
+        };
+        if (report.tables_created > 0 or report.columns_added > 0 or report.indexes_created > 0) {
+            zzig.Logger.info(
+                "[ZDsMallUI] 表结构已同步（Membership+框架+项目）：新建表 {d} / 补列 {d} / 建索引 {d}",
+                .{ report.tables_created, report.columns_added, report.indexes_created },
+            );
+        }
+        zzig.Logger.info("[ZDsMallUI] 数据库就绪：{s} / {d} 张表", .{ @tagName(self.dal.opts.provider), self.dal.model.tables.len });
+
+        try self.migrateLegacyAdminUsers();
         try self.seedDefaultUser();
+        try self.ensureAllUserDetails();
         try self.migrateLegacySettingTable();
         try self.normalizeConfigKeys();
-        // 把**实际生效**的 journal_mode 打出来：WAL 在部分环境（网络盘 / 某些构建）会静默失败，
-        // 而它是 32 倍写吞吐与「写时还能读」的关键，运维需要一眼能确认。
-        var mode_buf: [32]u8 = undefined;
-        if (self.queryScalarText("PRAGMA journal_mode", &.{}, &mode_buf)) |mode| {
-            zzig.Logger.info("[ZDsMallUI] SQLite journal_mode = {s}", .{mode});
-        } else |_| {}
-        zzig.Logger.info("[ZDsMallUI] SQLite 就绪：{s}（驱动 {s}）", .{ path, self.lib.version() });
         return self;
     }
 
     pub fn deinit(self: *SqliteBackend) void {
-        self.db.close();
-        self.lib.deinit();
+        self.session.deinit();
+        self.allocator.destroy(self.session);
+        self.dal.deinit();
+        self.model_arena.deinit();
+        self.allocator.destroy(self.model_arena);
         self.allocator.destroy(self);
     }
 
@@ -136,184 +146,251 @@ pub const SqliteBackend = struct {
         return .{ .ptr = @ptrCast(self), .vtable = &vtable };
     }
 
-    /// 读一条 `Config`（不存在返回 `null`）。给库内部用（如 JWT 密钥持久化）。
-    ///
-    /// 与 `settingsImpl` 的区别：那个是把整表读成页面用的对象，这个按 key 取单值、写进 `arena`。
+    // ───────────────────────── 公共小工具 ─────────────────────────
+
+    /// 读一条 `Config`（不存在返回 `null`）。给库内部用（JWT 密钥、配置快照等）。
     pub fn setting(self: *SqliteBackend, arena: std.mem.Allocator, key: []const u8) !?[]const u8 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const row = try self.queryOne(arena, "SELECT Value FROM Config WHERE Name = ?", &.{.{ .text = key }});
-        if (row.names.len == 0) return null;
-        const v = row.get("Value") orelse return null;
-        return switch (v) {
-            .text => |text| if (text.len > 0) text else null,
-            else => null,
-        };
+        return self.getSettingLocked(arena, key);
     }
 
-    /// 写一条 `Config`（upsert）。给库内部用（如 JWT 密钥持久化）。
+    /// `setting` 的无锁版本（已持锁的调用方用）。
+    fn getSettingLocked(self: *SqliteBackend, arena: std.mem.Allocator, key: []const u8) !?[]const u8 {
+        self.session.resetResults();
+
+        const ref = try self.dal.table("Config");
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        _ = try w.eq("Name", .{ .text = key });
+        var q = zcode.Query.init(self.allocator);
+        defer q.deinit();
+        _ = try q.column("Value");
+        _ = q.filterWhere(&w);
+
+        const rows = try ref.queryRows(self.session, &q);
+        if (rows.len == 0 or rows[0].values.len == 0) return null;
+        const value = switch (rows[0].values[0]) {
+            .text => |t| t,
+            else => return null,
+        };
+        if (value.len == 0) return null;
+        return try arena.dupe(u8, value);
+    }
+
+    /// 写一条 `Config`（有则更新、无则插入）。
     pub fn putSetting(self: *SqliteBackend, key: []const u8, value: []const u8) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        try self.exec(
-            "INSERT INTO Config (Name, Value) VALUES (?, ?) ON CONFLICT(Name) DO UPDATE SET Value = excluded.Value",
-            &.{ .{ .text = key }, .{ .text = value } },
-        );
+        try self.putSettingLocked(key, value);
     }
 
-    /// 用 `Pek.ZCode` 做增量建表（幂等：再跑一次不会重复建/不会报错）。
-    ///
-    /// `project_xml` 非 null 时，先**在模型对象层合并**（不拼 XML 字符串、更不跑两套 Dal），
-    /// 然后只 **一次** `syncSchema` 建出全部表。
-    fn syncSchema(allocator: std.mem.Allocator, path: []const u8, project_xml: ?[]const u8) !void {
-        var model = zcode.EntityModel.parse(allocator, MODEL_XML) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 解析框架 Model.xml 失败（{s}）：内置框架模型损坏", .{@errorName(e)});
-            return e;
-        };
-        if (project_xml) |xml| {
-            const project = zcode.EntityModel.parse(allocator, xml) catch |e| {
-                zzig.Logger.err("[ZDsMallUI] 解析项目 Model.xml 失败（{s}）：请检查 <EntityModel>/<Tables>/<Table> 结构", .{@errorName(e)});
-                return e;
-            };
-            const merged = try allocator.alloc(zcode.TableMeta, model.tables.len + project.tables.len);
-            @memcpy(merged[0..model.tables.len], model.tables);
-            @memcpy(merged[model.tables.len..], project.tables);
-            model.tables = merged;
-        }
-        const conn = try std.fmt.allocPrint(allocator, "Data Source={s};Provider=SQLite;JournalMode=WAL;Synchronous=NORMAL", .{path});
-        defer allocator.free(conn);
+    fn putSettingLocked(self: *SqliteBackend, key: []const u8, value: []const u8) !void {
+        const ref = try self.dal.table("Config");
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        _ = try w.eq("Name", .{ .text = key });
 
-        var dal = zcode.Dal.initWithModel(allocator, conn, model) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 建表连接失败（{s}，路径 {s}）", .{ @errorName(e), path });
-            return e;
-        };
-        defer dal.deinit();
-
-        var s = try dal.openSession();
-        defer s.deinit();
-        const report = dal.syncSchema(&s) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 同步表结构失败（库 {s}）：{s}", .{ path, @errorName(e) });
-            return e;
-        };
-        if (report.tables_created > 0 or report.columns_added > 0 or report.indexes_created > 0) {
-            zzig.Logger.info(
-                "[ZDsMallUI] 表结构已同步（框架+项目）：新建表 {d} / 补列 {d} / 建索引 {d}",
-                .{ report.tables_created, report.columns_added, report.indexes_created },
-            );
+        if (try ref.count(self.session, &w) > 0) {
+            _ = try ref.updateOne(self.session, &.{zcode.dbtable.field("Value", .{ .text = value })}, &w, 0);
+        } else {
+            _ = try ref.insert(self.session, &.{
+                zcode.dbtable.field("Name", .{ .text = key }),
+                zcode.dbtable.field("Value", .{ .text = value }),
+            });
         }
     }
 
-    // ---- 底层执行（调用方负责加锁）----
-
-    fn exec(self: *SqliteBackend, sql: []const u8, params: []const Value) !void {
-        var stmt = try self.db.prepare(self.allocator, sql);
-        defer stmt.finalize();
-        try stmt.bindAll(params);
-        try stmt.run();
-    }
-
-    fn queryScalarInt(self: *SqliteBackend, sql: []const u8, params: []const Value) !i64 {
-        var arena_state = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena_state.deinit();
-        const row = try self.queryOne(arena_state.allocator(), sql, params);
-        const v = row.at(0) orelse return 0;
-        return switch (v) {
-            .int => |n| n,
-            .boolean => |b| if (b) 1 else 0,
-            else => 0,
-        };
-    }
-
-    /// 读单列文本写进调用方提供的缓冲（典型用法：`PRAGMA journal_mode` 的回读）。
-    /// 写进 `buf` 而不是分配：日志这类短命文本不必占堆，也不会漏。
-    fn queryScalarText(self: *SqliteBackend, sql: []const u8, params: []const Value, buf: []u8) ![]const u8 {
-        var arena_state = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena_state.deinit();
-        const row = try self.queryOne(arena_state.allocator(), sql, params);
-        const v = row.at(0) orelse return "";
-        const text = switch (v) {
-            .text => |t| t,
-            else => return "",
-        };
-        const n = @min(text.len, buf.len);
-        @memcpy(buf[0..n], text[0..n]);
-        return buf[0..n];
-    }
-
-    /// 查询并读**第一行**（无行返回空 Row）。`arena` 由调用方提供：`readRow` 的文本借用它。
-    fn queryOne(self: *SqliteBackend, arena: std.mem.Allocator, sql: []const u8, params: []const Value) !sqlite.Row {
-        var stmt = try self.db.prepare(self.allocator, sql);
-        defer stmt.finalize();
-        try stmt.bindAll(params);
-        if (!stmt.hasRow()) return .{};
-        return stmt.readRow(arena);
-    }
-
-    // ---- 种子 ----
+    // ───────────────────────── 种子与迁移 ─────────────────────────
 
     fn seedDefaultUser(self: *SqliteBackend) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const count = self.queryScalarInt("SELECT COUNT(*) FROM AdminUser", &.{}) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 读取 AdminUser 数量失败（{s}）：{s}", .{ @errorName(e), self.db.lastError() });
-            return e;
-        };
+        const count = try zcode.entity.count(&self.dal, User, self.session, null);
         if (count > 0) return;
 
         const hashed = password.hash(self.allocator, self.io, "admin123") catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 生成默认口令哈希失败（{s}）", .{@errorName(e)});
+            zzig.Logger.err("[ZDsMallUI] 生成默认口令散列失败（{s}）", .{@errorName(e)});
             return e;
         };
         defer self.allocator.free(hashed);
-        self.exec(
-            "INSERT INTO AdminUser (UserName, DisplayName, Password, IsAdmin, Enable, LanguageId) VALUES (?, ?, ?, 1, 1, 0)",
-            &.{ .{ .text = "admin" }, .{ .text = "管理员" }, .{ .text = hashed } },
-        ) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 写入默认账号失败（{s}）：{s}", .{ @errorName(e), self.db.lastError() });
-            return e;
+
+        // 写 **C# 的 `User` 表**（字段与 C# `DHStartup` 初始化管理员一致）：
+        // `RoleID=1` 超级管理员 + `Ex1=1` 后台管理员标记（C# `AdminUserController.CreateAdmin` 同口径）。
+        var user = User{
+            .Name = "admin",
+            .Password = hashed,
+            .DisplayName = "管理员",
+            .Sex = 0,
+            .RoleID = 1,
+            .Enable = true,
+            .Ex1 = 1,
+            .Logins = 0,
+            .UpdateUser = "",
         };
+        const id = try zcode.entity.insert(&self.dal, &user, self.session);
+        try self.ensureUserDetailLocked(id);
         zzig.Logger.warn("[ZDsMallUI] 已创建默认账号 admin / admin123（**生产环境请立即修改**）", .{});
     }
 
-    /// 旧版框架表叫 `Setting(Key, Value)`；现在与 C# 同构改成 `Config(Category, Name, Value, Remark)`。
-    ///
-    /// 只搬「`Config` 里还没有」的键（`ON CONFLICT(Name) DO NOTHING`），**旧表保留**不删数据
-    /// （不可逆操作一律不做；确认无误后运维可自行 `DROP TABLE Setting`）。
-    fn migrateLegacySettingTable(self: *SqliteBackend) !void {
-        const legacy = self.queryScalarInt(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'Setting'",
-            &.{},
-        ) catch 0;
-        if (legacy == 0) return;
-
-        self.exec(
-            "INSERT INTO Config (Name, Value) SELECT [Key], Value FROM Setting WHERE 1 ON CONFLICT(Name) DO NOTHING",
-            &.{},
-        ) catch |e| {
-            zzig.Logger.warn("[ZDsMallUI] 旧 `Setting` 表迁移到 `Config` 失败（{s}）：旧数据未搬动", .{@errorName(e)});
-            return;
-        };
-        const total = self.queryScalarInt("SELECT COUNT(*) FROM Config", &.{}) catch 0;
-        zzig.Logger.info("[ZDsMallUI] 已把旧 `Setting` 表迁移到 `Config`（当前 {d} 条；旧表保留）", .{total});
+    /// 保证 `UserDetail` 有对应行（C# 的 1:1 扩展表；后台界面语言存在 `LanguageId`）。
+    fn ensureUserDetailLocked(self: *SqliteBackend, user_id: i64) !void {
+        const ref = try self.dal.table("UserDetail");
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        _ = try w.eq("Id", .{ .int = user_id });
+        if (try ref.count(self.session, &w) > 0) return;
+        _ = try ref.insert(self.session, &.{
+            zcode.dbtable.field("Id", .{ .int = user_id }),
+            zcode.dbtable.field("LanguageId", .{ .int = 0 }),
+        });
     }
 
-    /// 把历史遗留的 camelCase 键名规范成 C# 的 PascalCase（`siteName` → `SiteName`）。
+    fn ensureAllUserDetails(self: *SqliteBackend) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        var q = zcode.Query.init(self.allocator);
+        defer q.deinit();
+        _ = try q.column("ID");
+        _ = q.filterWhere(&w);
+
+        const ref = try self.dal.table("User");
+        const rows = try ref.queryRows(self.session, &q);
+        var ids: std.ArrayList(i64) = .empty;
+        defer ids.deinit(self.allocator);
+        for (rows) |row| {
+            if (row.values.len == 0) continue;
+            if (row.values[0].asI64()) |id| try ids.append(self.allocator, id);
+        }
+        for (ids.items) |id| try self.ensureUserDetailLocked(id);
+    }
+
+    /// 旧版自造表 `AdminUser` → C# `User`（**表数据复用**：老库升级后账号不丢、口令不用重设）。
     ///
-    /// 早期版本把设置存成 camelCase，而 C# 的 `Config.Name` 是实体属性名（PascalCase）。
-    /// 两边要读同一批键，就必须规范化；`UPDATE OR IGNORE` 保证已经有新键时不会撞唯一索引。
-    /// 幂等：每次都跑，没有旧键就是空操作。
+    /// 只读旧表：表名与列名是历史常量，且这条 `SELECT` 仅用于**一次性迁移**，
+    /// 新库没有这张表时直接跳过（`SELECT`/`WHERE` 各库通用，不含方言语法）。
+    fn migrateLegacyAdminUsers(self: *SqliteBackend) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const has_legacy = self.hasLegacyTable("AdminUser") catch false;
+        if (!has_legacy) return;
+
+        const rows = self.session.queryRows("SELECT UserName, Password, DisplayName, IsAdmin, Enable, LanguageId FROM AdminUser", &.{}) catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 读取旧 `AdminUser` 失败（{s}）：旧数据未迁移，旧表保留", .{@errorName(e)});
+            return;
+        };
+        var migrated: usize = 0;
+        for (rows) |row| {
+            if (row.values.len < 6) continue;
+            const name = switch (row.values[0]) {
+                .text => |t| t,
+                else => continue,
+            };
+            if (name.len == 0) continue;
+
+            const ref = try self.dal.table("User");
+            var w = zcode.Where.init(self.allocator);
+            defer w.deinit();
+            _ = try w.eq("Name", .{ .text = name });
+            if (try ref.count(self.session, &w) > 0) continue; // 已有同名 C# 账号：不覆盖
+
+            const is_admin = (row.values[3].asI64() orelse 0) != 0;
+            const enabled = (row.values[4].asI64() orelse 0) != 0;
+            var user = User{
+                .Name = name,
+                .Password = switch (row.values[1]) {
+                    .text => |t| t,
+                    else => "",
+                },
+                .DisplayName = switch (row.values[2]) {
+                    .text => |t| t,
+                    else => "",
+                },
+                .Sex = 0,
+                .RoleID = if (is_admin) 1 else 3,
+                .Enable = enabled,
+                .Ex1 = if (is_admin) 1 else 0,
+                .UpdateUser = "",
+            };
+            const id = try zcode.entity.insert(&self.dal, &user, self.session);
+            try self.ensureUserDetailLocked(id);
+
+            // 旧语言偏好 → `UserDetail.LanguageId`
+            const lang = row.values[5].asI64() orelse 0;
+            if (lang > 0) {
+                const detail = try self.dal.table("UserDetail");
+                var wd = zcode.Where.init(self.allocator);
+                defer wd.deinit();
+                _ = try wd.eq("Id", .{ .int = id });
+                _ = try detail.updateOne(self.session, &.{zcode.dbtable.field("LanguageId", .{ .int = lang })}, &wd, id);
+            }
+            migrated += 1;
+        }
+        zzig.Logger.info("[ZDsMallUI] 旧 `AdminUser` 已迁移到 C# `User` 表：{d} 个账号（旧表保留）", .{migrated});
+    }
+
+    /// 旧框架表 `Setting(Key, Value)` → `Config(Category, Name, Value, Remark)`。
+    fn migrateLegacySettingTable(self: *SqliteBackend) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const has_legacy = self.hasLegacyTable("Setting") catch false;
+        if (!has_legacy) return;
+
+        const rows = self.session.queryRows("SELECT Key, Value FROM Setting", &.{}) catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 读取旧 `Setting` 失败（{s}）：旧数据未迁移，旧表保留", .{@errorName(e)});
+            return;
+        };
+        var migrated: usize = 0;
+        for (rows) |row| {
+            if (row.values.len < 2) continue;
+            const key = switch (row.values[0]) {
+                .text => |t| t,
+                else => continue,
+            };
+            const value = switch (row.values[1]) {
+                .text => |t| t,
+                else => continue,
+            };
+            if (key.len == 0) continue;
+
+            const ref = try self.dal.table("Config");
+            var w = zcode.Where.init(self.allocator);
+            defer w.deinit();
+            _ = try w.eq("Name", .{ .text = key });
+            if (try ref.count(self.session, &w) > 0) continue; // 已有新键：不覆盖
+            try self.putSettingLocked(key, value);
+            migrated += 1;
+        }
+        if (migrated > 0) zzig.Logger.info("[ZDsMallUI] 旧 `Setting` 表已迁移到 `Config`：{d} 个键（旧表保留）", .{migrated});
+    }
+
+    /// 历史遗留的 camelCase 配置键 → C# 的 PascalCase（`siteName` → `SiteName`）。
     fn normalizeConfigKeys(self: *SqliteBackend) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const ref = try self.dal.table("Config");
         var changed: usize = 0;
         for (backend_mod.DEFAULT_SETTINGS) |entry| {
             if (std.mem.eql(u8, entry.key, entry.store_key)) continue;
-            self.exec(
-                "UPDATE OR IGNORE Config SET Name = ? WHERE Name = ?",
-                &.{ .{ .text = entry.store_key }, .{ .text = entry.key } },
-            ) catch |e| {
-                zzig.Logger.warn("[ZDsMallUI] 规范配置键名失败（{s} → {s}）：{s}", .{ entry.key, entry.store_key, @errorName(e) });
-                continue;
-            };
+
+            var w_old = zcode.Where.init(self.allocator);
+            defer w_old.deinit();
+            _ = try w_old.eq("Name", .{ .text = entry.key });
+            if (try ref.count(self.session, &w_old) == 0) continue;
+
+            var w_new = zcode.Where.init(self.allocator);
+            defer w_new.deinit();
+            _ = try w_new.eq("Name", .{ .text = entry.store_key });
+            if (try ref.count(self.session, &w_new) > 0) continue; // 已有新键：旧键留着给运维确认
+
+            _ = try ref.updateOne(self.session, &.{zcode.dbtable.field("Name", .{ .text = entry.store_key })}, &w_old, 0);
             changed += 1;
         }
         if (changed > 0) {
@@ -321,7 +398,15 @@ pub const SqliteBackend = struct {
         }
     }
 
-    // ---- AdminBackend 实现 ----
+    /// 旧表是否存在（迁移用；表名是常量，`SELECT ... WHERE 1 = 0` 各库通用）。
+    fn hasLegacyTable(self: *SqliteBackend, name: []const u8) !bool {
+        const sql = try std.fmt.allocPrint(self.allocator, "SELECT 1 FROM {s} WHERE 1 = 0", .{name});
+        defer self.allocator.free(sql);
+        _ = self.session.queryRows(sql, &.{}) catch return false;
+        return true;
+    }
+
+    // ───────────────────────── AdminBackend 实现 ─────────────────────────
 
     const vtable = backend_mod.AdminBackend.VTable{
         .settings = settingsImpl,
@@ -333,76 +418,14 @@ pub const SqliteBackend = struct {
         .set_language_id = setLanguageIdImpl,
     };
 
-    /// 读取用户的后台界面语言（`AdminUser.LanguageId`；没有该列/记录返回 0）。
-    fn languageIdImpl(ptr: *anyopaque, user_name: []const u8) anyerror!i32 {
-        const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        var stmt = try self.db.prepare(self.allocator, "SELECT LanguageId FROM AdminUser WHERE UserName = ? COLLATE NOCASE");
-        defer stmt.finalize();
-        try stmt.bindAll(&.{.{ .text = user_name }});
-        if (!stmt.hasRow()) return 0;
-        var arena_state = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena_state.deinit();
-        const row = try stmt.readRow(arena_state.allocator());
-        const v = row.get("LanguageId") orelse return 0;
-        return switch (v) {
-            .int => |number| @intCast(number),
-            .text => |text| std.fmt.parseInt(i32, text, 10) catch 0,
-            else => 0,
-        };
-    }
-
-    /// 写入用户的后台界面语言（只影响这个用户；前台语言走自己的 Cookie）。
-    fn setLanguageIdImpl(ptr: *anyopaque, user_name: []const u8, language_id: i32) anyerror!void {
-        const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        try self.exec("UPDATE AdminUser SET LanguageId = ? WHERE UserName = ? COLLATE NOCASE", &.{
-            .{ .int = language_id },
-            .{ .text = user_name },
-        });
-    }
-
-    /// 改密：校验旧口令（`password.verify`）→ 新口令哈希 → `UPDATE AdminUser`。
-    fn changePasswordImpl(
-        ptr: *anyopaque,
-        arena: std.mem.Allocator,
-        user_name: []const u8,
-        old_pass: []const u8,
-        new_pass: []const u8,
-    ) anyerror!bool {
-        const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
-        const name = std.mem.trim(u8, user_name, " \t\r\n");
-        if (name.len == 0 or old_pass.len == 0 or new_pass.len == 0) return false;
-
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        const row = try self.queryOne(
-            arena,
-            "SELECT Id, Password FROM AdminUser WHERE UserName = ? COLLATE NOCASE",
-            &.{.{ .text = name }},
-        );
-        if (row.names.len == 0) return false;
-        const id = (row.get("Id") orelse return false).int;
-        const stored = (row.get("Password") orelse return false).text;
-        if (!password.verify(old_pass, stored)) return false;
-
-        const hashed = try password.hash(self.allocator, self.io, new_pass);
-        defer self.allocator.free(hashed);
-        try self.exec("UPDATE AdminUser SET Password = ? WHERE Id = ?", &.{
-            .{ .text = hashed },
-            .{ .int = id },
-        });
-        return true;
-    }
-
+    /// 全部配置（`Config` 表 → 页面对象，缺的用默认值补）。
+    ///
+    /// 读全表只查 `Name`/`Value` 两列 —— 走 `TableRef`（方言无关），不手写 SQL。
     fn settingsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror!zzig.web.Value {
         const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
         self.mutex.lock();
         defer self.mutex.unlock();
+        self.session.resetResults();
 
         var stored = std.StringHashMapUnmanaged([]const u8).empty;
         defer {
@@ -414,31 +437,44 @@ pub const SqliteBackend = struct {
             stored.deinit(self.allocator);
         }
 
-        var arena_state = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena_state.deinit();
-        const tmp = arena_state.allocator();
+        const ref = try self.dal.table("Config");
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        var q = zcode.Query.init(self.allocator);
+        defer q.deinit();
+        _ = try q.column("Name");
+        _ = try q.column("Value");
+        _ = q.filterWhere(&w);
 
-        var stmt = try self.db.prepare(self.allocator, "SELECT Name AS Key, Value FROM Config");
-        defer stmt.finalize();
-        while (stmt.hasRow()) {
-            const row = try stmt.readRow(tmp);
-            const key = row.get("Key") orelse break;
-            const value = row.get("Value") orelse break;
-            const owned_key = try self.allocator.dupe(u8, key.text);
+        for (try ref.queryRows(self.session, &q)) |row| {
+            if (row.values.len < 2) continue;
+            const name = switch (row.values[0]) {
+                .text => |t| t,
+                else => continue,
+            };
+            const value = switch (row.values[1]) {
+                .text => |t| t,
+                else => "",
+            };
+            if (name.len == 0) continue;
+            const owned_key = try self.allocator.dupe(u8, name);
             errdefer self.allocator.free(owned_key);
-            const owned_val = try self.allocator.dupe(u8, value.text);
+            const owned_val = try self.allocator.dupe(u8, value);
             try stored.put(self.allocator, owned_key, owned_val);
         }
 
         return backend_mod.settingsValue(arena, &stored);
     }
 
+    /// 保存配置（表单参数）：与 C# 一致的口径 —— 网站名称必填、值没变不算脏、
+    /// 只有真的改了才递增 `__configVersion` 并刷新 `__configUpdatedAt`。
     fn saveSettingsImpl(
         ptr: *anyopaque,
         arena: std.mem.Allocator,
         form: []const router.Param,
     ) anyerror!backend_mod.SaveOutcome {
         const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
+        _ = arena;
 
         // 与 C# 一致：网站名称必填
         var site_name: []const u8 = "";
@@ -452,50 +488,32 @@ pub const SqliteBackend = struct {
 
         self.mutex.lock();
         defer self.mutex.unlock();
-        _ = arena;
 
-        // 写入 + 判断「内容是否真的变了」：没变就不 bump 版本戳（避免点一次保存就 +1 的噪音）
         var dirty = false;
-        var buf: [12000]u8 = undefined;
+        var tmp_state = std.heap.ArenaAllocator.init(self.allocator);
+        defer tmp_state.deinit();
+
         for (form) |field| {
             const target = backend_mod.formKeyToSetting(field.name) orelse continue;
             if (!dirty) {
-                const existing = self.queryScalarText(
-                    "SELECT Value FROM Config WHERE Name = ?",
-                    &.{.{ .text = target }},
-                    &buf,
-                ) catch "";
-                if (!std.mem.eql(u8, existing, field.value)) dirty = true;
+                const existing = try self.getSettingLocked(tmp_state.allocator(), target);
+                if (existing == null or !std.mem.eql(u8, existing.?, field.value)) dirty = true;
             }
-            try self.exec(
-                "INSERT INTO Config (Name, Value) VALUES (?, ?) ON CONFLICT(Name) DO UPDATE SET Value = excluded.Value",
-                &.{ .{ .text = target }, .{ .text = field.value } },
-            );
+            try self.putSettingLocked(target, field.value);
         }
         if (!dirty) return .ok;
 
-        // 设置版本戳：外部（如「配置 ↔ 数据库」同步、缓存失效）据此判断「库里的设置变新了」。
-        // 这是元数据、不是业务字段，所以不放进 `formKeyToSetting` 的白名单。
-        const prev_version = self.queryScalarInt(
-            "SELECT CAST(Value AS INTEGER) FROM Config WHERE Name = '__configVersion'",
-            &.{},
-        ) catch 0;
-        const next_version = prev_version + 1;
-        const version_text = try std.fmt.allocPrint(self.allocator, "{d}", .{next_version});
-        defer self.allocator.free(version_text);
-        const updated_text = try std.fmt.allocPrint(self.allocator, "{d}", .{zzig.compat.milliTimestamp()});
-        defer self.allocator.free(updated_text);
-        try self.exec(
-            "INSERT INTO Config (Name, Value) VALUES ('__configVersion', ?) ON CONFLICT(Name) DO UPDATE SET Value = excluded.Value",
-            &.{.{ .text = version_text }},
-        );
-        try self.exec(
-            "INSERT INTO Config (Name, Value) VALUES ('__configUpdatedAt', ?) ON CONFLICT(Name) DO UPDATE SET Value = excluded.Value",
-            &.{.{ .text = updated_text }},
-        );
+        // 版本戳：外部（「配置 ↔ 数据库」同步、缓存失效）据此判断「库里的设置变新了」。
+        // 元数据、不是业务字段，不在 `formKeyToSetting` 白名单里。
+        const prev_text = try self.getSettingLocked(tmp_state.allocator(), "__configVersion");
+        const prev_version = if (prev_text) |t| (std.fmt.parseInt(i64, t, 10) catch 0) else 0;
+        var buf: [64]u8 = undefined;
+        try self.putSettingLocked("__configVersion", try std.fmt.bufPrint(&buf, "{d}", .{prev_version + 1}));
+        try self.putSettingLocked("__configUpdatedAt", try std.fmt.bufPrint(&buf, "{d}", .{zzig.compat.milliTimestamp()}));
         return .ok;
     }
 
+    /// 成功后按 C# `LoginCore` 口径更新 `Logins` / `Online`。
     fn loginImpl(
         ptr: *anyopaque,
         arena: std.mem.Allocator,
@@ -504,76 +522,193 @@ pub const SqliteBackend = struct {
     ) anyerror!backend_mod.LoginOutcome {
         const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
         const name = std.mem.trim(u8, user_name, " \t\r\n");
-        if (name.len == 0 or pass.len == 0) {
-            return .{ .err = "用户名与密码均不可为空" };
-        }
+        if (name.len == 0 or pass.len == 0) return .{ .err = "用户名与密码均不可为空" };
+
         // 不区分「用户不存在」与「密码错误」，避免用户名枚举
         const not_found: backend_mod.LoginOutcome = .{ .err = "用户名或密码不正确" };
 
         self.mutex.lock();
         defer self.mutex.unlock();
+        self.session.resetResults();
 
-        const row = try self.queryOne(
-            arena,
-            "SELECT Id, UserName, DisplayName, Password, IsAdmin, Enable FROM AdminUser WHERE UserName = ? COLLATE NOCASE",
-            &.{.{ .text = name }},
-        );
-        if (row.names.len == 0) return not_found;
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        _ = try w.eq("Name", .{ .text = name });
+        var q = zcode.Query.init(self.allocator);
+        defer q.deinit();
+        _ = q.filterWhere(&w);
 
-        const id = (row.get("Id") orelse return not_found).int;
-        const db_user = (row.get("UserName") orelse return not_found).text;
-        const db_display = (row.get("DisplayName") orelse return not_found).text;
-        const db_password = (row.get("Password") orelse return not_found).text;
-        const is_admin = switch (row.get("IsAdmin") orelse return not_found) {
-            .int => |n| n != 0,
-            .boolean => |b| b,
-            else => false,
-        };
-        const enabled = switch (row.get("Enable") orelse return not_found) {
-            .int => |n| n != 0,
-            .boolean => |b| b,
-            else => true,
-        };
-        if (!enabled) return .{ .err = "账号已被停用" };
+        const users = try zcode.entity.queryRows(&self.dal, User, self.session, &q);
+        if (users.len == 0) return not_found;
+        const user = users[0];
 
-        const result = try password.verifyAndUpgrade(self.allocator, self.io, .{}, pass, db_password);
+        if (!user.Enable) return .{ .err = "账号已被停用" };
+        const result = try password.verifyAndUpgrade(self.allocator, self.io, .{}, pass, user.Password);
         if (!result.ok) return not_found;
-        // 旧算法自动升级（一次性回写）
+
+        // 旧算法自动升级（一次性回写）—— C# `LoginCore` 同口径
+        var to_save = user;
         if (result.upgraded) |upgraded| {
             defer self.allocator.free(upgraded);
-            try self.exec("UPDATE AdminUser SET Password = ? WHERE Id = ?", &.{
-                .{ .text = upgraded },
-                .{ .int = id },
-            });
+            to_save.Password = upgraded;
         }
+        to_save.Logins = user.Logins + 1;
+        to_save.Online = true;
+        _ = zcode.entity.update(&self.dal, &to_save, self.session) catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 更新用户 {s} 的登录统计失败（{s}）", .{ user.Name, @errorName(e) });
+        };
 
         return .{ .ok = .{
-            .id = id,
-            .user_name = try arena.dupe(u8, db_user),
-            .display_name = try arena.dupe(u8, db_display),
-            .is_admin = is_admin,
+            .id = user.ID,
+            .user_name = try arena.dupe(u8, user.Name),
+            .display_name = try arena.dupe(u8, user.DisplayName),
+            .is_admin = user.RoleID == 1 or user.Ex1 != 0,
         } };
     }
 
     fn displayNameImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const u8 {
         const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        const row = try self.queryOne(arena, "SELECT Value FROM Config WHERE Name = 'DisplayName'", &.{});
-        if (row.names.len > 0) {
-            if (row.get("Value")) |v| {
-                const text = std.mem.trim(u8, v.text, " \t\r\n");
-                if (text.len > 0) return arena.dupe(u8, text);
-            }
+        if (try self.setting(arena, "DisplayName")) |value| {
+            const text = std.mem.trim(u8, value, " \t\r\n");
+            if (text.len > 0) return text;
         }
         return "管理后台";
     }
+
+    /// 改密：校验旧口令 → 新散列 → `UPDATE User`（只写 `Password` 一列）。
+    fn changePasswordImpl(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        user_name: []const u8,
+        old_pass: []const u8,
+        new_pass: []const u8,
+    ) anyerror!bool {
+        const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
+        const name = std.mem.trim(u8, user_name, " \t\r\n");
+        if (name.len == 0 or old_pass.len == 0 or new_pass.len == 0) return false;
+        _ = arena;
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.session.resetResults();
+
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        _ = try w.eq("Name", .{ .text = name });
+        var q = zcode.Query.init(self.allocator);
+        defer q.deinit();
+        _ = q.filterWhere(&w);
+
+        const users = try zcode.entity.queryRows(&self.dal, User, self.session, &q);
+        if (users.len == 0) return false;
+        if (!password.verify(old_pass, users[0].Password)) return false;
+
+        const hashed = try password.hash(self.allocator, self.io, new_pass);
+        defer self.allocator.free(hashed);
+
+        var updated = users[0];
+        updated.Password = hashed;
+        _ = try zcode.entity.update(&self.dal, &updated, self.session);
+        return true;
+    }
+
+    /// 读用户的后台界面语言（C# `UserDetail.LanguageId`；没有行/记录返回 0 = 跟默认语言）。
+    fn languageIdImpl(ptr: *anyopaque, user_name: []const u8) anyerror!i32 {
+        const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.session.resetResults();
+
+        const user_id = (try self.findUserIdLocked(user_name)) orelse return 0;
+
+        const ref = try self.dal.table("UserDetail");
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        _ = try w.eq("Id", .{ .int = user_id });
+        var q = zcode.Query.init(self.allocator);
+        defer q.deinit();
+        _ = try q.column("LanguageId");
+        _ = q.filterWhere(&w);
+
+        const rows = try ref.queryRows(self.session, &q);
+        if (rows.len == 0 or rows[0].values.len == 0) return 0;
+        return @intCast(rows[0].values[0].asI64() orelse 0);
+    }
+
+    /// 写用户的后台界面语言（`UserDetail.LanguageId`；只影响这个用户）。
+    fn setLanguageIdImpl(ptr: *anyopaque, user_name: []const u8, language_id: i32) anyerror!void {
+        const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.session.resetResults();
+
+        const user_id = (try self.findUserIdLocked(user_name)) orelse {
+            zzig.Logger.warn("[ZDsMallUI] 写界面语言失败：用户 {s} 不存在", .{user_name});
+            return;
+        };
+        try self.ensureUserDetailLocked(user_id);
+
+        const ref = try self.dal.table("UserDetail");
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        _ = try w.eq("Id", .{ .int = user_id });
+        _ = try ref.updateOne(self.session, &.{zcode.dbtable.field("LanguageId", .{ .int = language_id })}, &w, user_id);
+    }
+
+    /// 按登录名取 `User.ID`（不存在返回 null）。
+    fn findUserIdLocked(self: *SqliteBackend, user_name: []const u8) !?i64 {
+        var w = zcode.Where.init(self.allocator);
+        defer w.deinit();
+        _ = try w.eq("Name", .{ .text = user_name });
+        var q = zcode.Query.init(self.allocator);
+        defer q.deinit();
+        _ = try q.column("ID");
+        _ = q.filterWhere(&w);
+
+        const ref = try self.dal.table("User");
+        const rows = try ref.queryRows(self.session, &q);
+        if (rows.len == 0 or rows[0].values.len == 0) return null;
+        return rows[0].values[0].asI64();
+    }
 };
+
+/// 合并三层模型并按 C# 语义补全列属性（详见文件头注释）。
+fn mergeModel(allocator: std.mem.Allocator, project_xml: ?[]const u8) !zcode.EntityModel {
+    var model = zcode.EntityModel.parse(allocator, MEMBER_XML) catch |e| {
+        zzig.Logger.err("[ZDsMallUI] 解析 C# 同源 Member.xml 失败（{s}）：Pek.ZCode 内置模型损坏", .{@errorName(e)});
+        return e;
+    };
+    try appendTables(allocator, &model, MODEL_XML, "库内置 Model.xml");
+    if (project_xml) |xml| try appendTables(allocator, &model, xml, "项目 Model.xml");
+
+    // **单库部署**：表级 `ConnName` 归零，等价 C# `ConnectionStrings` 的 `X: MapTo=DH`。
+    // 不改 `Member.xml` 本身（它是 C# 同源文件）。
+    for (model.tables) |*table| table.conn_name = null;
+
+    // 按 C# XCode 语义补全：string/datetime 可空、值类型 NOT NULL + 默认 0
+    model.applyCsharpColumnDefaults();
+    return model;
+}
+
+fn appendTables(
+    allocator: std.mem.Allocator,
+    base: *zcode.EntityModel,
+    xml: []const u8,
+    what: []const u8,
+) !void {
+    const extra = zcode.EntityModel.parse(allocator, xml) catch |e| {
+        zzig.Logger.err("[ZDsMallUI] 解析 {s} 失败（{s}）：请检查 <EntityModel>/<Tables>/<Table> 结构", .{ what, @errorName(e) });
+        return e;
+    };
+    const merged = try allocator.alloc(zcode.TableMeta, base.tables.len + extra.tables.len);
+    @memcpy(merged[0..base.tables.len], base.tables);
+    @memcpy(merged[base.tables.len..], extra.tables);
+    base.tables = merged;
+}
 
 const testing = std.testing;
 
-test "sqlite 后端：ZCode syncSchema 建表 + 设置读写 + 登录 + 重开数据仍在" {
+test "后端：ORM 建表 + 设置读写 + 登录 + 重开数据仍在" {
     const dir = ".zig-cache/zdsmallui-test-db";
     std.Io.Dir.cwd().deleteTree(testing.io, dir) catch {};
     defer std.Io.Dir.cwd().deleteTree(testing.io, dir) catch {};
@@ -587,7 +722,7 @@ test "sqlite 后端：ZCode syncSchema 建表 + 设置读写 + 登录 + 重开�
     defer if (be_opt) |b| b.deinit();
     const be = be_opt.?;
 
-    // 默认账号可登录（种子走 INSERT，读写走 prepare/bind）
+    // 默认账号可登录（种子走实体 insert，读走 TableRef）
     {
         var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena_state.deinit();
@@ -597,34 +732,46 @@ test "sqlite 后端：ZCode syncSchema 建表 + 设置读写 + 登录 + 重开�
         try testing.expectEqualStrings("admin", outcome.ok.user_name);
     }
 
-    // 错误口令
-    {
-        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-        defer arena_state.deinit();
-        try testing.expect(try be.backend().login(arena_state.allocator(), "admin", "wrong") == .err);
-    }
-
-    // 保存设置 → 读取
+    // 错误口令被拒
     {
         var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        const form = [_]router.Param{
-            .{ .name = "SiteName", .value = "SQLiteShop" },
-            .{ .name = "DisplayName", .value = "SQLite 后台" },
-        };
-        try testing.expect(try be.backend().saveSettings(arena, &form) == .ok);
-        try testing.expectEqualStrings("SQLite 后台", try be.backend().displayName(arena));
+        const outcome = try be.backend().login(arena, "admin", "wrong-password");
+        try testing.expect(outcome == .err);
     }
 
-    // 重开同一个库：数据仍在（持久化）+ syncSchema 再跑一次仍幂等
+    // 设置读写（有则更新、无则插入）
+    try be.putSetting("SiteName", "ORM 测试站");
     {
-        be.deinit();
-        be_opt = null;
-        const again = try SqliteBackend.init(testing.allocator, testing.io, path);
-        defer again.deinit();
         var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena_state.deinit();
-        try testing.expectEqualStrings("SQLite 后台", try again.backend().displayName(arena_state.allocator()));
+        const arena = arena_state.allocator();
+        try testing.expectEqualStrings("ORM 测试站", (try be.setting(arena, "SiteName")).?);
+    }
+    try be.putSetting("SiteName", "ORM 测试站-改");
+    {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        try testing.expectEqualStrings("ORM 测试站-改", (try be.setting(arena, "SiteName")).?);
+    }
+
+    // 语言偏好落在 C# 的 UserDetail.LanguageId
+    be.backend().setLanguageId("admin", 2);
+    try testing.expectEqual(@as(i32, 2), be.backend().languageId("admin"));
+
+    be.deinit();
+    be_opt = null;
+
+    // 重开：数据仍在（同一份库）
+    const be2 = try SqliteBackend.init(testing.allocator, testing.io, path);
+    defer be2.deinit();
+    {
+        var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        try testing.expectEqualStrings("ORM 测试站-改", (try be2.setting(arena, "SiteName")).?);
+        try testing.expectEqual(@as(i32, 2), be2.backend().languageId("admin"));
     }
 }

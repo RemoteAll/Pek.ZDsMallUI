@@ -30,20 +30,83 @@
         <Index Columns="Name" Unique="True" />
       </Indexes>
     </Table>
-    <Table Name="AdminUser" TableName="AdminUser" Description="后台用户">
+    <!--
+      用户扩展表：**与 C# `UserDetail` 同构**（BYD 实测 `DG_UserDetail` 的 71 列逐项对齐；
+      C# 侧表名前缀（`DG_`/`DH_`）由部署配置决定，本项目用无前缀的 `UserDetail`）。
+      `Id` = `User.ID`（一对一，非自增）；**后台界面语言就存在 `LanguageId`**，
+      与 C# 后台「每个管理员各自一份界面语言」的口径一致（不再自造 `AdminUser.LanguageId`）。
+    -->
+    <Table Name="UserDetail" TableName="UserDetail" Description="用户扩展表（C# `UserDetail` 同构；`Id` = `User.ID` 一对一，后台界面语言在 `LanguageId`）">
       <Columns>
-        <Column Name="Id" DataType="Int32" Identity="True" PrimaryKey="True" Description="编号" />
-        <Column Name="UserName" DataType="String" Length="50" Description="登录名" />
-        <Column Name="DisplayName" DataType="String" Length="50" Description="显示名" />
-        <Column Name="Password" DataType="String" Length="200" Description="口令散列（$算法$盐$散列）" />
-        <Column Name="IsAdmin" DataType="Boolean" Description="是否管理员" />
-        <Column Name="Enable" DataType="Boolean" Description="是否启用" />
-        <!-- 后台界面语言（对应 `Language.Id`；0 = 跟默认语言）——每个用户各自一份，与前台语言隔离 -->
-        <Column Name="LanguageId" DataType="Int32" DefaultValue="0" Description="后台界面语言" />
+        <Column Name="Id" DataType="Int32" PrimaryKey="True" Nullable="True" Description="编号（= User.ID）" />
+        <Column Name="LanguageId" DataType="Int32" Nullable="False" DefaultValue="0" Description="后台界面语言（= Language.Id，0 = 跟默认）" />
+        <Column Name="IsSuper" DataType="Boolean" Nullable="False" DefaultValue="0" Description="IsSuper" />
+        <Column Name="SId" DataType="Int64" Nullable="False" DefaultValue="0" Description="SId" />
+        <Column Name="TenantId" DataType="Int32" Nullable="False" DefaultValue="0" Description="TenantId" />
+        <Column Name="UType" DataType="Int16" Nullable="False" DefaultValue="0" Description="UType" />
+        <Column Name="RoleExIds" DataType="String" Length="100" Nullable="True" Description="RoleExIds" />
+        <Column Name="OtherPermissions" DataType="String" Length="200" Nullable="True" Description="OtherPermissions" />
+        <Column Name="DepartmentIds" DataType="String" Length="200" Nullable="True" Description="DepartmentIds" />
+        <Column Name="TrueName" DataType="String" Length="50" Nullable="True" Description="TrueName" />
+        <Column Name="PayPwd" DataType="String" Length="50" Nullable="True" Description="PayPwd" />
+        <Column Name="AuthState" DataType="Int16" Nullable="False" DefaultValue="0" Description="AuthState" />
+        <Column Name="IdCard" DataType="String" Length="50" Nullable="True" Description="IdCard" />
+        <Column Name="IdcardImage1" DataType="String" Length="100" Nullable="True" Description="IdcardImage1" />
+        <Column Name="IdcardImage2" DataType="String" Length="100" Nullable="True" Description="IdcardImage2" />
+        <Column Name="IdcardImage3" DataType="String" Length="100" Nullable="True" Description="IdcardImage3" />
+        <Column Name="CompanyName" DataType="String" Length="100" Nullable="True" Description="CompanyName" />
+        <Column Name="CompnayAuthState" DataType="Int16" Nullable="False" DefaultValue="0" Description="CompnayAuthState" />
+        <Column Name="CorporateName" DataType="String" Length="50" Nullable="True" Description="CorporateName" />
+        <Column Name="BusinessLicenseImage" DataType="String" Length="100" Nullable="True" Description="BusinessLicenseImage" />
+        <Column Name="CorporateImage" DataType="String" Length="100" Nullable="True" Description="CorporateImage" />
+        <Column Name="EmailBind" DataType="Boolean" Nullable="False" DefaultValue="0" Description="EmailBind" />
+        <Column Name="MobileBind" DataType="Boolean" Nullable="False" DefaultValue="0" Description="MobileBind" />
+        <Column Name="IsSubScribe" DataType="Boolean" Nullable="False" DefaultValue="0" Description="IsSubScribe" />
+        <Column Name="IsSales" DataType="Boolean" Nullable="False" DefaultValue="0" Description="IsSales" />
+        <Column Name="IsEngineer" DataType="Boolean" Nullable="False" DefaultValue="0" Description="IsEngineer" />
+        <Column Name="ReferrerId" DataType="Int32" Nullable="False" DefaultValue="0" Description="ReferrerId" />
+        <Column Name="KeFuId" DataType="Int32" Nullable="False" DefaultValue="0" Description="KeFuId" />
+        <Column Name="ParentUId" DataType="Int32" Nullable="False" DefaultValue="0" Description="ParentUId" />
+        <Column Name="Points" DataType="Int32" Nullable="False" DefaultValue="0" Description="Points" />
+        <Column Name="ExpPoints" DataType="Int32" Nullable="False" DefaultValue="0" Description="ExpPoints" />
+        <Column Name="QQ" DataType="String" Length="50" Nullable="True" Description="QQ" />
+        <Column Name="WeiXin" DataType="String" Length="50" Nullable="True" Description="WeiXin" />
+        <Column Name="WangWang" DataType="String" Length="50" Nullable="True" Description="WangWang" />
+        <Column Name="ContactName" DataType="String" Length="50" Nullable="True" Description="ContactName" />
+        <Column Name="Tel" DataType="String" Length="50" Nullable="True" Description="Tel" />
+        <Column Name="Fax" DataType="String" Length="50" Nullable="True" Description="Fax" />
+        <Column Name="CompanyInfo" DataType="String" Length="1024" Nullable="True" Description="CompanyInfo" />
+        <Column Name="Address" DataType="String" Length="100" Nullable="True" Description="Address" />
+        <Column Name="InformAllow" DataType="Boolean" Nullable="False" DefaultValue="0" Description="InformAllow" />
+        <Column Name="IsBuy" DataType="Boolean" Nullable="False" DefaultValue="0" Description="IsBuy" />
+        <Column Name="IsAllowTalk" DataType="Boolean" Nullable="False" DefaultValue="0" Description="IsAllowTalk" />
+        <Column Name="AvailablePredeposit" DataType="Decimal" Nullable="False" DefaultValue="0" Description="AvailablePredeposit" />
+        <Column Name="FreezePredeposit" DataType="Decimal" Nullable="False" DefaultValue="0" Description="FreezePredeposit" />
+        <Column Name="AvailableRcBalance" DataType="Decimal" Nullable="False" DefaultValue="0" Description="AvailableRcBalance" />
+        <Column Name="FreezeRcBalance" DataType="Decimal" Nullable="False" DefaultValue="0" Description="FreezeRcBalance" />
+        <Column Name="CountryCode" DataType="String" Length="50" Nullable="True" Description="CountryCode" />
+        <Column Name="CountryId" DataType="Int32" Nullable="False" DefaultValue="0" Description="CountryId" />
+        <Column Name="AreaId" DataType="Int32" Nullable="False" DefaultValue="0" Description="AreaId" />
+        <Column Name="CityId" DataType="Int32" Nullable="False" DefaultValue="0" Description="CityId" />
+        <Column Name="ProvinceId" DataType="Int32" Nullable="False" DefaultValue="0" Description="ProvinceId" />
+        <Column Name="AreaInfo" DataType="String" Length="50" Nullable="True" Description="AreaInfo" />
+        <Column Name="Question1" DataType="String" Length="100" Nullable="True" Description="Question1" />
+        <Column Name="Answer1" DataType="String" Length="100" Nullable="True" Description="Answer1" />
+        <Column Name="Question2" DataType="String" Length="100" Nullable="True" Description="Question2" />
+        <Column Name="Answer2" DataType="String" Length="100" Nullable="True" Description="Answer2" />
+        <Column Name="Question3" DataType="String" Length="100" Nullable="True" Description="Question3" />
+        <Column Name="Answer3" DataType="String" Length="100" Nullable="True" Description="Answer3" />
+        <Column Name="OnlineTime" DataType="Int32" Nullable="False" DefaultValue="0" Description="OnlineTime" />
+        <Column Name="LastUpdateTime" DataType="Int64" Nullable="False" DefaultValue="0" Description="LastUpdateTime" />
+        <Column Name="CreateUser" DataType="String" Length="50" Nullable="True" Description="CreateUser" />
+        <Column Name="CreateUserID" DataType="Int32" Nullable="False" DefaultValue="0" Description="CreateUserID" />
+        <Column Name="CreateTime" DataType="DateTime" Nullable="True" Description="CreateTime" />
+        <Column Name="CreateIP" DataType="String" Length="50" Nullable="True" Description="CreateIP" />
+        <Column Name="UpdateUser" DataType="String" Length="50" Nullable="True" Description="UpdateUser" />
+        <Column Name="UpdateUserID" DataType="Int32" Nullable="False" DefaultValue="0" Description="UpdateUserID" />
+        <Column Name="UpdateTime" DataType="DateTime" Nullable="True" Description="UpdateTime" />
+        <Column Name="UpdateIP" DataType="String" Length="50" Nullable="True" Description="UpdateIP" />
       </Columns>
-      <Indexes>
-        <Index Columns="UserName" Unique="True" />
-      </Indexes>
     </Table>
     <Table Name="Session" TableName="Session" Description="会话吊销表（登出后令牌立即失效，重启仍有效）">
       <Columns>
@@ -57,9 +120,13 @@
     </Table>
     <!--
       说明（表结构归属，2026-11-22 定）：
-      **库内置模型只放库自身运行必需的最小表**（Setting / AdminUser / Session），供库自测与「项目没给模型」时兜底。
+      **库内置模型只放库自身运行必需的最小表**（`Config` / `Session`），供库自测与「项目没给模型」时兜底。
       业务表与**多语言表**（`Language` / `LocaleStringResource`）属于**当前项目**，请在项目自己的 `Model.xml` 里定义
       —— 对齐 C#：`Model.xml` 是项目级结构唯一来源，库只提供控制器/服务。
+
+      **用户 / 角色 / 部门 / 菜单 / 字典 / 地区 / 租户 / 日志**这些 Membership 表**不在这里定义**：
+      它们来自 `Pek.ZCode` 的 `membership/Member.xml`（**C# 同源**），启动时与本文件合并后一次建表。
+      早先这里自造过 `AdminUser`，与 C# 的 `User` 表结构不一致 → **同一份数据换语言就用不了**，已删除。
 
       缺语言表时不会崩：语言仓储读表失败会打 warn 并回退到内置中英文案，`/{area}/culture`、`/{area}/languages` 提示「未启用多语言」。
     -->

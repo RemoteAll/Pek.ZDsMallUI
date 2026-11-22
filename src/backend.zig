@@ -14,14 +14,17 @@ const password = @import("password.zig");
 const router = zzig.web.router;
 
 /// 登录成功后的用户信息（字段与 C# `IManage` 常用面保持一致）。
+///
+/// **只是内存结构体，不是表**：账号数据在 C# 的 `User` 表里（`Pek.ZCode/membership/Member.xml`），
+/// 名字沿用 `AdminUser` 只为兼容既有调用方（`pek_zdsmallui.AdminUser` 导出）。
 pub const AdminUser = struct {
-    /// 主键
+    /// 主键（`User.ID`）
     id: i64,
-    /// 登录名
+    /// 登录名（`User.Name`）
     user_name: []const u8,
-    /// 显示名
+    /// 显示名（`User.DisplayName`）
     display_name: []const u8,
-    /// 是否管理员（对应 C# `User.Ex1 == 1` 的约定）
+    /// 是否管理员（`User.RoleID == 1` 或 `User.Ex1 != 0`，与 C# `AdminUserController` 同口径）
     is_admin: bool,
 };
 
