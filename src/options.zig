@@ -373,12 +373,27 @@ pub const DsMallUi = struct {
 /// 读项目目录下的模型文件（`Model.xml`）：不存在返回 `null`（调用方用库内置模型）。
 ///
 /// 对齐 C#：每个项目自带一份同名 `Model.xml`，库只作兜底 —— 项目要加表/加列只改自己那份。
-fn readProjectModel(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !?[]const u8 {
-    if (path.len == 0) return null;
-    if (!zzig.fsio.exists(io, path)) return null;
-    const text = try zzig.fsio.readFileAlloc(io, allocator, path, 4 * 1024 * 1024);
-    zzig.Logger.info("[ZDsMallUI] 使用项目模型：{s}（{d} 字节）", .{ path, text.len });
-    return text;
+/// 读项目 `Model.xml`：按 `candidates` 顺序找**第一个存在的**。
+///
+/// 为什么要候选链（2026-11-22 踩过）：只按 cwd 找 `Model.xml` 时，一改 `--data-dir`
+/// 就「找不到项目模型 → 只用内置模型 → 没有 `Language` 表 → 后台语言菜单消失」。
+/// 现在的顺序：① 显式 `model_path`（默认 `Model.xml`，相对 cwd）
+/// → ② 数据目录 `{data_dir}/Model.xml` → ③ 程序目录 `{base_dir}/Model.xml`。
+fn readProjectModel(allocator: std.mem.Allocator, io: std.Io, candidates: []const []const u8) !?[]const u8 {
+    var tried: usize = 0;
+    for (candidates) |path| {
+        if (path.len == 0) continue;
+        tried += 1;
+        if (!zzig.fsio.exists(io, path)) continue;
+        const text = try zzig.fsio.readFileAlloc(io, allocator, path, 4 * 1024 * 1024);
+        zzig.Logger.info("[ZDsMallUI] 使用项目模型：{s}（{d} 字节）", .{ path, text.len });
+        return text;
+    }
+    zzig.Logger.warn(
+        "[ZDsMallUI] 未找到项目 Model.xml（试过 {d} 个路径，首个 {s}）：只用内置模型，库不会有业务表/语言表",
+        .{ tried, if (candidates.len > 0) candidates[0] else "" },
+    );
+    return null;
 }
 
 /// JWT 密钥持久化：库里 `Setting.jwtSecret` 有就复用，没有就生成一次并写库。
@@ -653,8 +668,26 @@ pub const Builder = struct {
             if (self.storage_dir) |dir| {
                 const db_path = try std.fs.path.join(self.allocator, &.{ dir, try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area}) });
                 defer self.allocator.free(db_path);
-                // 模型：项目目录下的 `Model.xml` 优先（对齐 C#），没有则用库内置
-                const model_xml = readProjectModel(self.allocator, self.io, self.model_path) catch |e| blk_model: {
+                // 模型：显式 `model_path`（默认 cwd 下 `Model.xml`）→ 数据目录 → 程序目录
+                // （换 `--data-dir` 不该丢项目模型：2026-11-22 踩过，见 `readProjectModel` 注释）
+                var model_candidates: [3][]const u8 = undefined;
+                var candidate_count: usize = 0;
+                model_candidates[candidate_count] = self.model_path;
+                candidate_count += 1;
+                if (self.storage_dir) |data_dir| {
+                    model_candidates[candidate_count] = try std.fs.path.join(self.allocator, &.{ data_dir, sqlite_backend_mod.DEFAULT_MODEL_FILE });
+                    candidate_count += 1;
+                }
+                if (self.path_base) |base| {
+                    model_candidates[candidate_count] = try std.fs.path.join(self.allocator, &.{ base, sqlite_backend_mod.DEFAULT_MODEL_FILE });
+                    candidate_count += 1;
+                }
+                // 只有拼出来的后两个需要释放（第一个是调用方给的）
+                defer {
+                    var i: usize = 1;
+                    while (i < candidate_count) : (i += 1) self.allocator.free(model_candidates[i]);
+                }
+                const model_xml = readProjectModel(self.allocator, self.io, model_candidates[0..candidate_count]) catch |e| blk_model: {
                     zzig.Logger.warn("[ZDsMallUI] 读取项目 Model.xml 失败（{s}），改用内置模型", .{@errorName(e)});
                     break :blk_model null;
                 };
