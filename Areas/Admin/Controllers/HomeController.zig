@@ -8,9 +8,9 @@
 const std = @import("std");
 const zzig = @import("zzig");
 
-const area_mod = @import("../../../src/area.zig");
+const area_mod = @import("../../../src/deps.zig").area;
 const admin_area = @import("AdminArea.zig");
-const version = @import("../../../src/version.zig");
+const version = @import("../../../src/deps.zig").version;
 
 const router = zzig.web.router;
 const ActionResult = zzig.web.controller.ActionResult;
@@ -37,6 +37,32 @@ pub const HomeController = struct {
         self.views.clearCache();
         const location = try std.fmt.allocPrint(c.arena, "{s}/home/dashboard", .{try area_mod.routePrefix(c.arena, self.areaName())});
         return .{ .response = try router.Response.redirectAlloc(c.arena, location) };
+    }
+
+    /// `GET /{area}/home/setlanguage`：切换**当前用户**的后台界面语言。
+    ///
+    /// 只写这个用户自己的偏好（`AdminUser.LanguageId`），不影响别人、也不影响前台语言。
+    pub fn setLanguage(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
+        const self = admin_area.castSelf(raw);
+        const route = try area_mod.routePrefix(c.arena, self.areaName());
+        const fallback = try std.fmt.allocPrint(c.arena, "{s}/home/index", .{route});
+
+        const culture = std.mem.trim(u8, c.queryValue("culture") orelse "", " \t");
+        const back = admin_area.safeRedirect(c.queryValue("returnUrl") orelse "") orelse fallback;
+
+        const store = self.languages orelse {
+            return .{ .response = try router.Response.redirectAlloc(c.arena, back) };
+        };
+        const target = store.find(culture) orelse {
+            zzig.Logger.warn("[ZDsMallUI] 切换语言失败：语言代码 {s} 不存在", .{culture});
+            return .{ .response = try router.Response.redirectAlloc(c.arena, back) };
+        };
+        const user = admin_area.currentUser(c);
+        if (user.len > 0) {
+            self.backend.setLanguageId(user, target.id);
+            zzig.Logger.info("[ZDsMallUI] 用户 {s} 的后台语言切换为 {s}", .{ user, target.code });
+        }
+        return .{ .response = try router.Response.redirectAlloc(c.arena, back) };
     }
 
     /// `GET /{area}/home/modifypw`：修改密码页（对齐 C# `Home/ModifyPw`）。
@@ -121,33 +147,8 @@ pub const HomeController = struct {
         try builder.list("menus", &.{ menu_config.finish(), menu_login.finish(), menu_ueditor.finish() });
         try builder.boolean("hasMenus", true);
 
-        // 左侧菜单分组（对齐 C# `MenuTree`：一级分组 → 二级菜单 → iframe 打开）
-        var group_system = zzig.web.ObjectBuilder.init(arena);
-        try group_system.str("key", "system");
-        try group_system.str("name", "系统");
-        try group_system.list("items", &.{
-            try menuItem(arena, "欢迎页", try std.fmt.allocPrint(arena, "{s}/home/dashboard", .{route}), "&#xe68e;"),
-            try menuItem(arena, "站点设置", try std.fmt.allocPrint(arena, "{s}/config/index", .{route}), "&#xe614;"),
-            try menuItem(arena, "登录页", try std.fmt.allocPrint(arena, "{s}/login/index", .{route}), "&#xe66f;"),
-        });
-
-        var group_content = zzig.web.ObjectBuilder.init(arena);
-        try group_content.str("key", "content");
-        try group_content.str("name", "内容");
-        try group_content.list("items", &.{
-            try menuItem(arena, "上传管理", "/fileuploader?action=listimage", "&#xe63c;"),
-            try menuItem(arena, "UEditor 配置", "/fileuploader?action=config", "&#xe60a;"),
-        });
-
-        var group_site = zzig.web.ObjectBuilder.init(arena);
-        try group_site.str("key", "site");
-        try group_site.str("name", "站点");
-        try group_site.list("items", &.{
-            try menuItem(arena, "访问首页", "/", "&#xe68e;"),
-            try menuItem(arena, "退出登录", try std.fmt.allocPrint(arena, "{s}/login/logout", .{route}), "&#xe70c;"),
-        });
-
-        try builder.list("groups", &.{ group_system.finish(), group_content.finish(), group_site.finish() });
+        // 左侧菜单分组：由**菜单注册表**生成（`ui.addMenu(...)` 注册的项会自动出现），
+        // 这里不再硬编码分组 —— `AdminArea.renderView` 会注入 `groups`（含项目追加的菜单）。
         return builder.finish();
     }
 };

@@ -14,9 +14,9 @@
 const std = @import("std");
 const zzig = @import("zzig");
 
-const area_mod = @import("../../../src/area.zig");
-const auth_mod = @import("../../../src/auth.zig");
-const captcha_mod = @import("../../../src/captcha.zig");
+const area_mod = @import("../../../src/deps.zig").area;
+const auth_mod = @import("../../../src/deps.zig").auth;
+const captcha_mod = @import("../../../src/deps.zig").captcha;
 const admin_area = @import("AdminArea.zig");
 
 const router = zzig.web.router;

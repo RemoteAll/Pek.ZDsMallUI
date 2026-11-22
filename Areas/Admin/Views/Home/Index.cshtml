@@ -49,13 +49,19 @@
             </ul>
             <ul class="fr">
                 <li>
-                    <span>您好，@Model.userName</span>
+                    <span>@Model.lang.user_greeting @Model.userName</span>
                     <div class="sub-meun">
                         <dl>
-                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>访问首页</a></dd>
-                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe640;</i>清除缓存</a></dd>
-                            <dd><a href="@Model.areaRoute/home/modifypw"><i class="iconfont">&#xe67b;</i>修改密码</a></dd>
-                            <dd><a href="@Model.areaRoute/login/logout"><i class="iconfont">&#xe70c;</i>安全退出</a></dd>
+                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>@Model.lang.user_home</a></dd>
+                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe640;</i>@Model.lang.user_clear_cache</a></dd>
+                            <dd><a href="@Model.areaRoute/home/modifypw"><i class="iconfont">&#xe67b;</i>@Model.lang.user_change_password</a></dd>
+                            <dd><a href="@Model.areaRoute/login/logout"><i class="iconfont">&#xe70c;</i>@Model.lang.user_logout</a></dd>
+                            @if (Model.hasLanguages) {
+                            <dd style="border-top:1px solid #30c9ce;"><strong>@Model.lang.user_language</strong></dd>
+                            @foreach (var lang in Model.languages) {
+                            <dd><a href="@lang.url">@if (lang.current) {<span>&#10003;</span>} @lang.name</a></dd>
+                            }
+                            }
                         </dl>
                     </div>
                 </li>
@@ -69,7 +75,7 @@
                 @foreach (var group in Model.groups) {
                 <ul class="menu-group" data-group="@group.key">
                     @foreach (var item in group.items) {
-                    <li><a href="javascript:void(0)" data-url="@item.url"><i class="iconfont">@Html.Raw(item.icon)</i>@item.name</a></li>
+                    <li><a href="javascript:void(0)" data-url="@item.url"><i class="iconfont">@Html.Raw(item.icon)</i>@item.title</a></li>
                     }
                 </ul>
                 }

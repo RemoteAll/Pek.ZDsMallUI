@@ -42,6 +42,8 @@ pub const DEFAULT_VIEWS = [_]DefaultView{
     .{ .relative = "Areas/Admin/Views/Home/ModifyPw.cshtml", .source = @embedFile("../Areas/Admin/Views/Home/ModifyPw.cshtml") },
     .{ .relative = "Areas/Admin/Views/Config/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Config/Index.cshtml") },
     .{ .relative = "Areas/Admin/Views/Login/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Login/Index.cshtml") },
+    .{ .relative = "Areas/Admin/Views/Culture/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Culture/Index.cshtml") },
+    .{ .relative = "Areas/Admin/Views/Languages/Index.cshtml", .source = @embedFile("../Areas/Admin/Views/Languages/Index.cshtml") },
 };
 
 /// 渲染结果。
@@ -214,6 +216,11 @@ pub fn withTemplateDefaults(arena: std.mem.Allocator, model: zzig.web.Value) !zz
         .{ .key = "version", .value = .{ .string = version.VERSION } },
         .{ .key = "menus", .value = .{ .list = &.{} } },
         .{ .key = "hasMenus", .value = .{ .boolean = false } },
+        // 后台菜单/多语言：即使控制器没传也能渲染（避免「属性不存在」硬错误）
+        .{ .key = "groups", .value = .{ .list = &.{} } },
+        .{ .key = "languages", .value = .{ .list = &.{} } },
+        .{ .key = "hasLanguages", .value = .{ .boolean = false } },
+        .{ .key = "lang", .value = .{ .object = &.{} } },
     };
     for (extra) |entry| {
         if (!containsKey(provided_keys.items, entry.key)) {
@@ -494,7 +501,8 @@ test "视图：首页模型（菜单循环 + 条件）" {
     try menu.str("desc", "站点信息");
 
     var item = zzig.web.ObjectBuilder.init(arena);
-    try item.str("name", "站点设置");
+    try item.str("name", "site_settings");
+    try item.str("title", "站点设置");
     try item.str("url", "/biz/config/index");
     try item.str("icon", "&#xe614;");
 
@@ -513,6 +521,11 @@ test "视图：首页模型（菜单循环 + 条件）" {
     try builder.list("menus", &.{menu.finish()});
     try builder.list("groups", &.{group.finish()});
     try builder.boolean("hasMenus", true);
+    // 框架页文案走 `@Model.lang.*`：这里注入一份真实语言包
+    var lang_store = @import("language.zig").Store.init(testing.allocator, testing.io);
+    defer lang_store.deinit();
+    try lang_store.reload();
+    try builder.put("lang", try lang_store.buildLangObject(arena, lang_store.defaultLanguage().?.id));
 
     const outcome = views.render(arena, "Admin", "Home", "Index", builder.finish());
     try testing.expect(outcome == .html);

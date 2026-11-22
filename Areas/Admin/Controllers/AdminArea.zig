@@ -15,11 +15,12 @@
 const std = @import("std");
 const zzig = @import("zzig");
 
-const area_mod = @import("../../../src/area.zig");
-const auth_mod = @import("../../../src/auth.zig");
-const backend_mod = @import("../../../src/backend.zig");
-const captcha_mod = @import("../../../src/captcha.zig");
-const views_mod = @import("../../../src/views.zig");
+const area_mod = @import("../../../src/deps.zig").area;
+const auth_mod = @import("../../../src/deps.zig").auth;
+const backend_mod = @import("../../../src/deps.zig").backend;
+const captcha_mod = @import("../../../src/deps.zig").captcha;
+const views_mod = @import("../../../src/deps.zig").views;
+const language_controllers = @import("LanguageControllers.zig");
 
 const config_controller = @import("ConfigController.zig");
 const home_controller = @import("HomeController.zig");
@@ -60,9 +61,13 @@ pub const AdminArea = struct {
     /// 登录鉴权（JWT 签发 / 校验 / 登出吊销）；`null` = 未启用（不签令牌）
     auth: ?*auth_mod.Auth = null,
     /// 登录防爆破守卫（可选；由门面在 `build()` 时注入）
-    login_guard: ?*@import("../../../src/login_guard.zig").Guard = null,
+    login_guard: ?*@import("../../../src/deps.zig").login_guard.Guard = null,
     /// 图形验证码存储（可选；注入后「失败达阈值」的登录会要求验证码）
     captcha: ?*captcha_mod.Store = null,
+    /// 多语言仓储（由门面注入；后台文案按用户语言取）
+    languages: ?*@import("../../../src/deps.zig").language.Store = null,
+    /// 菜单注册表（由门面注入；框架页顶部/左侧菜单从这里生成）
+    menus: ?*@import("../../../src/deps.zig").menu.Registry = null,
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
     /// 退役的旧快照（读线程可能还在用，延迟到 `deinit` 释放）
@@ -129,13 +134,68 @@ pub const AdminArea = struct {
     }
 
     /// 注入登录防爆破守卫（不注入则不做失败计数）。
-    pub fn setLoginGuard(self: *AdminArea, guard: *@import("../../../src/login_guard.zig").Guard) void {
+    pub fn setLoginGuard(self: *AdminArea, guard: *@import("../../../src/deps.zig").login_guard.Guard) void {
         self.login_guard = guard;
     }
 
     /// 注入验证码存储（不注入则不启用验证码）。
     pub fn setCaptcha(self: *AdminArea, store: *captcha_mod.Store) void {
         self.captcha = store;
+    }
+
+    /// 注入多语言仓储（不注入则后台文案为控制器硬编码文本）。
+    pub fn setLanguages(self: *AdminArea, store: *@import("../../../src/deps.zig").language.Store) void {
+        self.languages = store;
+    }
+
+    /// 注入菜单注册表（不注入则视图拿不到 `groups`）。
+    pub fn setMenus(self: *AdminArea, registry: *@import("../../../src/deps.zig").menu.Registry) void {
+        self.menus = registry;
+    }
+
+    /// 当前用户的后台界面语言：用户偏好 → 默认语言 → 0。
+    ///
+    /// **只管后台**：前台语言由站点自己的 Cookie 决定（两者互不影响）。
+    pub fn languageIdFor(self: *const AdminArea, user_name: []const u8) i32 {
+        const store = self.languages orelse return 0;
+        const preferred = self.backend.languageId(user_name);
+        if (preferred != 0) {
+            for (store.all()) |row| {
+                if (row.id == preferred) return preferred;
+            }
+        }
+        return if (store.defaultLanguage()) |row| row.id else 0;
+    }
+
+    /// 后台语言下拉选项（右上角「语言」子菜单用）：`[{name, code, url}]`。
+    pub fn languageOptions(self: *const AdminArea, arena: std.mem.Allocator, current_id: i32) !zzig.web.Value {
+        const store = self.languages orelse return .{ .list = &.{} };
+        const prefix = try area_mod.routePrefix(arena, self.areaName());
+        const back = try std.fmt.allocPrint(arena, "{s}/home/index", .{prefix});
+
+        var list: std.ArrayList(zzig.web.Value) = .empty;
+        for (store.all()) |row| {
+            if (!row.status) continue;
+            var builder = zzig.web.ObjectBuilder.init(arena);
+            try builder.str("name", row.name);
+            try builder.str("code", row.code);
+            try builder.str("url", try std.fmt.allocPrint(arena, "{s}/home/setlanguage?culture={s}&returnUrl={s}", .{ prefix, row.code, back }));
+            try builder.boolean("current", row.id == current_id);
+            try list.append(arena, builder.finish());
+        }
+        return .{ .list = try list.toOwnedSlice(arena) };
+    }
+
+    /// 当前用户应看到的菜单树（`groups[]`，已是该用户语言）。
+    pub fn menuGroups(
+        self: *const AdminArea,
+        arena: std.mem.Allocator,
+        user_name: []const u8,
+    ) !zzig.web.Value {
+        const registry = self.menus orelse return .{ .list = &.{} };
+        const store = self.languages orelse return .{ .list = &.{} };
+        const prefix = try area_mod.routePrefix(arena, self.areaName());
+        return registry.build(arena, prefix, store, self.languageIdFor(user_name));
     }
 
     /// 登录页路径（`/{area}/login/index`）。
@@ -259,7 +319,8 @@ pub const AdminArea = struct {
             try ctrl.mapWithContext("GET", "dashboard", @ptrCast(self), guarded(home_controller.HomeController.dashboard));
             // 右上角「清除缓存」（C# `Home/ClearCache`）
             try ctrl.mapWithContext("GET", "clearcache", @ptrCast(self), guarded(home_controller.HomeController.clearCache));
-            // 右上角「修改密码」（C# `Home/ModifyPw`；GET/POST 用两个 action 名，避免同名覆盖）
+            // 右上角「语言」切换（只改当前用户的后台语言，与前台语言隔离）
+            try ctrl.mapWithContext("GET", "setlanguage", @ptrCast(self), guarded(home_controller.HomeController.setLanguage));
             try ctrl.mapWithContext("GET", "modifypw", @ptrCast(self), guarded(home_controller.HomeController.modifyPw));
             try ctrl.mapWithContext("POST", "modifypwsubmit", @ptrCast(self), guarded(home_controller.HomeController.modifyPwSubmit));
             try ctrl.mount(&app.router);
@@ -270,6 +331,26 @@ pub const AdminArea = struct {
             const ctrl = try self.newController(prefix);
             try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(config_controller.ConfigController.index));
             try ctrl.mapWithContext("POST", "updatebase", @ptrCast(self), guarded(config_controller.ConfigController.updateBase));
+            try ctrl.mount(&app.router);
+        }
+        {
+            // 多语言（对齐 C# `Culture`）：列表 / 设默认 / 启停 / 新增
+            const prefix = try std.fmt.allocPrint(self.allocator, "{s}/culture", .{segment});
+            defer self.allocator.free(prefix);
+            const ctrl = try self.newController(prefix);
+            try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(language_controllers.CultureController.index));
+            try ctrl.mapWithContext("GET", "setdefault", @ptrCast(self), guarded(language_controllers.CultureController.setDefault));
+            try ctrl.mapWithContext("GET", "togglestatus", @ptrCast(self), guarded(language_controllers.CultureController.toggleStatus));
+            try ctrl.mapWithContext("POST", "add", @ptrCast(self), guarded(language_controllers.CultureController.add));
+            try ctrl.mount(&app.router);
+        }
+        {
+            // 语言包（对齐 C# `Languages`）：按语言列出键值并保存
+            const prefix = try std.fmt.allocPrint(self.allocator, "{s}/languages", .{segment});
+            defer self.allocator.free(prefix);
+            const ctrl = try self.newController(prefix);
+            try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(language_controllers.LanguagesController.index));
+            try ctrl.mapWithContext("POST", "save", @ptrCast(self), guarded(language_controllers.LanguagesController.save));
             try ctrl.mount(&app.router);
         }
         {
@@ -374,7 +455,9 @@ pub fn renderView(
     view: []const u8,
     model: zzig.web.Value,
 ) !ActionResult {
-    return switch (self.views.render(c.arena, self.areaName(), controller, view, model)) {
+    // 与用户语言相关的装配统一放这里：所有后台页面的 `@Model.lang.*` 都能用
+    const localized = withLanguage(self, c.arena, currentUser(c), model) catch model;
+    return switch (self.views.render(c.arena, self.areaName(), controller, view, localized)) {
         .html => |html| .{ .response = router.Response.html(html) },
         .fail => |message| blk: {
             zzig.Logger.err("[ZDsMallUI] {s}", .{message});
@@ -382,6 +465,42 @@ pub fn renderView(
             break :blk .{ .response = envelope };
         },
     };
+}
+
+/// 给模型补 `lang` / `groups`（后台页面通用）。
+///
+/// - `lang`：当前用户语言的语言包对象（`@Model.lang.menu_settings`）；
+/// - `groups`：当前用户菜单树（顶部导航 + 左侧菜单）。
+///
+/// 视图里引用 `lang.<标识符>` 是编译期已知集合（[`language.BUILTIN_STRINGS`]），
+/// 所以缺键只会回退内置文案，不会出现「属性不存在」。
+fn withLanguage(
+    self: *AdminArea,
+    arena: std.mem.Allocator,
+    user_name: []const u8,
+    model: zzig.web.Value,
+) !zzig.web.Value {
+    const store = self.languages orelse return model;
+    const culture_id = self.languageIdFor(user_name);
+
+    var builder = zzig.web.ObjectBuilder.init(arena);
+    switch (model) {
+        .object => |fields| {
+            for (fields) |field| {
+                try builder.put(field.name, field.value);
+            }
+        },
+        else => {},
+    }
+    try builder.put("lang", try store.buildLangObject(arena, culture_id));
+    try builder.put("groups", try self.menuGroups(arena, user_name));
+    const options = try self.languageOptions(arena, culture_id);
+    try builder.put("languages", options);
+    try builder.put("hasLanguages", .{ .boolean = switch (options) {
+        .list => |items| items.len > 1,
+        else => false,
+    } });
+    return builder.finish();
 }
 
 /// 渲染共享提示页（对应 C# `Prompt(new PromptModel{...})`）。

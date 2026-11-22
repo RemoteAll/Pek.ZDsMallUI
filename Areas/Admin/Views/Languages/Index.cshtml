@@ -1,0 +1,52 @@
+@{
+    Layout = "Shared/_Layout";
+}
+@* 语言包（对齐 C# `Areas/Admin/Views/Languages/Index.cshtml`）：
+   键由代码定义（视图要引用），这里只改文本；保存后重载语言仓储，无需重启。 *@
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>@Model.lang.menu_languages</h3>
+                <h5></h5>
+            </div>
+            <ul class="tab-base ds-row">
+                @foreach (var item in Model.cultures) {
+                <li>
+                    <a href="@Model.areaRoute/languages/index?culture=@item.id" class="@if (item.current) {<text>current</text>}"><span>@item.name</span></a>
+                </li>
+                }
+            </ul>
+        </div>
+    </div>
+
+    @if (Model.saved != "") {
+    <div class="explanation"><div class="title"><h4>@Model.lang.common_saved</h4></div></div>
+    }
+    @if (Model.error != "") {
+    <div class="explanation"><div class="title"><h4 style="color:#c00;">@Model.error</h4></div></div>
+    }
+
+    <form method="post" action="@Model.areaRoute/languages/save">
+        <input type="hidden" name="CultureId" value="@Model.cultureId">
+        <div class="ncap-form-default">
+            <dl>
+                <dt>@Model.lang.page_languages_key</dt>
+                <dd><p class="notic">@Model.lang.page_languages_language：<code>@Model.cultureId</code></p></dd>
+            </dl>
+            @foreach (var row in Model.rows) {
+            <dl>
+                <dt><code>@row.key</code></dt>
+                <dd>
+                    <input name="v_@row.ident" value="@row.value" class="input-txt" type="text">
+                    <span class="err"></span>
+                </dd>
+            </dl>
+            }
+            <dl>
+                <dt></dt>
+                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms[0].submit()">@Model.lang.common_save</a></dd>
+            </dl>
+        </div>
+    </form>
+</div>

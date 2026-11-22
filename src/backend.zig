@@ -122,6 +122,11 @@ pub const AdminBackend = struct {
             old_pass: []const u8,
             new_pass: []const u8,
         ) anyerror!bool = null,
+        /// 读取用户的**后台界面语言**（`Language.Id`；0 = 未设置/跟默认语言）。
+        /// 未提供实现 = 所有用户都用默认语言。
+        language_id: ?*const fn (ptr: *anyopaque, user_name: []const u8) anyerror!i32 = null,
+        /// 写入用户的**后台界面语言**（只影响这个用户，不影响前台）。
+        set_language_id: ?*const fn (ptr: *anyopaque, user_name: []const u8, language_id: i32) anyerror!void = null,
     };
 
     /// 读取设置。
@@ -160,6 +165,20 @@ pub const AdminBackend = struct {
         const func = self.vtable.change_password orelse return false;
         return func(self.ptr, arena, user_name, old_pass, new_pass);
     }
+
+    /// 读取用户的后台界面语言（未实现/未设置返回 0）。
+    pub fn languageId(self: AdminBackend, user_name: []const u8) i32 {
+        const func = self.vtable.language_id orelse return 0;
+        return func(self.ptr, user_name) catch 0;
+    }
+
+    /// 保存用户的后台界面语言（未实现时静默忽略）。
+    pub fn setLanguageId(self: AdminBackend, user_name: []const u8, language_id: i32) void {
+        const func = self.vtable.set_language_id orelse return;
+        func(self.ptr, user_name, language_id) catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 保存用户 {s} 的语言偏好失败：{s}", .{ user_name, @errorName(e) });
+        };
+    }
 };
 
 /// 内存实现（示例 / 测试专用；重启即丢，生产请实现自己的 [`AdminBackend`]）。
@@ -177,6 +196,8 @@ pub const MemoryBackend = struct {
         display_name: []const u8,
         password: []const u8,
         is_admin: bool,
+        /// 后台界面语言（`Language.Id`；0 = 跟默认语言）
+        language_id: i32 = 0,
     };
 
     /// 创建（堆分配；默认账号 `admin` / `admin123`，**生产务必替换**）。
@@ -216,7 +237,31 @@ pub const MemoryBackend = struct {
         .login = loginImpl,
         .display_name = displayNameImpl,
         .change_password = changePasswordImpl,
+        .language_id = languageIdImpl,
+        .set_language_id = setLanguageIdImpl,
     };
+
+    fn languageIdImpl(ptr: *anyopaque, user_name: []const u8) anyerror!i32 {
+        const self: *MemoryBackend = @ptrCast(@alignCast(ptr));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        for (self.users.items) |user| {
+            if (std.mem.eql(u8, user.user_name, user_name)) return user.language_id;
+        }
+        return 0;
+    }
+
+    fn setLanguageIdImpl(ptr: *anyopaque, user_name: []const u8, language_id: i32) anyerror!void {
+        const self: *MemoryBackend = @ptrCast(@alignCast(ptr));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        for (self.users.items) |*user| {
+            if (std.mem.eql(u8, user.user_name, user_name)) {
+                user.language_id = language_id;
+                return;
+            }
+        }
+    }
 
     /// 改密：校验旧口令后写入新口令（复用 [`password`] 的哈希与升级逻辑）。
     fn changePasswordImpl(

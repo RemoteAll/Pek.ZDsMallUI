@@ -1,0 +1,83 @@
+@{
+    Layout = "Shared/_Layout";
+}
+@* 多语言（对齐 C# `Areas/Admin/Views/Culture/Index.cshtml`）：
+   版式沿用 `.page > .fixed-bar > .item-title` + `.ncap-form-default`，不另起皮肤。 *@
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>@Model.lang.menu_culture</h3>
+                <h5></h5>
+            </div>
+        </div>
+    </div>
+
+    @if (Model.saved != "") {
+    <div class="explanation"><div class="title"><h4>@Model.lang.common_saved</h4></div></div>
+    }
+    @if (Model.error != "") {
+    <div class="explanation"><div class="title"><h4 style="color:#c00;">@Model.error</h4></div></div>
+    }
+
+    <div class="ncap-form-default">
+        <table class="tb-type1">
+            <thead>
+                <tr>
+                    <th>@Model.lang.common_name</th>
+                    <th>@Model.lang.page_culture_english</th>
+                    <th>@Model.lang.page_culture_code</th>
+                    <th>@Model.lang.common_status</th>
+                    <th>@Model.lang.common_default</th>
+                    <th>@Model.lang.common_actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Model.rows) {
+                <tr>
+                    <td>@row.name</td>
+                    <td>@row.englishName</td>
+                    <td><code>@row.code</code></td>
+                    <td>@if (row.enabled) {<span>@Model.lang.common_enabled</span>} else {<span style="color:#999;">@Model.lang.common_disabled</span>}</td>
+                    <td>@if (row.isDefault) {<strong>✔</strong>}</td>
+                    <td class="handle">
+                        @if (!row.isDefault) {
+                        <a href="@Model.areaRoute/culture/setdefault?id=@row.id">@Model.lang.common_default</a>
+                        }
+                        @if (row.enabled) {
+                        <a href="@Model.areaRoute/culture/togglestatus?id=@row.id&enable=0">@Model.lang.common_disabled</a>
+                        } else {
+                        <a href="@Model.areaRoute/culture/togglestatus?id=@row.id&enable=1">@Model.lang.common_enabled</a>
+                        }
+                    </td>
+                </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <form method="post" action="@Model.areaRoute/culture/add">
+        <div class="ncap-form-default">
+            <dl>
+                <dt>@Model.lang.common_name</dt>
+                <dd><input name="Name" class="input-txt" type="text" placeholder="简体中文"><span class="err"></span></dd>
+            </dl>
+            <dl>
+                <dt>@Model.lang.page_culture_english</dt>
+                <dd><input name="EnglishName" class="input-txt" type="text" placeholder="Chinese (Simplified)"><span class="err"></span></dd>
+            </dl>
+            <dl>
+                <dt>@Model.lang.page_culture_code</dt>
+                <dd><input name="UniqueSeoCode" class="input-txt" type="text" placeholder="zh-CN"><span class="err"></span></dd>
+            </dl>
+            <dl>
+                <dt>@Model.lang.common_order</dt>
+                <dd><input name="DisplayOrder" class="input-txt" type="text" value="100"><span class="err"></span></dd>
+            </dl>
+            <dl>
+                <dt></dt>
+                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms[0].submit()">@Model.lang.common_add</a></dd>
+            </dl>
+        </div>
+    </form>
+</div>

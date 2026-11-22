@@ -4,13 +4,15 @@
 
   - 结构变更**只改这份文件**，启动时由 `Pek.ZCode` 的 `Dal.syncSchema` 做增量同步：
     缺表建表、缺列 `ALTER TABLE ... ADD COLUMN`、缺索引建索引（**不删列、不改类型**）。
-  - 对应 C#：`Areas/Admin/Models` 生成的实体与 `Data/Platform.db` 里的同名表。
+  - 对应 C#：`Areas/Admin/Models` 生成的实体与 `Data/DH.db` 里的同名表。
 -->
 <EntityModel xmlns="https://newlifex.com/Model202509.xsd">
   <Option>
     <Namespace>Pek.ZDsMallUI</Namespace>
-    <!-- 连接名与 C# 侧 `Pek.RPanlServer` 一致（Platform） -->
-    <ConnName>Platform</ConnName>
+    <!-- 默认连接名统一用 `DH`（与 C# `ConnectionStrings` 的业务库同名）。
+         连接名的唯一来源就是本文件的 `ConnName`：项目要改名/分库，改自己那份 Model.xml，
+         不要在代码里另起名字（Platform/Admin/Main/Traffic 这种“一库一种弄法”已废弃）。 -->
+    <ConnName>DH</ConnName>
   </Option>
   <Tables>
     <Table Name="Setting" TableName="Setting" Description="站点设置（键值）">
@@ -27,6 +29,8 @@
         <Column Name="Password" DataType="String" Length="200" Description="口令散列（$算法$盐$散列）" />
         <Column Name="IsAdmin" DataType="Boolean" Description="是否管理员" />
         <Column Name="Enable" DataType="Boolean" Description="是否启用" />
+        <!-- 后台界面语言（对应 `Language.Id`；0 = 跟默认语言）——每个用户各自一份，与前台语言隔离 -->
+        <Column Name="LanguageId" DataType="Int32" Description="后台界面语言" />
       </Columns>
       <Indexes>
         <Index Columns="UserName" Unique="True" />
@@ -42,5 +46,13 @@
         <Index Columns="ExpireAt" />
       </Indexes>
     </Table>
+    <!--
+      说明（表结构归属，2026-11-22 定）：
+      **库内置模型只放库自身运行必需的最小表**（Setting / AdminUser / Session），供库自测与「项目没给模型」时兜底。
+      业务表与**多语言表**（`Language` / `LocaleStringResource`）属于**当前项目**，请在项目自己的 `Model.xml` 里定义
+      —— 对齐 C#：`Model.xml` 是项目级结构唯一来源，库只提供控制器/服务。
+
+      缺语言表时不会崩：语言仓储读表失败会打 warn 并回退到内置中英文案，`/{area}/culture`、`/{area}/languages` 提示「未启用多语言」。
+    -->
   </Tables>
 </EntityModel>

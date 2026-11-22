@@ -34,6 +34,8 @@ const controllers = struct {
 const ueditor_mod = @import("ueditor/mod.zig");
 const views_mod = @import("views.zig");
 const login_guard_mod = @import("login_guard.zig");
+const language_mod = @import("language.zig");
+const menu_mod = @import("menu.zig");
 const pek_zwaf = @import("pek_zwaf");
 
 /// 默认上传目录名（C# `UploadPath` 默认值同为 `upload`）。
@@ -166,6 +168,10 @@ pub const DsMallUi = struct {
     waf_instance: ?*pek_zwaf.Waf = null,
     /// SQLite 会话吊销表（`storage` 启用且未给外部 store 时自动创建；随本对象释放）
     session_store: ?*sqlite_session_mod.SqliteSessionStore = null,
+    /// 多语言（`Language` + `LocaleStringResource`；无 `storage` 时为内存内置双语）
+    languages: language_mod.Store,
+    /// 后台菜单注册表（库自带默认菜单，项目可 `addMenu` 追加）
+    menus: menu_mod.Registry,
 
     /// 构造门面（默认配置）。
     pub fn builder(allocator: std.mem.Allocator, io: std.Io) Builder {
@@ -175,6 +181,8 @@ pub const DsMallUi = struct {
     /// 释放控制器、视图缓存与自有字符串。
     pub fn deinit(self: *DsMallUi) void {
         self.login_guard.deinit();
+        self.menus.deinit();
+        self.languages.deinit();
         if (self.captcha_store) |*store| store.deinit();
         if (self.waf_instance) |w| w.deinit();
         if (self.session_store) |st| st.deinit();
@@ -195,6 +203,26 @@ pub const DsMallUi = struct {
     /// 站点物理根（`wwwroot`）。
     pub fn webRoot(self: *const DsMallUi) []const u8 {
         return self.web_root;
+    }
+
+    /// 多语言仓储（只读路径：`text` / `defaultLanguage` / `all`）。
+    pub fn languagesStore(self: *DsMallUi) *language_mod.Store {
+        return &self.languages;
+    }
+
+    /// 重载多语言（管理页保存后调用；读路径不查库）。
+    pub fn reloadLanguages(self: *DsMallUi) !void {
+        try self.languages.reload();
+    }
+
+    /// 注册后台菜单项（等价 C# 控制器上的 `[DHMenu(...)]`，项目启动时调用）。
+    pub fn addMenu(self: *DsMallUi, item: menu_mod.Item) !void {
+        try self.menus.addItem(item);
+    }
+
+    /// 注册一级菜单分组（默认已有 `console` / `settings`）。
+    pub fn addMenuGroup(self: *DsMallUi, group: menu_mod.Group) !void {
+        try self.menus.addGroup(group);
     }
 
     /// 上传物理根（`<web_root>/<upload_path>`）。
@@ -333,6 +361,17 @@ pub const DsMallUi = struct {
     }
 };
 
+/// 读项目目录下的模型文件（`Model.xml`）：不存在返回 `null`（调用方用库内置模型）。
+///
+/// 对齐 C#：每个项目自带一份同名 `Model.xml`，库只作兜底 —— 项目要加表/加列只改自己那份。
+fn readProjectModel(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !?[]const u8 {
+    if (path.len == 0) return null;
+    if (!zzig.fsio.exists(io, path)) return null;
+    const text = try zzig.fsio.readFileAlloc(io, allocator, path, 4 * 1024 * 1024);
+    zzig.Logger.info("[ZDsMallUI] 使用项目模型：{s}（{d} 字节）", .{ path, text.len });
+    return text;
+}
+
 /// 构造器（对应 C# `PekStartup.ConfigureServices` 的配置面）。
 pub const Builder = struct {
     allocator: std.mem.Allocator,
@@ -374,6 +413,8 @@ pub const Builder = struct {
     /// 应用根（对应 ASP.NET Core 的 `~`）：视图里 `~/static/x` → `{path_base}/static/x`。
     /// `null` = 域名根（展开为 `/static/x`）；部署在子目录时传 `/pek`。
     path_base: ?[]const u8 = null,
+    /// 模型文件（默认 `Model.xml`，与 C# 同构）：项目目录下存在则用它，否则用库内置模型。
+    model_path: []const u8 = sqlite_backend_mod.DEFAULT_MODEL_FILE,
 
     /// 站点物理根（默认 `wwwroot`；**业务系统按自己的配置改成任意路径**）。
     pub fn webRoot(self: Builder, root: []const u8) Builder {
@@ -400,6 +441,13 @@ pub const Builder = struct {
     pub fn pathBase(self: Builder, base: []const u8) Builder {
         var copy = self;
         copy.path_base = base;
+        return copy;
+    }
+
+    /// 模型文件路径（默认 `Model.xml`）。项目目录里放一份同名文件即可扩展表结构（对齐 C#）。
+    pub fn modelPath(self: Builder, path: []const u8) Builder {
+        var copy = self;
+        copy.model_path = path;
         return copy;
     }
 
@@ -570,7 +618,13 @@ pub const Builder = struct {
             if (self.storage_dir) |dir| {
                 const db_path = try std.fs.path.join(self.allocator, &.{ dir, try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area}) });
                 defer self.allocator.free(db_path);
-                if (sqlite_backend_mod.SqliteBackend.init(self.allocator, self.io, db_path)) |created| {
+                // 模型：项目目录下的 `Model.xml` 优先（对齐 C#），没有则用库内置
+                const model_xml = readProjectModel(self.allocator, self.io, self.model_path) catch |e| blk_model: {
+                    zzig.Logger.warn("[ZDsMallUI] 读取项目 Model.xml 失败（{s}），改用内置模型", .{@errorName(e)});
+                    break :blk_model null;
+                };
+                defer if (model_xml) |text| self.allocator.free(text);
+                if (sqlite_backend_mod.SqliteBackend.initWithModel(self.allocator, self.io, db_path, model_xml)) |created| {
                     sqlite_backend = created;
                     break :blk created.backend();
                 } else |e| {
@@ -597,6 +651,22 @@ pub const Builder = struct {
         var ui_views = views_mod.Views.init(self.allocator, self.io, views_root, areas_root);
         if (self.path_base) |base| ui_views.renderer.setPathBase(base);
 
+        // 多语言：与业务库同一个 SQLite（`Language` + `LocaleStringResource`）；无 storage 时为内置双语
+        var languages = language_mod.Store.init(self.allocator, self.io);
+        if (self.storage_dir) |dir| {
+            const db_path = try std.fs.path.join(self.allocator, &.{ dir, try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area}) });
+            languages.db_path = db_path;
+        }
+        languages.reload() catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 多语言初始化失败（{s}）：按内置文案运行", .{@errorName(e)});
+        };
+
+        // 菜单：库自带默认项，项目启动后可继续 `ui.addMenu(...)` 追加
+        var menus = menu_mod.Registry.init(self.allocator, self.io);
+        menus.addDefaults() catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 默认菜单注册失败（{s}）：后台菜单可能为空", .{@errorName(e)});
+        };
+
         ui.* = .{
             .allocator = self.allocator,
             .io = self.io,
@@ -613,6 +683,8 @@ pub const Builder = struct {
             .pseudo_suffixes = self.pseudo_suffixes,
             .memory_backend = memory,
             .login_guard = login_guard_mod.Guard.init(self.allocator, self.login_guard_options),
+            .languages = languages,
+            .menus = menus,
             .waf_instance = if (self.waf_base_dir) |base|
                 try pek_zwaf.Waf.load(self.allocator, self.io, base)
             else
@@ -654,6 +726,10 @@ pub const Builder = struct {
 
         // 登录防爆破：失败到阈值后按「IP / 用户名」双维度封禁
         ui.admin_area.setLoginGuard(&ui.login_guard);
+
+        // 多语言 + 菜单注册表（后台页面统一从这里取文案与菜单）
+        ui.admin_area.setLanguages(&ui.languages);
+        ui.admin_area.setMenus(&ui.menus);
 
         // 图形验证码（可选）：失败 3 次后登录页要求输入，挡住「换 IP 继续撞库」
         if (self.captcha_enabled) {

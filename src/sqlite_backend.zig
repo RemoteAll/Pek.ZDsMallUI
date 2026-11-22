@@ -23,8 +23,14 @@ const sqlite = zzig.db.sqlite;
 const router = zzig.web.router;
 const Value = zzig.db.Value;
 
-/// 内置模型（`Model.xml`，与 C# 同格式；结构变更只改它）。
+/// 内置模型（`Model.xml`，与 C# 同格式）。
+///
+/// **只是兜底**：部署目录（程序目录）下若有 `Model.xml` 就优先用它（对齐 C# —— 每个项目自带一份同名
+/// `Model.xml`，项目可自行加表/加列）。
 pub const MODEL_XML = @embedFile("../assets/zdsmallui-model.xml");
+
+/// 默认模型文件名（C# 同构，项目目录下同名文件优先）。
+pub const DEFAULT_MODEL_FILE = "Model.xml";
 
 /// 默认数据库目录（与 C# 侧 `Data/` 同构）。
 pub const DEFAULT_DB_DIR = "Data";
@@ -37,12 +43,24 @@ pub const SqliteBackend = struct {
     mutex: zzig.compat.Mutex = .{},
 
     /// 打开（不存在则创建）数据库：先用 `Pek.ZCode` 同步表结构，再建运行期连接。
+    ///
+    /// `model_xml = null` 时用库内置模型；传磁盘 `Model.xml` 的内容则用项目自己的模型。
     pub fn init(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !*SqliteBackend {
+        return initWithModel(allocator, io, path, null);
+    }
+
+    /// 同上，但显式指定模型 XML（项目自己的 `Model.xml`）。
+    pub fn initWithModel(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        path: []const u8,
+        model_xml: ?[]const u8,
+    ) !*SqliteBackend {
         if (std.fs.path.dirname(path)) |dir| {
             if (dir.len > 0) try zzig.fsio.makePath(io, dir);
         }
 
-        try syncSchema(allocator, path);
+        try syncSchema(allocator, path, model_xml orelse MODEL_XML);
 
         const self = try allocator.create(SqliteBackend);
         errdefer allocator.destroy(self);
@@ -90,9 +108,9 @@ pub const SqliteBackend = struct {
     }
 
     /// 用 `Pek.ZCode` 做增量建表（幂等：再跑一次不会重复建/不会报错）。
-    fn syncSchema(allocator: std.mem.Allocator, path: []const u8) !void {
-        const model = zcode.EntityModel.parse(allocator, MODEL_XML) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 解析内置 Model.xml 失败：{s}", .{@errorName(e)});
+    fn syncSchema(allocator: std.mem.Allocator, path: []const u8, xml: []const u8) !void {
+        const model = zcode.EntityModel.parse(allocator, xml) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 解析 Model.xml 失败（{s}）：结构未变更", .{@errorName(e)});
             return e;
         };
         const conn = try std.fmt.allocPrint(allocator, "Data Source={s};Provider=SQLite;JournalMode=WAL;Synchronous=NORMAL", .{path});
@@ -190,7 +208,41 @@ pub const SqliteBackend = struct {
         .login = loginImpl,
         .display_name = displayNameImpl,
         .change_password = changePasswordImpl,
+        .language_id = languageIdImpl,
+        .set_language_id = setLanguageIdImpl,
     };
+
+    /// 读取用户的后台界面语言（`AdminUser.LanguageId`；没有该列/记录返回 0）。
+    fn languageIdImpl(ptr: *anyopaque, user_name: []const u8) anyerror!i32 {
+        const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var stmt = try self.db.prepare(self.allocator, "SELECT LanguageId FROM AdminUser WHERE UserName = ? COLLATE NOCASE");
+        defer stmt.finalize();
+        try stmt.bindAll(&.{.{ .text = user_name }});
+        if (!stmt.hasRow()) return 0;
+        var arena_state = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena_state.deinit();
+        const row = try stmt.readRow(arena_state.allocator());
+        const v = row.get("LanguageId") orelse return 0;
+        return switch (v) {
+            .int => |number| @intCast(number),
+            .text => |text| std.fmt.parseInt(i32, text, 10) catch 0,
+            else => 0,
+        };
+    }
+
+    /// 写入用户的后台界面语言（只影响这个用户；前台语言走自己的 Cookie）。
+    fn setLanguageIdImpl(ptr: *anyopaque, user_name: []const u8, language_id: i32) anyerror!void {
+        const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.exec("UPDATE AdminUser SET LanguageId = ? WHERE UserName = ? COLLATE NOCASE", &.{
+            .{ .int = language_id },
+            .{ .text = user_name },
+        });
+    }
 
     /// 改密：校验旧口令（`password.verify`）→ 新口令哈希 → `UPDATE AdminUser`。
     fn changePasswordImpl(

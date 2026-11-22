@@ -8,7 +8,7 @@
 const std = @import("std");
 const zzig = @import("zzig");
 
-const area_mod = @import("../../../src/area.zig");
+const area_mod = @import("../../../src/deps.zig").area;
 const admin_area = @import("AdminArea.zig");
 
 const router = zzig.web.router;

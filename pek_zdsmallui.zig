@@ -49,6 +49,8 @@ pub const password = @import("src/password.zig");
 pub const base64 = @import("src/base64.zig");
 pub const ueditor = @import("src/ueditor/mod.zig");
 pub const views = @import("src/views.zig");
+pub const language = @import("src/language.zig");
+pub const menu = @import("src/menu.zig");
 pub const version_info = @import("src/version.zig");
 
 // ————— C# 风格目录（Areas / Controllers）—————
