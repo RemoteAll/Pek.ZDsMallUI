@@ -35,6 +35,17 @@
            原版只有 hover，鼠标没碰到时看着像没有下拉。 */
         .admincp-header .navbar .fr > li.has-sub > span::after { content: "▾"; margin-left: 4px; font-size: 10px; opacity: .85; }
         .admincp-header .navbar .fr > li.has-sub.open .sub-meun { display: block; }
+        /* Language 二级菜单：主下拉贴着视口右边，所以二级**向左**弹出（否则出屏） */
+        .admincp-header .navbar .fr li dl dd.has-child { position: relative; }
+        .admincp-header .navbar .fr li dl dd.has-child > a::after { content: "\25C2"; float: right; margin-right: 4px; opacity: .85; }
+        .admincp-header .navbar .fr li dl dd.has-child > .sub-meun2 {
+            position: absolute; top: -10px; right: 100%; margin-right: 4px; display: none;
+        }
+        .admincp-header .navbar .fr li dl dd.has-child:hover > .sub-meun2,
+        .admincp-header .navbar .fr li dl dd.has-child.open > .sub-meun2 { display: block; }
+        .admincp-header .navbar .fr li dl .sub-meun2 dl { min-width: 110px; }
+        /* 内联 SVG 图标：尺寸/间距对齐 iconfont（`dl dd i` 是 float:left + margin-right:5px） */
+        .admincp-header .navbar .fr li dl dd svg.nav-svg { width: 14px; height: 14px; margin-right: 5px; vertical-align: -2px; }
     </style>
 </head>
 <body class="admincp">
@@ -52,33 +63,34 @@
                 }
             </ul>
             <ul class="fr">
-                @* 右上角：**严格照抄 C# `Home/DashBoard.cshtml` 的 `ul.fr`** ——
-                   四个并列 li：① 您好（下拉：修改密码 / 安全退出）
-                                ② 语言（独立下拉：语言列表）——**不要并进①的下拉里**
-                                ③ 清除缓存　④ 访问首页 *@
+                @* 右上角：**一个下拉装全部菜单**（按用户给的参考图）：
+                   访问首页 / 清除缓存 / **Language（二级菜单：语言列表）** / 修改密码 / 安全退出。
+                   `Language` 不做一级 li，而是主下拉里的一行 + 向右（贴边时向左）弹出的二级菜单。 *@
                 <li class="has-sub">
                     <span>@(Model.lang.user_greeting)，@Model.userName</span>
                     <div class="sub-meun">
                         <dl>
+                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>@Model.lang.user_home</a></dd>
+                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe640;</i>@Model.lang.user_clear_cache</a></dd>
+                            @if (Model.hasLanguages) {
+                            <dd class="has-child">
+                                @* 地球图标：iconfont 是商品分类图标库、没有 globe，所以用同风格内联 SVG
+                                   （白色线条、随文字颜色走，尺寸/间距与 iconfont 图标一致） *@
+                                <a href="javascript:;"><svg class="nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3c2.6 2.8 2.6 15.2 0 18"></path><path d="M12 3c-2.6 2.8-2.6 15.2 0 18"></path></svg>@Model.lang.user_language</a>
+                                <div class="sub-meun2">
+                                    <dl>
+                                        @foreach (var lang in Model.languages) {
+                                        <dd><a href="@lang.url">@lang.name</a></dd>
+                                        }
+                                    </dl>
+                                </div>
+                            </dd>
+                            }
                             <dd><a href="@Model.areaRoute/home/modifypw" target="main-frame"><i class="iconfont">&#xe67b;</i>@Model.lang.user_change_password</a></dd>
                             <dd><a href="javascript:dsLayerConfirm('@Model.areaRoute/login/logout','@Model.lang.user_logout_confirm','logout')"><i class="iconfont">&#xe70c;</i>@Model.lang.user_logout</a></dd>
                         </dl>
                     </div>
                 </li>
-                @if (Model.hasLanguages) {
-                <li class="has-sub">
-                    <span>@Model.lang.user_language</span>
-                    <div class="sub-meun">
-                        <dl>
-                            @foreach (var lang in Model.languages) {
-                            <dd><a href="@lang.url">@lang.name</a></dd>
-                            }
-                        </dl>
-                    </div>
-                </li>
-                }
-                <li><a href="@Model.areaRoute/home/clearcache">@Model.lang.user_clear_cache</a></li>
-                <li><a href="~/" target="_blank">@Model.lang.user_home</a></li>
             </ul>
         </div>
     </div>
@@ -152,6 +164,15 @@
                         if (history.replaceState) { history.replaceState(null, '', '#' + url); }
                         else { location.hash = url; }
                     }
+                });
+            });
+
+            // Language 二级菜单：hover 已经能展开，这里补「点击展开」（触屏/不好 hover 时也能用）
+            Array.prototype.slice.call(document.querySelectorAll('.admincp-header .navbar .fr li dl dd.has-child > a')).forEach(function (a) {
+                a.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    a.parentNode.classList.toggle('open');
                 });
             });
 
