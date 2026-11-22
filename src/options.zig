@@ -51,6 +51,68 @@ pub const ADMIN_CONFIG_JS = @embedFile("../assets/admin-config.js");
 /// 登录页前端 MD5 脚本（部署时落地到 `wwwroot/static/admin/js/login-md5.js`）。
 pub const LOGIN_MD5_JS = @embedFile("../assets/login-md5.js");
 
+/// 后台静态资源清单（**原样导出自 C# `Pek.NCubeUI.DsMallUI` 的嵌入资源**，保证版式完全一致）。
+///
+/// 为什么内置：视图沿用参考工程的类名，而 C# 的 `admin.css` / layui / jquery / logo / 背景图
+/// 没有随库迁移 —— 缺文件会导致「登录页无样式裸奔 + 控制台一堆 404」。
+/// 带体积（合计 ≈360 KB）对二进制影响可控，换来「开箱即用且与 C# 一致」。
+/// 消费方想换皮：直接覆盖 `wwwroot/static/admin/css/admin.css` 即可（materialize 只补缺失、不覆盖）。
+pub const ADMIN_STATIC_ASSETS = [_]struct { relative: []const u8, source: []const u8 }{
+    .{
+        .relative = "static/admin/css/admin.css",
+        .source = @embedFile("../assets/wwwroot/static/admin/css/admin.css"),
+    },
+    .{
+        .relative = "static/plugins/js/layui/css/layui.css",
+        .source = @embedFile("../assets/wwwroot/static/plugins/js/layui/css/layui.css"),
+    },
+    .{
+        .relative = "static/plugins/jquery214.min.js",
+        .source = @embedFile("../assets/wwwroot/static/plugins/jquery214.min.js"),
+    },
+    .{
+        .relative = "static/admin/images/logo.png",
+        .source = @embedFile("../assets/wwwroot/static/admin/images/logo.png"),
+    },
+    .{
+        .relative = "static/admin/images/wallpage/bg_1.jpg",
+        .source = @embedFile("../assets/wwwroot/static/admin/images/wallpage/bg_1.jpg"),
+    },
+    .{
+        .relative = "static/admin/js/admin.js",
+        .source = @embedFile("../assets/wwwroot/static/admin/js/admin.js"),
+    },
+    // layer 弹层（后台视图的提示/确认框依赖它；缺文件会在控制台报 404）
+    .{
+        .relative = "static/plugins/layer/layer.js",
+        .source = @embedFile("../assets/wwwroot/static/plugins/layer/layer.js"),
+    },
+    .{
+        .relative = "static/plugins/layer/theme/default/layer.css",
+        .source = @embedFile("../assets/wwwroot/static/plugins/layer/theme/default/layer.css"),
+    },
+    .{
+        .relative = "static/plugins/layer/theme/default/icon.png",
+        .source = @embedFile("../assets/wwwroot/static/plugins/layer/theme/default/icon.png"),
+    },
+    .{
+        .relative = "static/plugins/layer/theme/default/icon-ext.png",
+        .source = @embedFile("../assets/wwwroot/static/plugins/layer/theme/default/icon-ext.png"),
+    },
+    .{
+        .relative = "static/plugins/layer/theme/default/loading-0.gif",
+        .source = @embedFile("../assets/wwwroot/static/plugins/layer/theme/default/loading-0.gif"),
+    },
+    .{
+        .relative = "static/plugins/layer/theme/default/loading-1.gif",
+        .source = @embedFile("../assets/wwwroot/static/plugins/layer/theme/default/loading-1.gif"),
+    },
+    .{
+        .relative = "static/plugins/layer/theme/default/loading-2.gif",
+        .source = @embedFile("../assets/wwwroot/static/plugins/layer/theme/default/loading-2.gif"),
+    },
+};
+
 /// DsMallUI 门面（**必须堆分配且挂载后不得移动**：控制器持有指向本对象的指针）。
 pub const DsMallUi = struct {
     allocator: std.mem.Allocator,
@@ -201,6 +263,17 @@ pub const DsMallUi = struct {
         if (zzig.fsio.exists(self.io, style_path)) {
             // 旧版本曾落地过自造样式；版式已改为复用参考 `admin.css`，清掉避免干扰
             std.Io.Dir.cwd().deleteFile(self.io, style_path) catch {};
+        }
+
+        // 后台静态资源：admin.css / layui / jquery / logo / 背景图 / admin.js
+        // （此前一个都没下发 → 登录页无样式 + 控制台 404）
+        for (ADMIN_STATIC_ASSETS) |asset| {
+            const target = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.web_root, asset.relative });
+            defer self.allocator.free(target);
+            if (zzig.fsio.exists(self.io, target)) continue;
+            if (std.fs.path.dirname(target)) |parent| try zzig.fsio.makePath(self.io, parent);
+            try zzig.fsio.writeFile(self.io, target, asset.source);
+            written += 1;
         }
 
         return written;
