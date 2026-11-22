@@ -33,6 +33,37 @@
             }
             return true;
         }
+
+        // ————— 后台地址栏「hash 定位」：让子页面地址始终能在框架页里被还原 —————
+        //
+        // 1) 我在 iframe 里（框架页的子页）→ 把**当前子页地址**同步到父窗口的 hash，
+        //    这样在子页里点「新增/编辑」、翻页、搜索之后，刷新仍是这一页、复制链接也能直达；
+        // 2) 我**不在** iframe 里（直接打开了某个子页，如 /admin/config/index）→ 自动进框架页，
+        //    用 hash 定位到同一个页面（否则左侧菜单、面包屑全丢了）。
+        //
+        // 只处理「同一个后台区域」下的地址（首段即区域名），避免把登录页/前台页也塞进框架。
+        (function () {
+            try {
+                var current = location.pathname + location.search;
+                var area = '/' + location.pathname.split('/')[1];
+                var isAreaPage = location.pathname.indexOf(area + '/') === 0 && location.pathname !== area + '/home/index';
+                if (!isAreaPage) { return; }
+
+                if (window.parent && window.parent !== window) {
+                    var target = '#' + current;
+                    if (window.parent.location.hash !== target) {
+                        // replaceState 不触发 hashchange，手动派发一次让框架页同步菜单高亮
+                        window.parent.history.replaceState(null, '', target);
+                        window.parent.dispatchEvent(new window.Event('hashchange'));
+                    }
+                } else {
+                    // 直接访问子页：进框架页并定位（框架页会把 hash 应用到 iframe 与菜单）
+                    location.replace(area + '/home/index' + '#' + current);
+                }
+            } catch (e) {
+                // 跨域/受限环境（例如被别站 iframe 嵌）时静默跳过，不影响页面本身
+            }
+        })();
     </script>
     @await RenderSectionAsync("Scripts", false)
 </body>

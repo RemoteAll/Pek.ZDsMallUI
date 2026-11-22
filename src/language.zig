@@ -41,6 +41,7 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "user.clear_cache", .zh = "清除缓存", .en = "Clear cache" },
     .{ .key = "user.change_password", .zh = "修改密码", .en = "Change password" },
     .{ .key = "user.logout", .zh = "安全退出", .en = "Sign out" },
+    .{ .key = "user.logout_confirm", .zh = "您确定退出吗?", .en = "Sign out now?" },
     .{ .key = "user.language", .zh = "语言", .en = "Language" },
     .{ .key = "common.save", .zh = "保存", .en = "Save" },
     .{ .key = "common.delete", .zh = "删除", .en = "Delete" },

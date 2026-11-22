@@ -31,6 +31,10 @@
            原版 C# 之所以没事，是因为 `.fr` 后面还有「清除缓存 / 访问首页」两个 li 撑着宽度。 */
         .admincp-header .navbar .fr li .sub-meun { left: auto !important; right: 0; }
         .admincp-header .navbar .fr li dl:after { left: auto; right: 12px; }
+        /* 可展开项给个三角提示（纯视觉，不改变 C# 的版式），并支持**点击**展开：
+           原版只有 hover，鼠标没碰到时看着像没有下拉。 */
+        .admincp-header .navbar .fr > li.has-sub > span::after { content: "▾"; margin-left: 4px; font-size: 10px; opacity: .85; }
+        .admincp-header .navbar .fr > li.has-sub.open .sub-meun { display: block; }
     </style>
 </head>
 <body class="admincp">
@@ -48,23 +52,33 @@
                 }
             </ul>
             <ul class="fr">
-                <li>
-                    <span>@Model.lang.user_greeting @Model.userName</span>
+                @* 右上角：**与 C# `Home/DashBoard.cshtml` 的 `ul.fr` 完全同构** ——
+                   四个独立 li（用户菜单 / Language 下拉 / 清除缓存 / 访问首页），
+                   不要把它们塞进同一个下拉：原版就是靠多个 li 撑住宽度的。 *@
+                <li class="has-sub">
+                    <span>@(Model.lang.user_greeting)，@Model.userName</span>
                     <div class="sub-meun">
                         <dl>
-                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>@Model.lang.user_home</a></dd>
-                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe640;</i>@Model.lang.user_clear_cache</a></dd>
-                            <dd><a href="@Model.areaRoute/home/modifypw"><i class="iconfont">&#xe67b;</i>@Model.lang.user_change_password</a></dd>
-                            <dd><a href="@Model.areaRoute/login/logout"><i class="iconfont">&#xe70c;</i>@Model.lang.user_logout</a></dd>
-                            @if (Model.hasLanguages) {
-                            <dd style="border-top:1px solid #30c9ce;"><strong>@Model.lang.user_language</strong></dd>
+                            <dd><a href="@Model.areaRoute/home/modifypw" target="main-frame"><i class="iconfont">&#xe67b;</i>@Model.lang.user_change_password</a></dd>
+                            <dd><a href="javascript:dsLayerConfirm('@Model.areaRoute/login/logout','@Model.lang.user_logout_confirm','logout')"><i class="iconfont">&#xe70c;</i>@Model.lang.user_logout</a></dd>
+                        </dl>
+                    </div>
+                </li>
+                @if (Model.hasLanguages) {
+                <li class="has-sub">
+                    @* C# 原版这里就是硬编码的英文 `Language`，不随语言包翻译 *@
+                    <span>Language</span>
+                    <div class="sub-meun">
+                        <dl>
                             @foreach (var lang in Model.languages) {
-                            <dd><a href="@lang.url">@if (lang.current) {<span>&#10003;</span>} @lang.name</a></dd>
-                            }
+                            <dd><a href="@lang.url">@lang.name</a></dd>
                             }
                         </dl>
                     </div>
                 </li>
+                }
+                <li><a href="@Model.areaRoute/home/clearcache">@Model.lang.user_clear_cache</a></li>
+                <li><a href="~/" target="_blank">@Model.lang.user_home</a></li>
             </ul>
         </div>
     </div>
@@ -143,6 +157,22 @@
 
             // 浏览器前进/后退、或手改 hash 时跟着切
             window.addEventListener('hashchange', function () { activateByHash(location.hash); });
+
+            // 右上角下拉：原版只有 hover；这里额外支持**点击展开**（鼠标没碰到时也能看到）
+            var subItems = Array.prototype.slice.call(document.querySelectorAll('.admincp-header .navbar .fr > li.has-sub'));
+            subItems.forEach(function (li) {
+                li.addEventListener('click', function (e) {
+                    var isMenuClick = e.target.closest && e.target.closest('.sub-meun');
+                    if (isMenuClick) { return; }  // 点菜单项本身：正常跳转
+                    var willOpen = !li.classList.contains('open');
+                    subItems.forEach(function (x) { x.classList.remove('open'); });
+                    if (willOpen) { li.classList.add('open'); }
+                    e.stopPropagation();
+                });
+            });
+            document.addEventListener('click', function () {
+                subItems.forEach(function (x) { x.classList.remove('open'); });
+            });
 
             // 初始状态：地址栏带 hash 就直接打开对应子页；否则展开第一组并高亮欢迎页
             if (!activateByHash(location.hash)) {
