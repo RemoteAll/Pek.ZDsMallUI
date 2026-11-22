@@ -17,6 +17,15 @@ const ActionResult = zzig.web.controller.ActionResult;
 
 /// 站点设置控制器。
 pub const ConfigController = struct {
+    /// 菜单声明（对齐 C# `[DHMenu]`）
+    pub const menu: @import("../../../src/deps.zig").menu.MenuDecl = .{
+        .group = "settings",
+        .name = "site_settings",
+        .title_key = "站点设置",
+        .url = "{area}/config/index",
+        .icon = "&#xe614;",
+        .order = 20,
+    };
     /// `GET /{area}/config/index`：渲染设置页。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);

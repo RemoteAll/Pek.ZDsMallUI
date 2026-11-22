@@ -32,6 +32,7 @@ const menu_controller = @import("MenuController.zig");
 const adminuser_controller = @import("AdminUserController.zig");
 
 const menu_db_mod = @import("../../../src/deps.zig").menu_db;
+const menu_mod = @import("../../../src/deps.zig").menu;
 
 const router = zzig.web.router;
 const controller_mod = zzig.web.controller;
@@ -473,6 +474,32 @@ pub const AdminArea = struct {
             try ctrl.mapWithContext("GET", "logout", @ptrCast(self), guarded(login_controller.LoginController.logout));
             try ctrl.mapWithContext("GET", "status", @ptrCast(self), guarded(login_controller.LoginController.status));
             try ctrl.mount(&app.router);
+        }
+
+        // 控制器自带的菜单声明（`pub const menu: menu.MenuDecl = .{...}`）→ 自动注册。
+        // 对齐 C# 扫描控制器上的 `[DHMenu(...)]`：菜单写在控制器文件里，不得到 main.zig 里集中维护。
+        try self.registerControllerMenus(&.{
+            home_controller.HomeController.menu,
+            config_controller.ConfigController.menu,
+            language_controllers.CultureController.menu,
+            language_controllers.LanguagesController.menu,
+            role_controller.RoleController.menu,
+            menu_controller.MenuController.menu,
+            adminuser_controller.AdminUserController.menu,
+        });
+    }
+
+    /// 把控制器声明的菜单写进注册表（**同名 upsert**，重复调用无副作用），并同步落库。
+    fn registerControllerMenus(self: *AdminArea, decls: []const menu_mod.Item) !void {
+        const registry = self.menus orelse return;
+        for (decls) |decl| {
+            registry.addItem(decl) catch |err| {
+                zzig.Logger.warn("[ZDsMallUI] 注册控制器菜单失败（{s}）：{s}", .{ decl.name, @errorName(err) });
+                continue;
+            };
+            if (self.menu_store) |st| {
+                _ = menu_db_mod.seedFromRegistry(st, self.allocator, &.{}, &.{decl}) catch 0;
+            }
         }
     }
 

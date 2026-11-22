@@ -14,6 +14,16 @@ const ActionResult = zzig.web.controller.ActionResult;
 
 /// 多语言（语言列表）。
 pub const CultureController = struct {
+    /// 菜单声明（对齐 C# `[DHMenu]`）
+    pub const menu: @import("../../../src/deps.zig").menu.MenuDecl = .{
+        .group = "settings",
+        .name = "culture",
+        .title_key = "多语言",
+        .url = "{area}/culture/index",
+        .icon = "&#xe6a3;",
+        // 排在「语言包」(93) 之上：语言是语言包的上位概念
+        .order = 92,
+    };
     /// `GET /{area}/culture`：语言列表（名称 / 代码 / 状态 / 是否默认）。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);
@@ -245,6 +255,15 @@ pub const CultureController = struct {
 
 /// 语言包（键值翻译）。
 pub const LanguagesController = struct {
+    /// 菜单声明（对齐 C# `[DHMenu]`）
+    pub const menu: @import("../../../src/deps.zig").menu.MenuDecl = .{
+        .group = "settings",
+        .name = "languages",
+        .title_key = "语言包",
+        .url = "{area}/languages/index",
+        .icon = "&#xe71f;",
+        .order = 93,
+    };
     /// 供路由挂载：删除一条语言包（挂在模块级，见文件末尾 `deleteResource`）。
     pub const deleteResourceCall = deleteResource;
     /// 供路由挂载：新增 / 编辑 / 保存（模块级函数，见文件末尾）。

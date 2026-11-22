@@ -242,6 +242,18 @@ pub const DsMallUi = struct {
         self.seedMenuSlice(&.{group}, &.{});
     }
 
+    /// 批量注册**控制器自带**的菜单声明（等价 C# 扫描业务项目控制器上的 `[DHMenu]`）。
+    ///
+    /// 项目控制器里写：
+    /// ```zig
+    /// pub const menu: menu.MenuDecl = .{ .group = "content", .name = "article", ... };
+    /// ```
+    /// 装配时一行：`try ui.addMenusFromDecls(&.{ ArticleController.menu });`
+    /// （业务控制器在项目自己的模块里，库的 `mount` 看不到它，所以要显式传进来。）
+    pub fn addMenusFromDecls(self: *DsMallUi, decls: []const menu_mod.MenuDecl) !void {
+        for (decls) |decl| try self.addMenu(decl);
+    }
+
     /// 把刚注册的分组/菜单项 upsert 进 `Menu` 表（幂等；未接库时什么也不做）。
     fn seedMenuSlice(self: *DsMallUi, groups: []const menu_mod.Group, items: []const menu_mod.Item) void {
         const st = self.menu_store orelse return;

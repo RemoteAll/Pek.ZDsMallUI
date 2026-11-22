@@ -17,6 +17,15 @@ const router = zzig.web.router;
 const ActionResult = zzig.web.controller.ActionResult;
 
 pub const RoleController = struct {
+    /// 菜单声明（对齐 C# `[DHMenu]`）
+    pub const menu: @import("../../../src/deps.zig").menu.MenuDecl = .{
+        .group = "settings",
+        .name = "role",
+        .title_key = "角色权限管理",
+        .url = "{area}/role/index",
+        .icon = "&#xe67b;",
+        .order = 38,
+    };
     /// `GET /{area}/role/index`：角色列表。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);

@@ -19,6 +19,15 @@ const router = zzig.web.router;
 const ActionResult = zzig.web.controller.ActionResult;
 
 pub const MenuController = struct {
+    /// 菜单声明（对齐 C# `[DHMenu]`）
+    pub const menu: @import("../../../src/deps.zig").menu.MenuDecl = .{
+        .group = "settings",
+        .name = "menu",
+        .title_key = "菜单管理",
+        .url = "{area}/menu/index",
+        .icon = "&#xe6a1;",
+        .order = 39,
+    };
     /// `GET /{area}/menu/index`：菜单树列表（目录 + 其下菜单项）。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);

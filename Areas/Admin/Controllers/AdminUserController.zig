@@ -16,6 +16,15 @@ const router = zzig.web.router;
 const ActionResult = zzig.web.controller.ActionResult;
 
 pub const AdminUserController = struct {
+    /// 菜单声明（对齐 C# `[DHMenu]`）
+    pub const menu: @import("../../../src/deps.zig").menu.MenuDecl = .{
+        .group = "settings",
+        .name = "adminuser",
+        .title_key = "管理员管理",
+        .url = "{area}/adminuser/index",
+        .icon = "&#xe67d;",
+        .order = 37,
+    };
     /// `GET /{area}/adminuser/index`：管理员列表。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);

@@ -30,6 +30,15 @@ pub const Group = struct {
     order: i32 = 0,
 };
 
+/// 控制器自带的菜单声明（对齐 C# 在控制器类上标 `[DHMenu(...)]`）。
+///
+/// 写法：在控制器结构体里加
+/// ```zig
+/// pub const menu: menu.MenuDecl = .{ .group = "settings", .name = "role", ... };
+/// ```
+/// 库挂载时用 `@hasDecl(T, "menu")` 自动收集 → **不需要再到 `main.zig` 里手写 `addMenu`**。
+pub const MenuDecl = Item;
+
 /// 二级菜单（左侧菜单项）。
 pub const Item = struct {
     /// 所属分组键
@@ -135,57 +144,14 @@ pub const Registry = struct {
         });
     }
 
-    /// 库**自己**的默认菜单（只有库提供的页面才放这里）。
+    /// 库**自己的默认菜单分组**（只有库提供的页面才放这里）。
     ///
-    /// 业务系统的菜单不要写进库：项目启动时用 `ui.addMenu(...)` 注册自己的
-    /// —— 等价于 C# 在**业务项目**控制器上标 `[DHMenu(...)]`（框架扫描的是当前项目程序集）。
+    /// 菜单项**不再集中在这里**：每个控制器自带 `pub const menu: menu.MenuDecl = .{...}`，
+    /// 由 `AdminArea.mount` 自动收集（对齐 C# 扫描控制器上的 `[DHMenu(...)]`）。
+    /// 业务系统的菜单同理写在**业务项目的控制器**里，不往库里塞。
     pub fn addDefaults(self: *Registry) !void {
         try self.addGroup(.{ .key = "console", .title_key = "控制台", .order = 10 });
         try self.addGroup(.{ .key = "settings", .title_key = "设置", .order = 20 });
-
-        try self.addItem(.{
-            .group = "console",
-            .name = "welcome",
-            .title_key = "欢迎页",
-            .url = "{area}/home/dashboard",
-            .icon = "&#xe6a7;",
-            .order = 10,
-        });
-        // 站点设置是库自带页面（ConfigController），所以菜单也由库注册
-        try self.addItem(.{
-            .group = "settings",
-            .name = "site_settings",
-            .title_key = "站点设置",
-            .url = "{area}/config/index",
-            .icon = "&#xe614;",
-            .order = 20,
-        });
-        // 角色权限 / 管理员 / 菜单：**通用后台能力**（C# 在 Membership 通用模块里），随库注册
-        try self.addItem(.{
-            .group = "settings",
-            .name = "adminuser",
-            .title_key = "管理员管理",
-            .url = "{area}/adminuser/index",
-            .icon = "&#xe67d;",
-            .order = 37,
-        });
-        try self.addItem(.{
-            .group = "settings",
-            .name = "role",
-            .title_key = "角色权限管理",
-            .url = "{area}/role/index",
-            .icon = "&#xe67b;",
-            .order = 38,
-        });
-        // 菜单管理：C# 在 Membership 通用模块（`MenuController`），随库注册
-        try self.addItem(.{
-            .group = "settings",
-            .name = "menu",
-            .title_key = "菜单管理",
-            .url = "{area}/menu/index",
-            .icon = "&#xe6a1;",
-            .order = 39,
-        });
     }
 
     /// 构建视图模型：`Model.groups`（顶部导航 + 左侧菜单一次渲染）。
@@ -274,6 +240,21 @@ test "菜单：注册 + 排序 + {area} 替换 + 空分组过滤" {
     defer registry.deinit();
     try registry.addDefaults();
     try registry.addGroup(.{ .key = "product", .title_key = "产品", .order = 30 });
+    // 菜单项现在由控制器声明（`pub const menu: menu.MenuDecl`）→ 这里模拟 `registerControllerMenus` 的效果
+    try registry.addItem(.{
+        .group = "settings",
+        .name = "site_settings",
+        .title_key = "站点设置",
+        .url = "{area}/config/index",
+        .order = 20,
+    });
+    try registry.addItem(.{
+        .group = "settings",
+        .name = "role",
+        .title_key = "角色权限管理",
+        .url = "{area}/role/index",
+        .order = 38,
+    });
     try registry.addItem(.{
         .group = "product",
         .name = "goods",
@@ -292,22 +273,41 @@ test "菜单：注册 + 排序 + {area} 替换 + 空分组过滤" {
         .list => |items| items,
         else => @panic("groups 不是列表"),
     };
-    try testing.expectEqual(@as(usize, 3), groups.len); // console / settings / product
-    try testing.expectEqualStrings("控制台", groups[0].get("name").?.asString().?);
+    try testing.expectEqual(@as(usize, 2), groups.len); // settings + product（console 无菜单项 → 过滤）
+    try testing.expectEqualStrings("设置", groups[0].get("name").?.asString().?);
 
-    const settings_items = switch (groups[1].get("items").?) {
+    const settings_items = switch (groups[0].get("items").?) {
         .list => |items| items,
         else => @panic("items 不是列表"),
     };
-    // settings 组现在有「站点设置 + 管理员管理 + 角色权限管理 + 菜单管理」四项
-    try testing.expectEqual(@as(usize, 4), settings_items.len);
+    try testing.expectEqual(@as(usize, 2), settings_items.len);
     try testing.expectEqualStrings("/biz/config/index", settings_items[0].get("url").?.asString().?);
 
-    const product_items = switch (groups[2].get("items").?) {
+    const product_items = switch (groups[1].get("items").?) {
         .list => |items| items,
         else => @panic("items 不是列表"),
     };
     try testing.expectEqualStrings("/biz/goods", product_items[0].get("url").?.asString().?);
+}
+
+test "菜单：空分组被过滤（addDefaults 只建分组，没菜单项时不输出）" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var registry = Registry.init(testing.allocator, testing.io);
+    defer registry.deinit();
+    try registry.addDefaults();
+
+    var store = language.Store.init(testing.allocator, testing.io);
+    defer store.deinit();
+    try store.reload();
+
+    const model = try registry.build(arena, "/biz", &store, store.defaultLanguage().?.id);
+    try testing.expectEqual(@as(usize, 0), switch (model) {
+        .list => |items| items.len,
+        else => 0,
+    });
 }
 
 test "菜单：重复注册同名项是 upsert，不产生重复" {
@@ -319,6 +319,21 @@ test "菜单：重复注册同名项是 upsert，不产生重复" {
     defer registry.deinit();
     try registry.addDefaults();
     try registry.addDefaults();
+    // 同一个控制器菜单声明注册两次（`mount` 被重复调用 / 项目又写了 addMenu）→ 仍是一条
+    try registry.addItem(.{
+        .group = "settings",
+        .name = "role",
+        .title_key = "角色权限管理",
+        .url = "{area}/role/index",
+        .order = 38,
+    });
+    try registry.addItem(.{
+        .group = "settings",
+        .name = "role",
+        .title_key = "角色权限管理",
+        .url = "{area}/role/index",
+        .order = 38,
+    });
 
     var store = language.Store.init(testing.allocator, testing.io);
     defer store.deinit();
@@ -329,9 +344,8 @@ test "菜单：重复注册同名项是 upsert，不产生重复" {
         .list => |items| items,
         else => @panic("groups 不是列表"),
     };
-    try testing.expectEqual(@as(usize, 2), groups.len);
-    // settings 组：站点设置 + 管理员 + 角色 + 菜单管理（重复 addDefaults 不应叠加）
-    try testing.expectEqual(@as(usize, 4), switch (groups[1].get("items").?) {
+    try testing.expectEqual(@as(usize, 1), groups.len);
+    try testing.expectEqual(@as(usize, 1), switch (groups[0].get("items").?) {
         .list => |items| items.len,
         else => 0,
     });

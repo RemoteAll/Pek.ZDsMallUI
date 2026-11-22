@@ -17,6 +17,15 @@ const ActionResult = zzig.web.controller.ActionResult;
 
 /// 后台首页控制器。
 pub const HomeController = struct {
+    /// 菜单声明（对齐 C# 控制器上的 `[DHMenu(...)]`）：库挂载时自动注册并写进 `Menu` 表。
+    pub const menu: @import("../../../src/deps.zig").menu.MenuDecl = .{
+        .group = "console",
+        .name = "welcome",
+        .title_key = "欢迎页",
+        .url = "{area}/home/dashboard",
+        .icon = "&#xe6a7;",
+        .order = 10,
+    };
     /// `GET /{area}/home/index`：后台**框架页**（顶部 + 左侧 + iframe）。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);
