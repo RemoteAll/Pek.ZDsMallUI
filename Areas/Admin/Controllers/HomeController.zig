@@ -28,7 +28,7 @@ pub const HomeController = struct {
         const display_name = try self.backend.displayName(arena);
         const settings = try self.backend.settings(arena);
         const site_name = if (settings.get("siteName")) |value| value.asString() orelse "" else "";
-        const route = try area_mod.routePrefix(arena, self.area);
+        const route = try area_mod.routePrefix(arena, self.areaName());
 
         var menu_config = zzig.web.ObjectBuilder.init(arena);
         try menu_config.str("name", "站点设置");
@@ -50,7 +50,7 @@ pub const HomeController = struct {
         try builder.str("displayName", display_name);
         try builder.str("userName", user);
         try builder.str("siteName", std.mem.trim(u8, site_name, " \t"));
-        try builder.str("areaName", self.area);
+        try builder.str("areaName", self.areaName());
         try builder.str("areaRoute", route);
         try builder.str("uploadPrefix", self.upload_prefix);
         try builder.str("version", version.VERSION);

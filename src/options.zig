@@ -210,14 +210,18 @@ pub const DsMallUi = struct {
     ///
     /// 直接使用 `zzig.web.App` 时无需调用（App 已按 `Options.wwwroot` 提供静态资源）；
     /// 需要把上传目录一起交给 App 时应调用本方法（ETag/304 与下载头由控制器负责）。
+    /// **扩展名同样受白名单约束**（未列出的类型 404）。
     pub fn registerStaticRoots(self: *DsMallUi, app: *zzig.web.App) !void {
         const url_prefix = try std.fmt.allocPrint(self.allocator, "{s}/downloads", .{self.upload_prefix});
         defer self.allocator.free(url_prefix);
         try app.addStaticRootOptions(.{
             .url_prefix = url_prefix,
             .dir = self.upload_root,
-            .serve_unknown_types = true,
+            .serve_unknown_types = false,
         });
+        for (self.upload_controller.allowed_extensions) |ext| {
+            try app.statics.setMimeType(ext, controllers.upload.mimeFor(ext));
+        }
     }
 };
 
@@ -253,6 +257,10 @@ pub const Builder = struct {
     waf_base_dir: ?[]const u8 = null,
     /// 数据目录（`null` = 内存后端；设置后启用 SQLite，库文件为 `{dir}/{Area}.db`）
     storage_dir: ?[]const u8 = null,
+    /// 下载扩展名白名单（默认常用类型；`&.{}` = 禁止一切下载）
+    download_extensions: []const []const u8 = &controllers.upload.DEFAULT_DOWNLOAD_EXTENSIONS,
+    /// 在默认白名单基础上追加的扩展名
+    extra_download_extensions: []const []const u8 = &.{},
 
     /// 站点物理根（默认 `wwwroot`；**业务系统按自己的配置改成任意路径**）。
     pub fn webRoot(self: Builder, root: []const u8) Builder {
@@ -371,6 +379,20 @@ pub const Builder = struct {
     pub fn loginGuardOptions(self: Builder, options: login_guard_mod.Options) Builder {
         var copy = self;
         copy.login_guard_options = options;
+        return copy;
+    }
+
+    /// 下载扩展名白名单（**整体替换**默认清单；传 `&.{}` = 禁止一切下载）。
+    pub fn downloadExtensions(self: Builder, list: []const []const u8) Builder {
+        var copy = self;
+        copy.download_extensions = list;
+        return copy;
+    }
+
+    /// 在默认白名单基础上**追加**可下载的扩展名（其它类型需显式指定）。
+    pub fn addDownloadExtensions(self: Builder, extra: []const []const u8) Builder {
+        var copy = self;
+        copy.extra_download_extensions = extra;
         return copy;
     }
 
@@ -505,12 +527,36 @@ pub const Builder = struct {
         // 登录防爆破：失败到阈值后按「IP / 用户名」双维度封禁
         ui.admin_area.setLoginGuard(&ui.login_guard);
 
-        ui.upload_controller = try controllers.upload.UploadController.init(self.allocator, self.io, service, upload_root);
+        // 下载白名单 = 默认清单 + 追加清单（去重后交给上传控制器）
+        const merged = try mergeExtensions(self.allocator, self.download_extensions, self.extra_download_extensions);
+        defer self.allocator.free(merged);
+        ui.upload_controller = try controllers.upload.UploadController.init(self.allocator, self.io, service, upload_root, merged);
         errdefer ui.upload_controller.deinit();
 
         return ui;
     }
 };
+
+/// 合并扩展名清单（大小写不敏感去重；结果容器由调用方释放，字符串借用原入参）。
+fn mergeExtensions(
+    allocator: std.mem.Allocator,
+    base: []const []const u8,
+    extra: []const []const u8,
+) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    errdefer out.deinit(allocator);
+    for (base) |item| try appendUnique(allocator, &out, item);
+    for (extra) |item| try appendUnique(allocator, &out, item);
+    return out.toOwnedSlice(allocator);
+}
+
+fn appendUnique(allocator: std.mem.Allocator, out: *std.ArrayList([]const u8), item: []const u8) !void {
+    if (item.len == 0) return;
+    for (out.items) |existing| {
+        if (std.ascii.eqlIgnoreCase(existing, item)) return;
+    }
+    try out.append(allocator, item);
+}
 
 // ————— 测试 —————
 
@@ -655,6 +701,42 @@ test "门面：起服务后四个入口都可访问（端到端冒烟）" {
     const ue = try app.dispatch(arena, .{ .method = "GET", .path = "/fileuploader", .query = "action=config" });
     try testing.expectEqual(std.http.Status.ok, ue.status);
     try testing.expect(std.mem.indexOf(u8, ue.body, "imageActionName") != null);
+}
+
+test "门面：换区域名后旧地址 404、新地址生效（配置热加载口径）" {
+    var fixture = try Fixture.init("area-switch");
+    defer fixture.deinit();
+    const arena = fixture.arena_state.allocator();
+
+    const web_root = try std.fmt.allocPrint(arena, "{s}/wwwroot", .{fixture.dir});
+    const views_root = try std.fmt.allocPrint(arena, "{s}/Views", .{fixture.dir});
+    const areas_root = try std.fmt.allocPrint(arena, "{s}/Areas", .{fixture.dir});
+
+    const ui = try DsMallUi.builder(testing.allocator, testing.io)
+        .webRoot(web_root)
+        .viewsRoot(views_root)
+        .areasRoot(areas_root)
+        .adminArea("Admin")
+        .build();
+    defer ui.deinit();
+    _ = try ui.materializeDefaults();
+
+    var app = try zzig.web.App.init(testing.allocator, testing.io, .{ .wwwroot = web_root });
+    defer app.deinit();
+    try ui.mount(&app);
+
+    const before = try app.dispatch(arena, .{ .method = "GET", .path = "/admin/login/index" });
+    try testing.expectEqual(std.http.Status.ok, before.status);
+
+    // 运行期换区域名（不重建路由、不重启进程）
+    try ui.admin().setAreaName("Biz");
+
+    const old_route = try app.dispatch(arena, .{ .method = "GET", .path = "/admin/login/index" });
+    try testing.expectEqual(std.http.Status.not_found, old_route.status);
+
+    const new_route = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/login/index" });
+    try testing.expectEqual(std.http.Status.ok, new_route.status);
+    try testing.expectEqualStrings("/biz/home/index", ui.admin().homePath());
 }
 
 test "门面：伪静态 .html 后缀命中动态路由（官网类站点）" {

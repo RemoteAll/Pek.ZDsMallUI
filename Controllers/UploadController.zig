@@ -22,6 +22,64 @@ const router = zzig.web.router;
 /// 下载路由前缀（大小写不敏感匹配）。
 pub const DOWNLOAD_PREFIX = "/upload/downloads/";
 
+/// 默认允许下载的扩展名（对齐 C# 常用上传/下载类型；HTML/JS/CSS 等主动脚本类默认不放行）。
+/// 业务需要其它类型时用 `builder.addDownloadExtensions(...)` 显式追加。
+pub const DEFAULT_DOWNLOAD_EXTENSIONS = [_][]const u8{
+    ".jpg",  ".jpeg", ".png",  ".gif",  ".bmp", ".webp", ".svg",  ".ico",
+    ".pdf",  ".txt",  ".md",   ".csv",  ".log", ".doc",  ".docx", ".xls",
+    ".xlsx", ".ppt",  ".pptx", ".zip",  ".rar", ".7z",   ".tar",  ".gz",
+    ".mp3",  ".wav",  ".mp4",  ".webm",
+};
+
+/// 扩展名是否在允许列表内（大小写不敏感；列表为空 = 全部禁止；无扩展名一律拒）。
+pub fn isDownloadAllowed(path: []const u8, allowed: []const []const u8) bool {
+    const ext = std.fs.path.extension(path);
+    if (ext.len == 0) return false;
+    for (allowed) |item| {
+        if (item.len == 0) continue;
+        if (std.ascii.eqlIgnoreCase(ext, item)) return true;
+    }
+    return false;
+}
+
+/// 扩展名 → Content-Type（未列出的一律 `application/octet-stream`）。
+pub fn mimeFor(ext: []const u8) []const u8 {
+    const table = [_]struct { ext: []const u8, mime: []const u8 }{
+        .{ .ext = ".jpg", .mime = "image/jpeg" },
+        .{ .ext = ".jpeg", .mime = "image/jpeg" },
+        .{ .ext = ".png", .mime = "image/png" },
+        .{ .ext = ".gif", .mime = "image/gif" },
+        .{ .ext = ".bmp", .mime = "image/bmp" },
+        .{ .ext = ".webp", .mime = "image/webp" },
+        .{ .ext = ".svg", .mime = "image/svg+xml" },
+        .{ .ext = ".ico", .mime = "image/x-icon" },
+        .{ .ext = ".pdf", .mime = "application/pdf" },
+        .{ .ext = ".txt", .mime = "text/plain; charset=utf-8" },
+        .{ .ext = ".md", .mime = "text/markdown; charset=utf-8" },
+        .{ .ext = ".csv", .mime = "text/csv; charset=utf-8" },
+        .{ .ext = ".log", .mime = "text/plain; charset=utf-8" },
+        .{ .ext = ".doc", .mime = "application/msword" },
+        .{ .ext = ".docx", .mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+        .{ .ext = ".xls", .mime = "application/vnd.ms-excel" },
+        .{ .ext = ".xlsx", .mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+        .{ .ext = ".ppt", .mime = "application/vnd.ms-powerpoint" },
+        .{ .ext = ".pptx", .mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation" },
+        .{ .ext = ".zip", .mime = "application/zip" },
+        .{ .ext = ".rar", .mime = "application/vnd.rar" },
+        .{ .ext = ".7z", .mime = "application/x-7z-compressed" },
+        .{ .ext = ".tar", .mime = "application/x-tar" },
+        .{ .ext = ".gz", .mime = "application/gzip" },
+        .{ .ext = ".mp3", .mime = "audio/mpeg" },
+        .{ .ext = ".wav", .mime = "audio/wav" },
+        .{ .ext = ".mp4", .mime = "video/mp4" },
+        .{ .ext = ".webm", .mime = "video/webm" },
+    };
+    for (table) |item| {
+        if (std.ascii.eqlIgnoreCase(ext, item.ext)) return item.mime;
+    }
+    return "application/octet-stream";
+}
+
 /// 上传控制器。
 pub const UploadController = struct {
     allocator: std.mem.Allocator,
@@ -29,6 +87,8 @@ pub const UploadController = struct {
     service: ueditor.UeditorService,
     downloads: zzig.web.StaticFiles,
     prefix: []const u8,
+    /// 允许下载的扩展名（自有拷贝；空 = 全部禁止）
+    allowed_extensions: [][]const u8,
     /// 挂载时的应用（下载未命中时回退到 wwwroot 静态资源）
     app: ?*zzig.web.App = null,
 
@@ -38,9 +98,21 @@ pub const UploadController = struct {
         io: std.Io,
         service: ueditor.UeditorService,
         upload_root: []const u8,
+        allowed_extensions: []const []const u8,
     ) !*UploadController {
         const self = try allocator.create(UploadController);
         errdefer allocator.destroy(self);
+
+        const owned = try allocator.alloc([]const u8, allowed_extensions.len);
+        var filled: usize = 0;
+        errdefer {
+            for (owned[0..filled]) |item| allocator.free(item);
+            allocator.free(owned);
+        }
+        for (allowed_extensions, 0..) |item, index| {
+            owned[index] = try allocator.dupe(u8, item);
+            filled = index + 1;
+        }
 
         self.* = .{
             .allocator = allocator,
@@ -48,14 +120,19 @@ pub const UploadController = struct {
             .service = service,
             .downloads = try zzig.web.StaticFiles.init(allocator, io, upload_root),
             .prefix = DOWNLOAD_PREFIX,
+            .allowed_extensions = owned,
         };
-        // 下载目录要允许「非常规扩展名」（上传文件类型由 ueconfig 白名单控制）
-        self.downloads.serveUnknownFileTypes(true);
+        // 只放开白名单内的扩展名（StaticFiles 默认不下发未知类型，对齐 ASP.NET Core）
+        for (self.allowed_extensions) |ext| {
+            try self.downloads.setMimeType(ext, mimeFor(ext));
+        }
         return self;
     }
 
     /// 释放下载目录的静态资源表与服务配置。
     pub fn deinit(self: *UploadController) void {
+        for (self.allowed_extensions) |item| self.allocator.free(item);
+        self.allocator.free(self.allowed_extensions);
         self.downloads.deinit();
         self.allocator.destroy(self);
     }
@@ -100,6 +177,12 @@ pub const UploadController = struct {
             // 相对路径：/Upload/downloads/images/x.png → /images/x.png
             const rest = std.mem.trimStart(u8, c.req.path[self.prefix.len..], "/");
             if (rest.len == 0) return router.Response.text(.not_found, "Not Found");
+
+            // 扩展名白名单（默认只放常用类型；其它类型需显式配置追加）
+            if (!isDownloadAllowed(rest, self.allowed_extensions)) {
+                zzig.Logger.warn("[ZDsMallUI] 下载被拒（扩展名不在白名单）：{s}", .{rest});
+                return router.Response.text(.not_found, "Not Found");
+            }
 
             const target = try std.fmt.allocPrint(c.arena, "/{s}", .{rest});
             const response = try self.downloads.serve(c.arena, target, c.header("if-none-match")) orelse
@@ -200,7 +283,7 @@ test "下载：静态根命中文件（下载中间件的文件源）" {
     defer std.Io.Dir.cwd().deleteTree(testing.io, root) catch {};
 
     const service = try ueditor.UeditorService.init(arena, testing.io, root, "/upload");
-    const controller = try UploadController.init(testing.allocator, testing.io, service, root);
+    const controller = try UploadController.init(testing.allocator, testing.io, service, root, &DEFAULT_DOWNLOAD_EXTENSIONS);
     defer controller.deinit();
 
     try zzig.fsio.makePath(testing.io, root ++ "/images");
@@ -220,4 +303,28 @@ test "上传入口：无 action 时回配置" {
     const service = try ueditor.UeditorService.init(arena, testing.io, ".zig-cache/zdsmallui-entry", "/upload");
     const json = try service.handle(arena, "config", &.{}, null, "");
     try testing.expect(std.mem.indexOf(u8, json, "imageActionName") != null);
+}
+
+test "下载白名单：默认允许常用类型，脚本类与未知类型拒绝" {
+    try testing.expect(isDownloadAllowed("images/a.PNG", &DEFAULT_DOWNLOAD_EXTENSIONS));
+    try testing.expect(isDownloadAllowed("docs/说明.pdf", &DEFAULT_DOWNLOAD_EXTENSIONS));
+    try testing.expect(isDownloadAllowed("data/x.zip", &DEFAULT_DOWNLOAD_EXTENSIONS));
+    try testing.expect(!isDownloadAllowed("evil/a.exe", &DEFAULT_DOWNLOAD_EXTENSIONS));
+    try testing.expect(!isDownloadAllowed("evil/a.html", &DEFAULT_DOWNLOAD_EXTENSIONS));
+    try testing.expect(!isDownloadAllowed("evil/a.js", &DEFAULT_DOWNLOAD_EXTENSIONS));
+    try testing.expect(!isDownloadAllowed("evil/noext", &DEFAULT_DOWNLOAD_EXTENSIONS));
+    // 空清单 = 全部禁止（业务可用 builder.downloadExtensions(&.{}) 收紧）
+    try testing.expect(!isDownloadAllowed("images/a.png", &.{}));
+}
+
+test "下载白名单：追加清单生效（自定义扩展名）" {
+    const extra = [_][]const u8{ ".dwg", ".STEP" };
+    var merged: std.ArrayList([]const u8) = .empty;
+    defer merged.deinit(testing.allocator);
+    for (DEFAULT_DOWNLOAD_EXTENSIONS) |item| try merged.append(testing.allocator, item);
+    for (extra) |item| try merged.append(testing.allocator, item);
+
+    try testing.expect(isDownloadAllowed("cad/a.dwg", merged.items));
+    try testing.expect(isDownloadAllowed("cad/b.step", merged.items));
+    try testing.expect(!isDownloadAllowed("cad/c.exe", merged.items));
 }

@@ -38,6 +38,12 @@ pub fn homeRoute(allocator: std.mem.Allocator, area_name: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator, "{s}/home/index", .{prefix});
 }
 
+/// 区域快照（区域名 + 首页路径）；切换时原子换指针，旧快照留到 `deinit`（读线程零锁且安全）。
+pub const AreaState = struct {
+    area: []const u8,
+    home: []const u8,
+};
+
 /// 后台 Area（区域级状态 + 控制器挂载）。
 pub const AdminArea = struct {
     allocator: std.mem.Allocator,
@@ -46,10 +52,8 @@ pub const AdminArea = struct {
     backend: backend_mod.AdminBackend,
     /// 视图渲染器（与门面共用一份，避免每个控制器各建缓存）
     views: *views_mod.Views,
-    /// 区域名（Pascal，如 `Biz`）
-    area: []const u8,
-    /// 登录成功后的落地页（默认 `/{area}/home/index`）
-    home: []const u8,
+    /// 当前区域快照（不可变；`setAreaName` 原子换新指针）
+    state: std.atomic.Value(*const AreaState),
     /// 上传 URL 前缀（首页展示用）
     upload_prefix: []const u8,
     /// 登录鉴权（JWT 签发 / 校验 / 登出吊销）；`null` = 未启用（不签令牌）
@@ -58,6 +62,8 @@ pub const AdminArea = struct {
     login_guard: ?*@import("../../../src/login_guard.zig").Guard = null,
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
+    /// 退役的旧快照（读线程可能还在用，延迟到 `deinit` 释放）
+    retired_states: std.ArrayList(*AreaState) = .empty,
 
     /// 指定数据源与视图根（默认区域 `Admin`，首页 `/{area}/home/index`）。
     pub fn init(
@@ -76,13 +82,16 @@ pub const AdminArea = struct {
         const prefix = try allocator.dupe(u8, "/upload");
         errdefer allocator.free(prefix);
 
+        const state = try allocator.create(AreaState);
+        errdefer allocator.destroy(state);
+        state.* = .{ .area = default_area, .home = home };
+
         self.* = .{
             .allocator = allocator,
             .io = io,
             .backend = admin_backend,
             .views = views,
-            .area = default_area,
-            .home = home,
+            .state = .init(state),
             .upload_prefix = prefix,
         };
         return self;
@@ -95,9 +104,17 @@ pub const AdminArea = struct {
             self.allocator.destroy(ctrl);
         }
         self.controllers.deinit(self.allocator);
+        for (self.retired_states.items) |state| {
+            self.allocator.free(state.area);
+            self.allocator.free(state.home);
+            self.allocator.destroy(state);
+        }
+        self.retired_states.deinit(self.allocator);
+        const current = self.state.load(.acquire);
+        self.allocator.free(current.area);
+        self.allocator.free(current.home);
+        self.allocator.destroy(@constCast(current));
         if (self.auth) |auth| auth.deinit();
-        self.allocator.free(self.area);
-        self.allocator.free(self.home);
         self.allocator.free(self.upload_prefix);
         self.allocator.destroy(self);
     }
@@ -115,26 +132,43 @@ pub const AdminArea = struct {
 
     /// 登录页路径（`/{area}/login/index`）。
     pub fn loginPath(self: *const AdminArea, allocator: std.mem.Allocator) ![]u8 {
-        const prefix = try area_mod.routePrefix(allocator, self.area);
+        const prefix = try area_mod.routePrefix(allocator, self.areaName());
         defer allocator.free(prefix);
         return std.fmt.allocPrint(allocator, "{s}/login/index", .{prefix});
     }
 
     /// 更换区域名（`Biz` / `biz` 等价；非法字符直接报错）。首页路由随区域名重算。
+    ///
+    /// 路由是动态段 `/{area}/...`，换名后旧地址立即 404；旧快照延迟到 `deinit` 释放，
+    /// 读线程（`areaName` / `homePath`）无锁且不会读到悬垂切片。
     pub fn setAreaName(self: *AdminArea, name: []const u8) !void {
         const normalized = try area_mod.normalize(self.allocator, name);
+        errdefer self.allocator.free(normalized);
         const home = try homeRoute(self.allocator, normalized);
-        self.allocator.free(self.home);
-        self.allocator.free(self.area);
-        self.area = normalized;
-        self.home = home;
+        errdefer self.allocator.free(home);
+
+        const next = try self.allocator.create(AreaState);
+        errdefer self.allocator.destroy(next);
+        next.* = .{ .area = normalized, .home = home };
+
+        const old = self.state.swap(next, .acq_rel);
+        self.retired_states.append(self.allocator, @constCast(old)) catch {};
     }
 
     /// 覆盖登录成功后的落地页（默认 `/{area}/home/index`）。
     pub fn setHome(self: *AdminArea, home: []const u8) !void {
-        const copy = try self.allocator.dupe(u8, home);
-        self.allocator.free(self.home);
-        self.home = copy;
+        const current = self.state.load(.acquire);
+        const area_copy = try self.allocator.dupe(u8, current.area);
+        errdefer self.allocator.free(area_copy);
+        const home_copy = try self.allocator.dupe(u8, home);
+        errdefer self.allocator.free(home_copy);
+
+        const next = try self.allocator.create(AreaState);
+        errdefer self.allocator.destroy(next);
+        next.* = .{ .area = area_copy, .home = home_copy };
+
+        const old = self.state.swap(next, .acq_rel);
+        self.retired_states.append(self.allocator, @constCast(old)) catch {};
     }
 
     /// 上传 URL 前缀（首页展示用；与 `Builder.uploadPath` 保持一致）。
@@ -153,17 +187,17 @@ pub const AdminArea = struct {
 
     /// 区域名（Pascal，如 `Biz`）。
     pub fn areaName(self: *const AdminArea) []const u8 {
-        return self.area;
+        return self.state.load(.acquire).area;
     }
 
     /// 路由前缀（小写，如 `/biz`）。
     pub fn routePrefix(self: *const AdminArea, allocator: std.mem.Allocator) ![]u8 {
-        return area_mod.routePrefix(allocator, self.area);
+        return area_mod.routePrefix(allocator, self.areaName());
     }
 
     /// 登录成功后的落地页。
     pub fn homePath(self: *const AdminArea) []const u8 {
-        return self.home;
+        return self.state.load(.acquire).home;
     }
 
     /// 挂载 Area 的全部控制器（一控制器一个文件，与 C# 目录结构一致）。
@@ -175,8 +209,8 @@ pub const AdminArea = struct {
     /// | `GET /{area}/login/index`、`POST /{area}/login/login` | [`login_controller.LoginController`] |
     /// | `POST|GET /{area}/login/logout`、`GET /{area}/login/status` | [`login_controller.LoginController`] |
     pub fn mount(self: *AdminArea, app: *zzig.web.App) !void {
-        const segment = try area_mod.routeSegment(self.allocator, self.area);
-        defer self.allocator.free(segment);
+        // 动态段 `{area}`：区域名可在运行期改（配合配置热加载），旧地址由 `guarded` 拦截为 404
+        const segment = "{area}";
 
         // 鉴权中间件先于控制器生效：解析 Cookie / Bearer 写入链路状态（`auth.uid` / `user`）
         if (self.auth) |auth| try app.useMiddleware(auth.middleware());
@@ -185,29 +219,48 @@ pub const AdminArea = struct {
             const prefix = try std.fmt.allocPrint(self.allocator, "{s}/home", .{segment});
             defer self.allocator.free(prefix);
             const ctrl = try self.newController(prefix);
-            try ctrl.mapWithContext("GET", "index", @ptrCast(self), home_controller.HomeController.index);
+            try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(home_controller.HomeController.index));
             try ctrl.mount(&app.router);
         }
         {
             const prefix = try std.fmt.allocPrint(self.allocator, "{s}/config", .{segment});
             defer self.allocator.free(prefix);
             const ctrl = try self.newController(prefix);
-            try ctrl.mapWithContext("GET", "index", @ptrCast(self), config_controller.ConfigController.index);
-            try ctrl.mapWithContext("POST", "updatebase", @ptrCast(self), config_controller.ConfigController.updateBase);
+            try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(config_controller.ConfigController.index));
+            try ctrl.mapWithContext("POST", "updatebase", @ptrCast(self), guarded(config_controller.ConfigController.updateBase));
             try ctrl.mount(&app.router);
         }
         {
             const prefix = try std.fmt.allocPrint(self.allocator, "{s}/login", .{segment});
             defer self.allocator.free(prefix);
             const ctrl = try self.newController(prefix);
-            try ctrl.mapWithContext("GET", "index", @ptrCast(self), login_controller.LoginController.index);
-            try ctrl.mapWithContext("POST", "login", @ptrCast(self), login_controller.LoginController.login);
+            try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(login_controller.LoginController.index));
+            try ctrl.mapWithContext("POST", "login", @ptrCast(self), guarded(login_controller.LoginController.login));
             // 登出同时开 POST（表单/接口）与 GET（页面上的退出链接）
-            try ctrl.mapWithContext("POST", "logout", @ptrCast(self), login_controller.LoginController.logout);
-            try ctrl.mapWithContext("GET", "logout", @ptrCast(self), login_controller.LoginController.logout);
-            try ctrl.mapWithContext("GET", "status", @ptrCast(self), login_controller.LoginController.status);
+            try ctrl.mapWithContext("POST", "logout", @ptrCast(self), guarded(login_controller.LoginController.logout));
+            try ctrl.mapWithContext("GET", "logout", @ptrCast(self), guarded(login_controller.LoginController.logout));
+            try ctrl.mapWithContext("GET", "status", @ptrCast(self), guarded(login_controller.LoginController.status));
             try ctrl.mount(&app.router);
         }
+    }
+
+    /// 区域段校验（大小写不敏感）：`/biz/...` 只在该区域当前为 `Biz` 时生效。
+    pub fn areaMatches(c: *router.Ctx, area: []const u8) bool {
+        const segment = c.param("area") orelse return false;
+        return std.ascii.eqlIgnoreCase(segment, area);
+    }
+
+    /// 给控制器动作包一层区域校验：区域不匹配直接 404（改区域名后旧地址立即失效）。
+    fn guarded(
+        comptime action: fn (?*anyopaque, *router.Ctx) anyerror!controller_mod.ActionResult,
+    ) fn (?*anyopaque, *router.Ctx) anyerror!controller_mod.ActionResult {
+        return struct {
+            fn call(raw: ?*anyopaque, c: *router.Ctx) anyerror!controller_mod.ActionResult {
+                const self = castSelf(raw);
+                if (!areaMatches(c, self.areaName())) return .{ .response = router.Response.notFound() };
+                return action(raw, c);
+            }
+        }.call;
     }
 
     fn newController(self: *AdminArea, prefix: []const u8) !*controller_mod.Controller {
@@ -239,7 +292,7 @@ pub fn renderView(
     view: []const u8,
     model: zzig.web.Value,
 ) !ActionResult {
-    return switch (self.views.render(c.arena, self.area, controller, view, model)) {
+    return switch (self.views.render(c.arena, self.areaName(), controller, view, model)) {
         .html => |html| .{ .response = router.Response.html(html) },
         .fail => |message| blk: {
             zzig.Logger.err("[ZDsMallUI] {s}", .{message});

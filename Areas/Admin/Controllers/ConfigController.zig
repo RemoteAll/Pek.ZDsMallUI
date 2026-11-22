@@ -52,7 +52,7 @@ pub const ConfigController = struct {
         if (admin_area.isAjax(c)) {
             return .{ .response = try controller_mod.jsonResult(c.arena, 0, "保存成功", null) };
         }
-        const route = try area_mod.routePrefix(c.arena, self.area);
+        const route = try area_mod.routePrefix(c.arena, self.areaName());
         const back_url = try std.fmt.allocPrint(c.arena, "{s}/config/index", .{route});
         return admin_area.renderPrompt(self, c, "保存成功", true, back_url);
     }
@@ -66,7 +66,7 @@ pub const ConfigController = struct {
     ) !zzig.web.Value {
         const display_name = try self.backend.displayName(arena);
         const settings = try self.backend.settings(arena);
-        const route = try area_mod.routePrefix(arena, self.area);
+        const route = try area_mod.routePrefix(arena, self.areaName());
 
         if (settings != .object) return error.BackendSettingsNotObject;
 
@@ -78,7 +78,7 @@ pub const ConfigController = struct {
         try builder.put("displayName", .{ .string = display_name });
         try builder.put("userName", .{ .string = user });
         try builder.put("saved", .{ .boolean = saved });
-        try builder.put("areaName", .{ .string = self.area });
+        try builder.put("areaName", .{ .string = self.areaName() });
         try builder.put("areaRoute", .{ .string = route });
 
         // 多语言列表（C# 从 Language.FindByStatus() 取；Zig 侧由数据源提供，缺省为空）

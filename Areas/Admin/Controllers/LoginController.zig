@@ -92,7 +92,7 @@ pub const LoginController = struct {
                     try data.writer.writeAll(",\"isAdmin\":");
                     try data.writer.writeAll(if (user.is_admin) "true" else "false");
                     try data.writer.writeAll(",\"home\":");
-                    try zzig.web.value.writeJsonString(&data.writer, self.home);
+                    try zzig.web.value.writeJsonString(&data.writer, self.homePath());
                     if (issued) |token| {
                         try data.writer.writeAll(",\"token\":");
                         try zzig.web.value.writeJsonString(&data.writer, token.token);
@@ -111,7 +111,7 @@ pub const LoginController = struct {
                     return .{ .response = response };
                 }
 
-                const target = admin_area.safeRedirect(return_url) orelse self.home;
+                const target = admin_area.safeRedirect(return_url) orelse self.homePath();
                 var response = try router.Response.redirectAlloc(c.arena, target);
                 if (self.auth) |auth| {
                     if (issued) |token| {
@@ -199,12 +199,12 @@ pub const LoginController = struct {
         return_url: []const u8,
     ) !zzig.web.Value {
         const display_name = try self.backend.displayName(arena);
-        const route = try area_mod.routePrefix(arena, self.area);
+        const route = try area_mod.routePrefix(arena, self.areaName());
 
         var builder = zzig.web.ObjectBuilder.init(arena);
         try builder.str("title", try std.fmt.allocPrint(arena, "登录 - {s}", .{display_name}));
         try builder.str("displayName", display_name);
-        try builder.str("areaName", self.area);
+        try builder.str("areaName", self.areaName());
         try builder.str("areaRoute", route);
         try builder.str("userName", user);
         try builder.str("returnUrl", return_url);
