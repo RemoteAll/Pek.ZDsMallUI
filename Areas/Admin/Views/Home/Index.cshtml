@@ -169,8 +169,24 @@
                 return true;
             }
 
+            // 点顶部一级菜单：切到该组，并**自动打开该组的第一项子菜单**（对齐 C# `openItem`：
+            // 清掉旧高亮 → 显示对应分组 → 取 `>li:first` 加载并加 `selected`）。
             navLinks.forEach(function (a) {
-                a.addEventListener('click', function () { showGroup(a.getAttribute('data-group')); });
+                a.addEventListener('click', function () {
+                    var key = a.getAttribute('data-group');
+                    showGroup(key);
+                    var groupEl = null;
+                    groups.forEach(function (g) { if (g.getAttribute('data-group') === key) { groupEl = g; } });
+                    var first = groupEl ? groupEl.querySelector('a[data-url]') : null;
+                    if (!first) { return; }
+                    var url = first.getAttribute('data-url');
+                    frame.src = url;
+                    markSelected(first);
+                    if (location.hash !== '#' + url) {
+                        if (history.replaceState) { history.replaceState(null, '', '#' + url); }
+                        else { location.hash = url; }
+                    }
+                });
             });
 
             items.forEach(function (a) {
