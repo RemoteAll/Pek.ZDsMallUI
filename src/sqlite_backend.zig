@@ -125,11 +125,8 @@ pub const SqliteBackend = struct {
         }
         zzig.Logger.info("[ZDsMallUI] 数据库就绪：{s} / {d} 张表", .{ @tagName(self.dal.opts.provider), self.dal.model.tables.len });
 
-        try self.migrateLegacyAdminUsers();
         try self.seedDefaultUser();
         try self.ensureAllUserDetails();
-        try self.migrateLegacySettingTable();
-        try self.normalizeConfigKeys();
         return self;
     }
 
@@ -271,143 +268,6 @@ pub const SqliteBackend = struct {
             if (row.values[0].asI64()) |id| try ids.append(self.allocator, id);
         }
         for (ids.items) |id| try self.ensureUserDetailLocked(id);
-    }
-
-    /// 旧版自造表 `AdminUser` → C# `User`（**表数据复用**：老库升级后账号不丢、口令不用重设）。
-    ///
-    /// 只读旧表：表名与列名是历史常量，且这条 `SELECT` 仅用于**一次性迁移**，
-    /// 新库没有这张表时直接跳过（`SELECT`/`WHERE` 各库通用，不含方言语法）。
-    fn migrateLegacyAdminUsers(self: *SqliteBackend) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        const has_legacy = self.hasLegacyTable("AdminUser") catch false;
-        if (!has_legacy) return;
-
-        const rows = self.session.queryRows("SELECT UserName, Password, DisplayName, IsAdmin, Enable, LanguageId FROM AdminUser", &.{}) catch |e| {
-            zzig.Logger.warn("[ZDsMallUI] 读取旧 `AdminUser` 失败（{s}）：旧数据未迁移，旧表保留", .{@errorName(e)});
-            return;
-        };
-        var migrated: usize = 0;
-        for (rows) |row| {
-            if (row.values.len < 6) continue;
-            const name = switch (row.values[0]) {
-                .text => |t| t,
-                else => continue,
-            };
-            if (name.len == 0) continue;
-
-            const ref = try self.dal.table("User");
-            var w = zcode.Where.init(self.allocator);
-            defer w.deinit();
-            _ = try w.eq("Name", .{ .text = name });
-            if (try ref.count(self.session, &w) > 0) continue; // 已有同名 C# 账号：不覆盖
-
-            const is_admin = (row.values[3].asI64() orelse 0) != 0;
-            const enabled = (row.values[4].asI64() orelse 0) != 0;
-            var user = User{
-                .Name = name,
-                .Password = switch (row.values[1]) {
-                    .text => |t| t,
-                    else => "",
-                },
-                .DisplayName = switch (row.values[2]) {
-                    .text => |t| t,
-                    else => "",
-                },
-                .Sex = 0,
-                .RoleID = if (is_admin) 1 else 3,
-                .Enable = enabled,
-                .Ex1 = if (is_admin) 1 else 0,
-                .UpdateUser = "",
-            };
-            const id = try zcode.entity.insert(&self.dal, &user, self.session);
-            try self.ensureUserDetailLocked(id);
-
-            // 旧语言偏好 → `UserDetail.LanguageId`
-            const lang = row.values[5].asI64() orelse 0;
-            if (lang > 0) {
-                const detail = try self.dal.table("UserDetail");
-                var wd = zcode.Where.init(self.allocator);
-                defer wd.deinit();
-                _ = try wd.eq("Id", .{ .int = id });
-                _ = try detail.updateOne(self.session, &.{zcode.dbtable.field("LanguageId", .{ .int = lang })}, &wd, id);
-            }
-            migrated += 1;
-        }
-        zzig.Logger.info("[ZDsMallUI] 旧 `AdminUser` 已迁移到 C# `User` 表：{d} 个账号（旧表保留）", .{migrated});
-    }
-
-    /// 旧框架表 `Setting(Key, Value)` → `Config(Category, Name, Value, Remark)`。
-    fn migrateLegacySettingTable(self: *SqliteBackend) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        const has_legacy = self.hasLegacyTable("Setting") catch false;
-        if (!has_legacy) return;
-
-        const rows = self.session.queryRows("SELECT Key, Value FROM Setting", &.{}) catch |e| {
-            zzig.Logger.warn("[ZDsMallUI] 读取旧 `Setting` 失败（{s}）：旧数据未迁移，旧表保留", .{@errorName(e)});
-            return;
-        };
-        var migrated: usize = 0;
-        for (rows) |row| {
-            if (row.values.len < 2) continue;
-            const key = switch (row.values[0]) {
-                .text => |t| t,
-                else => continue,
-            };
-            const value = switch (row.values[1]) {
-                .text => |t| t,
-                else => continue,
-            };
-            if (key.len == 0) continue;
-
-            const ref = try self.dal.table("Config");
-            var w = zcode.Where.init(self.allocator);
-            defer w.deinit();
-            _ = try w.eq("Name", .{ .text = key });
-            if (try ref.count(self.session, &w) > 0) continue; // 已有新键：不覆盖
-            try self.putSettingLocked(key, value);
-            migrated += 1;
-        }
-        if (migrated > 0) zzig.Logger.info("[ZDsMallUI] 旧 `Setting` 表已迁移到 `Config`：{d} 个键（旧表保留）", .{migrated});
-    }
-
-    /// 历史遗留的 camelCase 配置键 → C# 的 PascalCase（`siteName` → `SiteName`）。
-    fn normalizeConfigKeys(self: *SqliteBackend) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        const ref = try self.dal.table("Config");
-        var changed: usize = 0;
-        for (backend_mod.DEFAULT_SETTINGS) |entry| {
-            if (std.mem.eql(u8, entry.key, entry.store_key)) continue;
-
-            var w_old = zcode.Where.init(self.allocator);
-            defer w_old.deinit();
-            _ = try w_old.eq("Name", .{ .text = entry.key });
-            if (try ref.count(self.session, &w_old) == 0) continue;
-
-            var w_new = zcode.Where.init(self.allocator);
-            defer w_new.deinit();
-            _ = try w_new.eq("Name", .{ .text = entry.store_key });
-            if (try ref.count(self.session, &w_new) > 0) continue; // 已有新键：旧键留着给运维确认
-
-            _ = try ref.updateOne(self.session, &.{zcode.dbtable.field("Name", .{ .text = entry.store_key })}, &w_old, 0);
-            changed += 1;
-        }
-        if (changed > 0) {
-            zzig.Logger.info("[ZDsMallUI] 已规范化 {d} 个历史配置键名（camelCase → C# 的 PascalCase）", .{changed});
-        }
-    }
-
-    /// 旧表是否存在（迁移用；表名是常量，`SELECT ... WHERE 1 = 0` 各库通用）。
-    fn hasLegacyTable(self: *SqliteBackend, name: []const u8) !bool {
-        const sql = try std.fmt.allocPrint(self.allocator, "SELECT 1 FROM {s} WHERE 1 = 0", .{name});
-        defer self.allocator.free(sql);
-        _ = self.session.queryRows(sql, &.{}) catch return false;
-        return true;
     }
 
     // ───────────────────────── AdminBackend 实现 ─────────────────────────
