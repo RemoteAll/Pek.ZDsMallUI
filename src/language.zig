@@ -193,6 +193,8 @@ pub const Store = struct {
     /// 数据库路径（`null` = 纯内存：只用内置文案，不支持管理页写库）
     db_path: ?[]const u8 = null,
     languages: []Language = &.{},
+    /// 语言包是否已经尝试过「内置文案落库」（避免 reload 递归重复做）。
+    resources_seeded: bool = false,
     /// `culture_id` → (key → value)
     resources: std.StringHashMapUnmanaged(std.StringHashMapUnmanaged([]const u8)) = .empty,
     mutex: zzig.compat.Mutex = .{},
@@ -323,6 +325,81 @@ pub const Store = struct {
             try self.ensureSeedLanguages(db_path);
             try self.reload();
         }
+
+        // 语言包：表为空时把内置文案**落库一次**。
+        //
+        // 为什么需要（2026-11-23 用户反馈「语言包每一行为什么没有删除功能」）：
+        // 未落库的键在列表里是**虚拟行**（`id = 0`），模板只在 `row.id > 0` 时渲染
+        // 复选框与「删除」（与 C# `LocaleStringResource` 同口径）；表空 → 全部是虚拟行 → 用户看不到删除。
+        // C# 那张表本来就有完整数据，这里把两边对齐。
+        //
+        // **只表空时跑一次**：之后删除就是删除，不会重启又回来（与 C# 一致）。
+        if (!self.resources_seeded and self.resources.count() == 0) {
+            self.resources_seeded = true;
+            self.ensureSeedResources(db_path) catch |err| {
+                zzig.Logger.warn("[ZDsMallUI] 语言包初始化失败（{s}）：列表仍会显示内置文案（只读）", .{@errorName(err)});
+            };
+            try self.reload();
+        }
+    }
+
+    /// 把内置文案按「每个启用的语言」写进 `LocaleStringResource`（仅首次、表空时调用）。
+    fn ensureSeedResources(self: *Store, db_path: []const u8) !void {
+        var lib = try sqlite.Lib.load(self.allocator);
+        defer lib.deinit();
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        defer db.close();
+
+        const Target = struct { id: i32, english: bool };
+        var targets: std.ArrayList(Target) = .empty;
+        defer targets.deinit(self.allocator);
+
+        var arena_state = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+
+        if (db.prepare(self.allocator, "SELECT Id, LanguageCulture, UniqueSeoCode FROM Language WHERE Status = 1 ORDER BY DisplayOrder")) |stmt_in| {
+            var stmt = stmt_in;
+            defer stmt.finalize();
+            try stmt.bindAll(&.{});
+            while (stmt.hasRow()) {
+                const row = try stmt.readRow(arena);
+                try targets.append(self.allocator, .{
+                    .id = rowInt(row, "Id"),
+                    .english = isEnglish(rowText(row, "LanguageCulture")) or isEnglish(rowText(row, "UniqueSeoCode")),
+                });
+            }
+        } else |err| {
+            zzig.Logger.warn("[ZDsMallUI] 语言包初始化：读语言表失败（{s}）", .{@errorName(err)});
+            return err;
+        }
+        if (targets.items.len == 0) return;
+
+        const sql =
+            \\INSERT INTO LocaleStringResource (CultureId, [LanKey], LanValue, UpdateTime)
+            \\VALUES (?, ?, ?, datetime('now'))
+            \\ON CONFLICT(CultureId, [LanKey]) DO NOTHING
+        ;
+        var stmt = try db.prepare(self.allocator, sql);
+        defer stmt.finalize();
+
+        var rows_written: usize = 0;
+        for (targets.items) |target| {
+            for (BUILTIN_STRINGS) |entry| {
+                stmt.reset();
+                try stmt.bindAll(&.{
+                    .{ .int = target.id },
+                    .{ .text = entry.publicKey() },
+                    .{ .text = if (target.english) entry.en else entry.zh },
+                });
+                try stmt.run();
+                rows_written += 1;
+            }
+        }
+        zzig.Logger.info(
+            "[ZDsMallUI] 语言包初始化：{d} 种语言 × {d} 条内置文案已落库（共写入 {d} 条，之后每行可编辑 / 删除）",
+            .{ targets.items.len, BUILTIN_STRINGS.len, rows_written },
+        );
     }
 
     fn setBuiltinLanguages(self: *Store) !void {
