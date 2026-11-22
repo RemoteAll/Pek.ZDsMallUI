@@ -173,7 +173,7 @@
             </tr>
         </tfoot>
     </table>
-    <ul class="pagination">@Model.pageHtml</ul>
+    <ul class="pagination">@Raw(Model.pageHtml)</ul>
 </div>
 <script>
     // 与 C# 完全一致：删除走 `Delete?Ids=`（JSON 回执），批量删除复用公共 JS 的 `submit_delete_batch()`。

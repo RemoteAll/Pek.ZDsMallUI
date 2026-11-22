@@ -492,16 +492,36 @@ pub fn renderView(
     view: []const u8,
     model: zzig.web.Value,
 ) !ActionResult {
+    // 页面底部「服务端耗时」：从 renderView 入口到视图渲染完。
+    // 注：不含此前的鉴权/取数（那些在各控制器里，本函数拿不到）；前台门户的口径是
+    // 「收到请求 → 输出完成」，后台这里明确标注为「渲染」以免误读。
+    const started = nowMillis();
     // 与用户语言相关的装配统一放这里：所有后台页面的 `@Model.lang.*` 都能用
     const localized = withLanguage(self, c.arena, currentUser(c), model) catch model;
     return switch (self.views.render(c.arena, self.areaName(), controller, view, localized)) {
-        .html => |html| .{ .response = router.Response.html(html) },
+        .html => |html| .{ .response = router.Response.html(try injectRenderMs(c.arena, html, nowMillis() - started)) },
         .fail => |message| blk: {
             zzig.Logger.err("[ZDsMallUI] {s}", .{message});
             const envelope = try controller_mod.jsonResult(c.arena, 500, message, null);
             break :blk .{ .response = envelope };
         },
     };
+}
+
+/// 当前时刻（毫秒）。Zig 0.17 把 `std.time.*Timestamp` 都移除了，统一走 zzig 的兼容层。
+fn nowMillis() i64 {
+    return @intCast(@divTrunc(zzig.compat.nanoTimestamp(), 1_000_000));
+}
+
+/// 把 layout 里的 `<!--render-ms-->` 占位换成实际毫秒数（占位符才能量到渲染本身）。
+fn injectRenderMs(arena: std.mem.Allocator, html: []const u8, ms: i64) ![]const u8 {
+    const needle = "<!--render-ms-->";
+    if (std.mem.indexOf(u8, html, needle) == null) return html;
+    const replacement = try std.fmt.allocPrint(arena, "{d}", .{ms});
+    const size = std.mem.replacementSize(u8, html, needle, replacement);
+    const out = try arena.alloc(u8, size);
+    _ = std.mem.replace(u8, html, needle, replacement, out);
+    return out;
 }
 
 /// 给模型补 `lang` / `groups`（后台页面通用）。

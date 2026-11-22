@@ -65,6 +65,15 @@
             }
         })();
     </script>
-    @await RenderSectionAsync("Scripts", false)
+    <!-- 服务端耗时（右下角小角标）：渲染入口 → 输出完，不含网络 -->
+    <div class="server-timing" title="服务端渲染耗时：renderView 入口 → 视图输出完成，不含网络与前置取数">渲染 <!--render-ms--> ms</div>
+    <style>
+        .server-timing {
+            position: fixed; right: 10px; bottom: 8px; z-index: 99;
+            padding: 2px 8px; border-radius: 10px; font-size: 12px;
+            background: rgba(0, 0, 0, .06); color: #6b7280; pointer-events: none;
+            font-family: ui-monospace, Consolas, monospace;
+        }
+    </style>    @await RenderSectionAsync("Scripts", false)
 </body>
 </html>

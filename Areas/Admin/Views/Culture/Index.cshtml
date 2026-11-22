@@ -87,7 +87,7 @@
             </tr>
         </tfoot>
     </table>
-    <ul class="pagination">@Model.pageHtml</ul>
+    <ul class="pagination">@Raw(Model.pageHtml)</ul>
 </div>
 <script>
     // 与 C# `Culture/Index.cshtml` 一致：删除走 `Delete?Ids=`，由 `dsLayerConfirm` 发 AJAX（JSON 回执）。
