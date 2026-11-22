@@ -151,6 +151,11 @@ pub const SqliteBackend = struct {
         zzig.Logger.info("[ZDsMallUI] 数据库就绪：{s} / {d} 张表", .{ @tagName(self.dal.opts.provider), self.dal.model.tables.len });
 
         try self.seedDefaultUser();
+        // 角色 seed 失败**不能让整个后端起不来**（用户数据比内置角色重要）：
+        // 记一条 warn，后台角色页会显示为空，手动新增即可。
+        self.seedDefaultRoles() catch |err| {
+            zzig.Logger.warn("[ZDsMallUI] 初始化内置角色失败（{s}）：角色列表可能为空，可在后台手动新增", .{@errorName(err)});
+        };
         try self.ensureAllUserDetails();
         return self;
     }
@@ -174,6 +179,15 @@ pub const SqliteBackend = struct {
     /// `resetResults()` 把对方的行集冲掉。调用方用 `dal.openSession()` 自己开一个（并自己负责 deinit）。
     pub fn dbDal(self: *SqliteBackend) *zcode.Dal {
         return &self.dal;
+    }
+
+    /// 全进程复用的一条 `Session`（堆分配、地址稳定）。
+    ///
+    /// 后台的自定义页面（角色 / 管理员 / 菜单）要直接用 ORM 读写，**必须复用这条连接**：
+    /// `Dal.openSession()` 每次新建连接（实测单条 INSERT ~1.1s），不能每请求开一个。
+    /// 并发由后台的 `mutex` 串行化（与库内部一致）。
+    pub fn dbSession(self: *SqliteBackend) *zcode.Session {
+        return self.session;
     }
 
     // ───────────────────────── 公共小工具 ─────────────────────────
@@ -254,6 +268,40 @@ pub const SqliteBackend = struct {
     }
 
     // ───────────────────────── 种子与迁移 ─────────────────────────
+
+    /// 角色表为空时补三个内置角色（与 C# XCode Membership 默认一致：`RoleID = 1` 是超级管理员）。
+    ///
+    /// 为什么要 seed：`seedDefaultUser` 把默认账号放在 `RoleID = 1`，角色页若为空会显示「还有没角色」
+    /// 却又有用户指向它；C# 侧这三条是框架初始化就有的。
+    fn seedDefaultRoles(self: *SqliteBackend) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const ref = try self.dal.table("Role");
+        if (try ref.count(self.session, null) > 0) return;
+
+        const rows = [_]struct { name: []const u8, role_type: i32, sort: i32 }{
+            .{ .name = "系统管理员", .role_type = 1, .sort = 1 },
+            .{ .name = "管理员", .role_type = 1, .sort = 2 },
+            .{ .name = "普通用户", .role_type = 2, .sort = 3 },
+        };
+        for (rows) |row| {
+            const now = zcode.DateTime.nowLocal();
+            _ = try ref.insert(self.session, &.{
+                zcode.dbtable.field("Name", .{ .text = row.name }),
+                zcode.dbtable.field("Type", .{ .int = row.role_type }),
+                zcode.dbtable.field("Enable", .{ .int = 1 }),
+                // 内置角色：允许改排序/启用/权限，但不允许改名与删除（C# `Role.IsSystem` 语义）
+                zcode.dbtable.field("IsSystem", .{ .int = 1 }),
+                zcode.dbtable.field("Sort", .{ .int = row.sort }),
+                // `CreateTime` / `UpdateTime` 在表上是 **NOT NULL 且无默认**（C# 由拦截器填），
+                // 走 `TableRef.insert` 不会自动带审计列 —— 必须显式传（否则 NOT NULL constraint failed）。
+                zcode.dbtable.field("CreateTime", .{ .datetime = now }),
+                zcode.dbtable.field("UpdateTime", .{ .datetime = now }),
+            });
+        }
+        zzig.Logger.info("[ZDsMallUI] 已初始化 {d} 个内置角色（系统管理员 / 管理员 / 普通用户）", .{rows.len});
+    }
 
     fn seedDefaultUser(self: *SqliteBackend) !void {
         self.mutex.lock();

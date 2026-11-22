@@ -5,7 +5,7 @@
 //! Zig 没有反射，所以改成**显式注册**（等价声明）：
 //!
 //! ```zig
-//! try ui.addMenu(.{ .group = "settings", .title_key = "menu.languages",
+//! try ui.addMenu(.{ .group = "settings", .title_key = "语言包",
 //!     .name = "languages", .url = "{area}/languages", .icon = "&#xe71f;", .order = 93 });
 //! ```
 //!
@@ -130,13 +130,13 @@ pub const Registry = struct {
     /// 业务系统的菜单不要写进库：项目启动时用 `ui.addMenu(...)` 注册自己的
     /// —— 等价于 C# 在**业务项目**控制器上标 `[DHMenu(...)]`（框架扫描的是当前项目程序集）。
     pub fn addDefaults(self: *Registry) !void {
-        try self.addGroup(.{ .key = "console", .title_key = "menu.console", .order = 10 });
-        try self.addGroup(.{ .key = "settings", .title_key = "menu.settings", .order = 20 });
+        try self.addGroup(.{ .key = "console", .title_key = "控制台", .order = 10 });
+        try self.addGroup(.{ .key = "settings", .title_key = "设置", .order = 20 });
 
         try self.addItem(.{
             .group = "console",
             .name = "welcome",
-            .title_key = "menu.welcome",
+            .title_key = "欢迎页",
             .url = "{area}/home/dashboard",
             .icon = "&#xe6a7;",
             .order = 10,
@@ -145,10 +145,19 @@ pub const Registry = struct {
         try self.addItem(.{
             .group = "settings",
             .name = "site_settings",
-            .title_key = "menu.site_settings",
+            .title_key = "站点设置",
             .url = "{area}/config/index",
             .icon = "&#xe614;",
             .order = 20,
+        });
+        // 角色权限 / 管理员：**通用后台能力**（C# 在 Membership 通用模块里），随库注册
+        try self.addItem(.{
+            .group = "settings",
+            .name = "role",
+            .title_key = "角色权限管理",
+            .url = "{area}/role/index",
+            .icon = "&#xe67b;",
+            .order = 38,
         });
     }
 
@@ -235,11 +244,11 @@ test "菜单：注册 + 排序 + {area} 替换 + 空分组过滤" {
     var registry = Registry.init(testing.allocator, testing.io);
     defer registry.deinit();
     try registry.addDefaults();
-    try registry.addGroup(.{ .key = "product", .title_key = "menu.product", .order = 30 });
+    try registry.addGroup(.{ .key = "product", .title_key = "产品", .order = 30 });
     try registry.addItem(.{
         .group = "product",
         .name = "goods",
-        .title_key = "menu.languages",
+        .title_key = "语言包",
         .url = "{area}/goods",
         .icon = "&#xe600;",
         .order = 5,
@@ -261,7 +270,8 @@ test "菜单：注册 + 排序 + {area} 替换 + 空分组过滤" {
         .list => |items| items,
         else => @panic("items 不是列表"),
     };
-    try testing.expectEqual(@as(usize, 1), settings_items.len);
+    // settings 组现在有「站点设置 + 角色权限管理」两项（role 是 2026-11-23 新增的通用后台能力）
+    try testing.expectEqual(@as(usize, 2), settings_items.len);
     try testing.expectEqualStrings("/biz/config/index", settings_items[0].get("url").?.asString().?);
 
     const product_items = switch (groups[2].get("items").?) {
@@ -291,7 +301,8 @@ test "菜单：重复注册同名项是 upsert，不产生重复" {
         else => @panic("groups 不是列表"),
     };
     try testing.expectEqual(@as(usize, 2), groups.len);
-    try testing.expectEqual(@as(usize, 1), switch (groups[1].get("items").?) {
+    // settings 组：站点设置 + 角色权限管理（重复 addDefaults 不应叠加）
+    try testing.expectEqual(@as(usize, 2), switch (groups[1].get("items").?) {
         .list => |items| items.len,
         else => 0,
     });

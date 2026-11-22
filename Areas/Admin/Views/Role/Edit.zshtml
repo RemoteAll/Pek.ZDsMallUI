@@ -1,0 +1,79 @@
+@{
+    Layout = "Shared/_Layout";
+}
+@* 角色 - 新增/编辑（版式照抄库内 `Culture/AddCulture.zshtml`）。 *@
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>@T("角色权限管理")</h3>
+                <h5>系统内置角色不允许改名；权限串格式与 C# 一致（如 `1#3,2#7`）</h5>
+            </div>
+            <ul class="tab-base ds-row">
+                <li><a href="@Model.areaRoute/role/index"><span>@T("管理")</span></a></li>
+                <li><a href="javascript:void(0)" class="current"><span>@Model.title</span></a></li>
+            </ul>
+        </div>
+    </div>
+
+    @if (Model.error != "") {
+    <div class="explanation"><div class="title"><h4 style="color:#c00;">@Model.error</h4></div></div>
+    }
+    @if (Model.ready == false) {
+    <div class="explanation"><div class="title"><h4 style="color:#c00;">数据库未启用：无法保存角色</h4></div></div>
+    }
+
+    <form id="doc_form" method="post" action="@Model.areaRoute/role/save">
+        <input type="hidden" name="id" value="@Model.id" />
+        <table class="ds-default-table">
+            <tbody>
+                <tr>
+                    <td class="required"><label class="validation">角色名称</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform">
+                        @if (Model.row.isSystem) {
+                        <input type="text" value="@Model.row.name" name="name" id="name" class="infoTableInput w300" readonly>
+                        <span style="color:#888;">系统内置角色不可改名。</span>
+                        } else {
+                        <input type="text" value="@Model.row.name" name="name" id="name" class="infoTableInput w300" required>
+                        }
+                    </td>
+                </tr>
+                <tr>
+                    <td><label class="validation">@T("状态")</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform onoff">
+                        <label for="enable_1" class="cb-enable @if (Model.row.enable) {<text>selected</text>}"><span>@T("启用")</span></label>
+                        <label for="enable_0" class="cb-disable @if (Model.row.enable == false) {<text>selected</text>}"><span>@T("停用")</span></label>
+                        <input id="enable_1" name="enable" value="1" type="radio" @if (Model.row.enable) {<text>checked</text>}>
+                        <input id="enable_0" name="enable" value="0" type="radio" @if (Model.row.enable == false) {<text>checked</text>}>
+                    </td>
+                </tr>
+                <tr>
+                    <td><label class="validation">排序（小的在前）</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform"><input type="number" value="@Model.row.sort" name="sort" id="sort" class="infoTableInput w100"></td>
+                </tr>
+                <tr>
+                    <td><label class="validation">权限串（与 C# `Role.Permission` 同格式，可留空）</label></td>
+                </tr>
+                <tr class="noborder">
+                    <td class="vatop rowform">
+                        <textarea name="permission" id="permission" class="infoTableInput" rows="6" style="width:100%;font-family:Consolas,monospace;">@Model.row.permission</textarea>
+                    </td>
+                </tr>
+            </tbody>
+            <tfoot>
+                <tr class="tfoot">
+                    <td>
+                        <input type="submit" class="btn" value="@T("保存")">
+                        <a class="btn" href="@Model.areaRoute/role/index">@T("返回")</a>
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </form>
+</div>

@@ -9,18 +9,18 @@
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
-                <h3>@Model.lang.menu_culture</h3>
+                <h3>@T("多语言")</h3>
                 <h5></h5>
             </div>
             <ul class="tab-base ds-row">
-                <li><a href="@Model.areaRoute/culture/index" class="current"><span>@Model.lang.common_manage</span></a></li>
-                <li><a href="@Model.areaRoute/culture/addculture"><span>@Model.lang.common_add</span></a></li>
+                <li><a href="@Model.areaRoute/culture/index" class="current"><span>@T("管理")</span></a></li>
+                <li><a href="@Model.areaRoute/culture/addculture"><span>@T("新增")</span></a></li>
             </ul>
         </div>
     </div>
 
     @if (Model.saved != "") {
-    <div class="explanation"><div class="title"><h4>@Model.lang.common_saved</h4></div></div>
+    <div class="explanation"><div class="title"><h4>@T("保存成功")</h4></div></div>
     }
     @if (Model.error != "") {
     <div class="explanation"><div class="title"><h4 style="color:#c00;">@Model.error</h4></div></div>
@@ -29,18 +29,18 @@
     <form method="get" name="formSearch" id="formSearch">
         <div class="ds-search-form">
             <dl>
-                <dt>@Model.lang.common_keyword</dt>
+                <dt>@T("关键字")</dt>
                 <dd><input type="text" value="@Model.keyword" name="name" class="txt"></dd>
                 <dd>
                     <select name="status">
-                        <option value="-1">@Model.lang.common_please_select</option>
-                        <option value="1" @if (Model.statusFilter == 1) {<text>selected</text>}>@Model.lang.common_enabled</option>
-                        <option value="0" @if (Model.statusFilter == 0) {<text>selected</text>}>@Model.lang.common_disabled</option>
+                        <option value="-1">@T("请选择")</option>
+                        <option value="1" @if (Model.statusFilter == 1) {<text>selected</text>}>@T("启用")</option>
+                        <option value="0" @if (Model.statusFilter == 0) {<text>selected</text>}>@T("停用")</option>
                     </select>
                 </dd>
             </dl>
             <div class="btn_group">
-                <input type="submit" class="btn" value="@Model.lang.common_search">
+                <input type="submit" class="btn" value="@T("搜索")">
             </div>
         </div>
     </form>
@@ -49,14 +49,14 @@
         <thead>
             <tr>
                 <th class="w24"></th>
-                <th>@Model.lang.common_title</th>
-                <th>@Model.lang.common_display_name</th>
-                <th>@Model.lang.page_culture_english</th>
-                <th>@Model.lang.page_culture_language</th>
-                <th>@Model.lang.page_culture_code</th>
-                <th>@Model.lang.common_default</th>
-                <th>@Model.lang.common_status</th>
-                <th>@Model.lang.common_actions</th>
+                <th>@T("标题")</th>
+                <th>@T("显示名称")</th>
+                <th>@T("英文名称")</th>
+                <th>@T("语言缩写")</th>
+                <th>@T("语言代码")</th>
+                <th>@T("默认")</th>
+                <th>@T("状态")</th>
+                <th>@T("操作")</th>
             </tr>
         </thead>
         <tbody>
@@ -68,11 +68,11 @@
                 <td>@row.englishName</td>
                 <td>@row.languageCulture</td>
                 <td>@row.code</td>
-                <td>@if (row.isDefault) {<span>@Model.lang.common_yes</span>} else {<span>@Model.lang.common_no</span>}</td>
-                <td>@if (row.enabled) {<span>@Model.lang.common_enabled</span>} else {<span>@Model.lang.common_disabled</span>}</td>
+                <td>@if (row.isDefault) {<span>@T("是")</span>} else {<span>@T("否")</span>}</td>
+                <td>@if (row.enabled) {<span>@T("启用")</span>} else {<span>@T("停用")</span>}</td>
                 <td>
-                    <a href="@Model.areaRoute/culture/editculture?id=@row.id" class="dsui-btn-edit">@Model.lang.common_edit</a>
-                    <a href="javascript:;" onclick="javascript:dsLayerConfirm('@Model.areaRoute/culture/delete?Ids=@row.id','@Model.lang.common_confirm_delete',@row.id)" class="dsui-btn-del">@Model.lang.common_delete</a>
+                    <a href="@Model.areaRoute/culture/editculture?id=@row.id" class="dsui-btn-edit">@T("编辑")</a>
+                    <a href="javascript:;" onclick="javascript:dsLayerConfirm('@Model.areaRoute/culture/delete?Ids=@row.id','@T("您确定要删除吗?")',@row.id)" class="dsui-btn-del">@T("删除")</a>
                 </td>
             </tr>
             }
@@ -81,8 +81,8 @@
             <tr class="tfoot">
                 <td><input type="checkbox" class="checkall" id="checkallBottom"></td>
                 <td colspan="8">
-                    <label for="checkallBottom">@Model.lang.common_select_all</label>
-                    &nbsp;&nbsp;<a href="JavaScript:void(0);" class="btn btn-small" onclick="submit_delete_batch()"><span>@Model.lang.common_delete</span></a>
+                    <label for="checkallBottom">@T("全选")</label>
+                    &nbsp;&nbsp;<a href="JavaScript:void(0);" class="btn btn-small" onclick="submit_delete_batch()"><span>@T("删除")</span></a>
                 </td>
             </tr>
         </tfoot>
@@ -94,6 +94,6 @@
     // 注意：**不要**改成原生 confirm —— 全项目禁止原生弹窗，且 JSON 回执不会刷新整页。
     function submit_delete(ids_str) {
         var _uri = "@Model.areaRoute/culture/delete?Ids=" + ids_str;
-        dsLayerConfirm(_uri, '@Model.lang.common_confirm_delete');
+        dsLayerConfirm(_uri, '@T("您确定要删除吗?")');
     }
 </script>

@@ -866,6 +866,8 @@ pub const Builder = struct {
         // 多语言 + 菜单注册表（后台页面统一从这里取文案与菜单）
         ui.admin_area.setLanguages(&ui.languages);
         ui.admin_area.setMenus(&ui.menus);
+        // 角色 / 管理员 / 菜单页用 ORM；复用后端的同一条长连接（没有 SQLite 时保持 null，页面显示提示）
+        if (ui.sqlite_backend_ptr) |be| ui.admin_area.setDal(be.dbDal(), be.dbSession());
 
         // 图形验证码（可选）：失败 3 次后登录页要求输入，挡住「换 IP 继续撞库」
         if (self.captcha_enabled) {

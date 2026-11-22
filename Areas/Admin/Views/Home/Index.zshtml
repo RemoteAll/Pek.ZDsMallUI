@@ -84,13 +84,13 @@
                     <span>@(Model.lang.user_greeting)，@Model.userName</span>
                     <div class="sub-meun">
                         <dl>
-                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>@Model.lang.user_home</a></dd>
-                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe640;</i>@Model.lang.user_clear_cache</a></dd>
+                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>@T("访问首页")</a></dd>
+                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe640;</i>@T("清除缓存")</a></dd>
                             @if (Model.hasLanguages) {
                             <dd class="has-child">
                                 @* 地球图标：iconfont 是商品分类图标库、没有 globe，所以用同风格内联 SVG
                                    （白色线条、随文字颜色走，尺寸/间距与 iconfont 图标一致） *@
-                                <a href="javascript:;"><svg class="nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3c2.6 2.8 2.6 15.2 0 18"></path><path d="M12 3c-2.6 2.8-2.6 15.2 0 18"></path></svg>@Model.lang.user_language</a>
+                                <a href="javascript:;"><svg class="nav-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3c2.6 2.8 2.6 15.2 0 18"></path><path d="M12 3c-2.6 2.8-2.6 15.2 0 18"></path></svg>@T("语言")</a>
                                 <div class="sub-meun2">
                                     <dl>
                                         @foreach (var lang in Model.languages) {
@@ -100,8 +100,8 @@
                                 </div>
                             </dd>
                             }
-                            <dd><a href="@Model.areaRoute/home/modifypw" target="main-frame"><i class="iconfont">&#xe67b;</i>@Model.lang.user_change_password</a></dd>
-                            <dd><a href="javascript:dsLayerConfirm('@Model.areaRoute/login/logout','@Model.lang.user_logout_confirm','logout')"><i class="iconfont">&#xe70c;</i>@Model.lang.user_logout</a></dd>
+                            <dd><a href="@Model.areaRoute/home/modifypw" target="main-frame"><i class="iconfont">&#xe67b;</i>@T("修改密码")</a></dd>
+                            <dd><a href="javascript:dsLayerConfirm('@Model.areaRoute/login/logout','@T("您确定退出吗?")','logout')"><i class="iconfont">&#xe70c;</i>@T("安全退出")</a></dd>
                         </dl>
                     </div>
                 </li>

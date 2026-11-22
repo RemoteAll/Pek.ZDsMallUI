@@ -10,11 +10,11 @@
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
-                <h3>@Model.lang.menu_site_settings</h3>
+                <h3>@T("站点设置")</h3>
                 <h5></h5>
             </div>
             <ul class="tab-base ds-row">
-                <li><a href="@Model.areaRoute/config/index" class="current"><span>@Model.lang.menu_site_settings</span></a></li>
+                <li><a href="@Model.areaRoute/config/index" class="current"><span>@T("站点设置")</span></a></li>
             </ul>
         </div>
     </div>
@@ -30,42 +30,42 @@
                 <div class="layui-tab-item layui-show">
                     <div class="ncap-form-default">
                         <dl>
-                            <dt>@Model.lang.page_config_site_name</dt>
+                            <dt>@T("网站名称")</dt>
                             <dd>
                                 <input id="SiteName" name="SiteName" value="@Model.siteName" class="input-txt" type="text">
                                 <span class="err"></span>
                             </dd>
                         </dl>
                         <dl>
-                            <dt>@Model.lang.page_config_seo_title</dt>
+                            <dt>@T("网站Seo标题")</dt>
                             <dd>
                                 <input id="SeoTitle" name="SeoTitle" value="@Model.seoTitle" class="input-txt" type="text">
                                 <span class="err"></span>
                             </dd>
                         </dl>
                         <dl>
-                            <dt>@Model.lang.page_config_seo_key</dt>
+                            <dt>@T("网站Seo关键字")</dt>
                             <dd>
                                 <input id="SeoKey" name="SeoKey" value="@Model.seoKey" class="input-txt" type="text">
                                 <span class="err"></span>
                             </dd>
                         </dl>
                         <dl>
-                            <dt>@Model.lang.page_config_seo_desc</dt>
+                            <dt>@T("网站Seo描述")</dt>
                             <dd>
                                 <input id="SeoDescribe" name="SeoDescribe" value="@Model.seoDescribe" class="input-txt" type="text">
                                 <span class="err"></span>
                             </dd>
                         </dl>
                         <dl>
-                            <dt>@Model.lang.page_config_icp</dt>
+                            <dt>@T("ICP备案号")</dt>
                             <dd>
                                 <input id="registration" name="registration" value="@Model.registration" class="input-txt" type="text">
                                 <span class="err"></span>
                             </dd>
                         </dl>
                         <dl>
-                            <dt>@Model.lang.page_config_copyright</dt>
+                            <dt>@T("版权")</dt>
                             <dd>
                                 <input id="copyright" name="copyright" value="@Model.copyright" class="input-txt" type="text">
                                 <span class="err"></span>
@@ -78,53 +78,53 @@
 
         <div class="ncap-form-default">
             <dl>
-                <dt>@Model.lang.page_config_system_name</dt>
+                <dt>@T("系统名称")</dt>
                 <dd>
                     <input id="DisplayName" name="DisplayName" value="@Model.displayName" class="input-txt" type="text">
                     <span class="err"></span>
-                    <p class="notic">@Model.lang.page_config_system_name_tip</p>
+                    <p class="notic">@T("系统名称，将显示在后台顶部欢迎信息等位置")</p>
                 </dd>
             </dl>
             <dl>
-                <dt>@Model.lang.page_config_domain</dt>
+                <dt>@T("网站域名")</dt>
                 <dd>
                     <input id="CurDomainUrl" name="CurDomainUrl" value="@Model.curDomainUrl" class="input-txt" type="text">
                     <span class="err"></span>
-                    <p class="notic">@Model.lang.page_config_domain_tip</p>
+                    <p class="notic">@T("网站的域名，必须 http:// 或 https:// 开头")</p>
                 </dd>
             </dl>
             <dl>
-                <dt>@Model.lang.page_config_company</dt>
+                <dt>@T("公司名称")</dt>
                 <dd>
                     <input id="companyname" name="companyname" value="@Model.company" class="input-txt" type="text">
                     <span class="err"></span>
-                    <p class="notic">@Model.lang.page_config_company_tip</p>
+                    <p class="notic">@T("公司名称，将会显示在底部等位置")</p>
                 </dd>
             </dl>
             <dl>
-                <dt>@Model.lang.page_config_tel</dt>
+                <dt>@T("客服联系电话")</dt>
                 <dd>
                     <input id="CustomerTel" name="CustomerTel" value="@Model.customerTel" class="input-txt" type="text">
                     <span class="err"></span>
-                    <p class="notic">@Model.lang.page_config_tel_tip</p>
+                    <p class="notic">@T("客服联系电话，将会显示在头部或者底部等位置")</p>
                 </dd>
             </dl>
             <dl>
-                <dt>@Model.lang.page_config_header_html</dt>
+                <dt>@T("前台页头")</dt>
                 <dd>
                     <textarea name="HeaderCustomHtml" id="HeaderCustomHtml">@Model.headerCustomHtml</textarea>
                     <span class="err"></span>
                 </dd>
             </dl>
             <dl>
-                <dt>@Model.lang.page_config_footer_html</dt>
+                <dt>@T("前台页脚")</dt>
                 <dd>
                     <textarea name="FooterCustomHtml" id="FooterCustomHtml">@Model.footerCustomHtml</textarea>
                     <span class="err"></span>
                 </dd>
             </dl>
             <dl>
-                <dt>@Model.lang.page_config_statistical</dt>
+                <dt>@T("流量统计配置")</dt>
                 <dd>
                     <textarea name="Statistical" id="Statistical">@Model.statistical</textarea>
                     <span class="err"></span>
@@ -132,7 +132,7 @@
             </dl>
             <dl>
                 <dt></dt>
-                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms[0].submit()">@Model.lang.common_save</a></dd>
+                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms[0].submit()">@T("保存")</a></dd>
             </dl>
         </div>
     </form>

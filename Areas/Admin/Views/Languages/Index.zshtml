@@ -83,18 +83,18 @@
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
-                <h3>@Model.lang.menu_languages</h3>
+                <h3>@T("语言包")</h3>
                 <h5></h5>
             </div>
             <ul class="tab-base ds-row">
-                <li><a href="@Model.areaRoute/languages/index" class="current"><span>@Model.lang.common_manage</span></a></li>
-                <li><a href="@Model.areaRoute/languages/addlanguages"><span>@Model.lang.common_add</span></a></li>
+                <li><a href="@Model.areaRoute/languages/index" class="current"><span>@T("管理")</span></a></li>
+                <li><a href="@Model.areaRoute/languages/addlanguages"><span>@T("新增")</span></a></li>
             </ul>
         </div>
     </div>
 
     @if (Model.saved != "") {
-    <div class="explanation"><div class="title"><h4>@Model.lang.common_saved</h4></div></div>
+    <div class="explanation"><div class="title"><h4>@T("保存成功")</h4></div></div>
     }
     @if (Model.error != "") {
     <div class="explanation"><div class="title"><h4 style="color:#c00;">@Model.error</h4></div></div>
@@ -121,10 +121,10 @@
                 <dd><input type="text" value="@Model.lanValue" name="lanValue" class="txt"></dd>
             </dl>
             <div class="btn_group">
-                <input type="submit" class="btn" value="@Model.lang.common_search">
-                <input type="submit" class="btnAdd" id="btnAdd" value="@Model.lang.common_add">
-                <input type="submit" class="btnExport" id="btnExport" value="@Model.lang.common_export">
-                <input type="submit" class="btnImport" id="btnImport" value="@Model.lang.common_import">
+                <input type="submit" class="btn" value="@T("搜索")">
+                <input type="submit" class="btnAdd" id="btnAdd" value="@T("新增")">
+                <input type="submit" class="btnExport" id="btnExport" value="@T("导出")">
+                <input type="submit" class="btnImport" id="btnImport" value="@T("导入")">
                 <input type="file" id="fileInput" accept=".csv,text/csv,text/plain" style="display: none;" />
             </div>
         </div>
@@ -134,10 +134,10 @@
         <thead>
             <tr>
                 <th class="w24"></th>
-                <th>@Model.lang.page_languages_key</th>
-                <th>@Model.lang.page_languages_language</th>
-                <th>@Model.lang.page_languages_value</th>
-                <th>@Model.lang.common_actions</th>
+                <th>@T("资源键")</th>
+                <th>@T("语言")</th>
+                <th>@T("翻译文本")</th>
+                <th>@T("操作")</th>
             </tr>
         </thead>
         <tbody>
@@ -150,14 +150,14 @@
                     <span class="display-value">@row.value</span>
                     <textarea class="edit-value" style="display: none; height:100px;">@row.value</textarea>
                     <div class="edit-actions" style="display: none;">
-                        <button class="btn-save">@Model.lang.common_save</button>
-                        <button class="btn-cancel">@Model.lang.common_cancel</button>
+                        <button class="btn-save">@T("保存")</button>
+                        <button class="btn-cancel">@T("取消")</button>
                     </div>
                 </td>
                 <td style="width:120px;">
-                    <a href="@Model.areaRoute/languages/editlanguages?key=@row.key" class="dsui-btn-edit">@Model.lang.common_edit</a>
+                    <a href="@Model.areaRoute/languages/editlanguages?key=@row.key" class="dsui-btn-edit">@T("编辑")</a>
                     @if (row.id > 0) {
-                    <a href="javascript:;" onclick="javascript:dsLayerConfirm('@Model.areaRoute/languages/delete?Ids=@row.id','@Model.lang.common_confirm_delete',@row.id)" class="dsui-btn-del">@Model.lang.common_delete</a>
+                    <a href="javascript:;" onclick="javascript:dsLayerConfirm('@Model.areaRoute/languages/delete?Ids=@row.id','@T("您确定要删除吗?")',@row.id)" class="dsui-btn-del">@T("删除")</a>
                     }
                 </td>
             </tr>
@@ -167,8 +167,8 @@
             <tr class="tfoot">
                 <td><input type="checkbox" class="checkall" id="checkallBottom"></td>
                 <td colspan="4">
-                    <label for="checkallBottom">@Model.lang.common_select_all</label>
-                    &nbsp;&nbsp;<a href="JavaScript:void(0);" class="btn btn-small" onclick="submit_delete_batch()"><span>@Model.lang.common_delete</span></a>
+                    <label for="checkallBottom">@T("全选")</label>
+                    &nbsp;&nbsp;<a href="JavaScript:void(0);" class="btn btn-small" onclick="submit_delete_batch()"><span>@T("删除")</span></a>
                 </td>
             </tr>
         </tfoot>
@@ -180,7 +180,7 @@
     // **不要**改成原生 confirm —— 全项目禁止原生弹窗。
     function submit_delete(ids_str) {
         var _uri = "@Model.areaRoute/languages/delete?Ids=" + ids_str;
-        dsLayerConfirm(_uri, '@Model.lang.common_confirm_delete');
+        dsLayerConfirm(_uri, '@T("您确定要删除吗?")');
     }
 
     // 翻译值点击就地编辑（对齐 C# `editable-cell` 交互）
@@ -259,7 +259,7 @@
                     }
                 },
                 error: function () {
-                    layer.msg('@Model.lang.common_error_request', { icon: 2 });
+                    layer.msg('@T("请求失败，请稍后重试")', { icon: 2 });
                     cell.find('.edit-value').val(originalValue);
                 }
             });
@@ -288,7 +288,7 @@
     $("#btnExport").click(function () {
         var cultureId = $("#cultureId").val();
         if (!cultureId || cultureId === "0") {
-            layer.msg('@Model.lang.page_languages_export_need_culture', { icon: 2 });
+            layer.msg('@T("请先选择语言再导出")', { icon: 2 });
             return false;
         }
         var form = $('<form></form>').attr('action', '@Model.areaRoute/languages/export').attr('method', 'GET');
@@ -327,7 +327,7 @@
                     }
                 },
                 error: function () {
-                    layer.msg('@Model.lang.common_error_request', { icon: 2 });
+                    layer.msg('@T("请求失败，请稍后重试")', { icon: 2 });
                 }
             });
         };

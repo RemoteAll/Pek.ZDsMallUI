@@ -25,6 +25,7 @@ const language_controllers = @import("LanguageControllers.zig");
 const config_controller = @import("ConfigController.zig");
 const home_controller = @import("HomeController.zig");
 const login_controller = @import("LoginController.zig");
+const role_controller = @import("RoleController.zig");
 
 const router = zzig.web.router;
 const controller_mod = zzig.web.controller;
@@ -68,6 +69,11 @@ pub const AdminArea = struct {
     languages: ?*@import("../../../src/deps.zig").language.Store = null,
     /// 菜单注册表（由门面注入；框架页顶部/左侧菜单从这里生成）
     menus: ?*@import("../../../src/deps.zig").menu.Registry = null,
+    /// 数据访问（SQLite 后端注入）：角色 / 管理员 / 菜单页直接用 ORM（不手写 SQL）。
+    /// `null` = 没启用数据库（内存后端），那几页会提示不可用。
+    dal: ?*@import("zcode").Dal = null,
+    /// 与 `dal` 配套的**长连接**（不能每请求 `openSession`：实测单条 INSERT ~1.1s）。
+    session: ?*@import("zcode").Session = null,
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
     /// 退役的旧快照（读线程可能还在用，延迟到 `deinit` 释放）
@@ -173,6 +179,12 @@ pub const AdminArea = struct {
     /// 注入菜单注册表（不注入则视图拿不到 `groups`）。
     pub fn setMenus(self: *AdminArea, registry: *@import("../../../src/deps.zig").menu.Registry) void {
         self.menus = registry;
+    }
+
+    /// 注入 Dal + 长连接（角色 / 管理员 / 菜单页用；`null` = 那几页只显示「数据库未启用」提示，不崩）。
+    pub fn setDal(self: *AdminArea, dal: ?*@import("zcode").Dal, session: ?*@import("zcode").Session) void {
+        self.dal = dal;
+        self.session = session;
     }
 
     /// 当前用户的后台界面语言：用户偏好 → 默认语言 → 0。
@@ -388,6 +400,17 @@ pub const AdminArea = struct {
             try ctrl.mapWithContext("GET", "addlanguages", @ptrCast(self), guarded(language_controllers.LanguagesController.addLanguagesCall));
             try ctrl.mapWithContext("GET", "editlanguages", @ptrCast(self), guarded(language_controllers.LanguagesController.editLanguagesCall));
             try ctrl.mapWithContext("POST", "savelanguages", @ptrCast(self), guarded(language_controllers.LanguagesController.saveLanguagesCall));
+            try ctrl.mount(&app.router);
+        }
+        {
+            // 角色权限管理（对齐 C# `RoleController`）：列表 / 新增 / 编辑 / 删除
+            const prefix = try std.fmt.allocPrint(self.allocator, "{s}/role", .{segment});
+            defer self.allocator.free(prefix);
+            const ctrl = try self.newController(prefix);
+            try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(role_controller.RoleController.index));
+            try ctrl.mapWithContext("GET", "edit", @ptrCast(self), guarded(role_controller.RoleController.edit));
+            try ctrl.mapWithContext("POST", "save", @ptrCast(self), guarded(role_controller.RoleController.save));
+            try ctrl.mapWithContext("GET", "delete", @ptrCast(self), guarded(role_controller.RoleController.delete));
             try ctrl.mount(&app.router);
         }
         {

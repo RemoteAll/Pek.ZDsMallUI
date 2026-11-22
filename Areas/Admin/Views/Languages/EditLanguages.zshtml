@@ -11,19 +11,19 @@
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
-                <h3>@Model.lang.menu_languages</h3>
+                <h3>@T("语言包")</h3>
                 <h5></h5>
             </div>
             <ul class="tab-base ds-row">
-                <li><a href="@Model.areaRoute/languages/index"><span>@Model.lang.common_manage</span></a></li>
-                <li><a href="javascript:void(0)" class="current"><span>@Model.lang.common_edit</span></a></li>
+                <li><a href="@Model.areaRoute/languages/index"><span>@T("管理")</span></a></li>
+                <li><a href="javascript:void(0)" class="current"><span>@T("编辑")</span></a></li>
             </ul>
         </div>
     </div>
     <form id="doc_form" method="post" action="@Model.areaRoute/languages/savelanguages">
         <input type="hidden" name="document_id" value="1" />
         <div class="layui-form-item">
-            <label class="layui-form-label"><span class="red">*</span>@Model.lang.page_languages_key</label>
+            <label class="layui-form-label"><span class="red">*</span>@T("资源键")</label>
             <div class="layui-input-inline">
                 <input type="text" id="LanKey" name="LanKey" autocomplete="off" class="w830" value="@Model.lanKey" readonly>
             </div>
@@ -33,13 +33,13 @@
             <label class="layui-form-label">@item.name</label>
             <div class="layui-input-block">
                 <input type="hidden" name="c_@item.id" value="@item.id" />
-                <textarea placeholder="@Model.lang.page_languages_input" class="layui-textarea" name="v_@item.id">@item.value</textarea>
+                <textarea placeholder="@T("请输入内容")" class="layui-textarea" name="v_@item.id">@item.value</textarea>
             </div>
             <div class="col-sm-3"></div>
         </div>
         }
         <div>
-            <input class="btn" type="submit" value="@Model.lang.common_submit" />
+            <input class="btn" type="submit" value="@T("提交")" />
         </div>
     </form>
 </div>

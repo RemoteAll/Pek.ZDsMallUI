@@ -9,7 +9,7 @@
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta content="width=device-width, initial-scale=1" name="viewport">
-    <title>@Model.lang.menu_welcome - @Model.displayName</title>
+    <title>@T("欢迎页") - @Model.displayName</title>
     <link rel="stylesheet" href="~/static/admin/css/admin.css">
     <link rel="stylesheet" href="~/static/plugins/js/layui/css/layui.css">
 </head>
@@ -26,24 +26,24 @@
 
         <div class="ncap-form-default">
             <dl>
-                <dt>@Model.lang.page_dashboard_site_name</dt>
+                <dt>@T("站点名称")</dt>
                 <dd>@Model.siteName</dd>
             </dl>
             <dl>
-                <dt>@Model.lang.page_dashboard_area</dt>
+                <dt>@T("当前区域")</dt>
                 <dd><code>@Model.areaName</code>（<code>@Model.areaRoute</code> @(Model.lang.page_dashboard_area_desc)）</dd>
             </dl>
             <dl>
-                <dt>@Model.lang.page_dashboard_upload</dt>
+                <dt>@T("上传目录")</dt>
                 <dd>@Model.uploadPrefix</dd>
             </dl>
             <dl>
-                <dt>@Model.lang.page_dashboard_version</dt>
+                <dt>@T("后台版本")</dt>
                 <dd>@Model.version</dd>
             </dl>
             @if (Model.hasMenus) {
             <dl>
-                <dt>@Model.lang.page_dashboard_shortcuts</dt>
+                <dt>@T("快捷入口")</dt>
                 <dd>
                     @foreach (var menu in Model.menus) {
                     <a href="@menu.url" class="btn" title="@menu.desc" style="margin:0 8px 8px 0;">@menu.name</a>

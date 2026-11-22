@@ -24,117 +24,117 @@ const value = zzig.web.value;
 
 /// 内置文案。
 ///
-/// 字段含义：
-/// - `key`：**视图别名**（`@Model.lang.menu_console` 这种 ASCII 标识符）；
-/// - `zh`：中文文案，**同时就是对外的资源键**（后台列表 / CSV / DB `LanKey` 都用它）；
+/// 字段含义（2026-11-23 起，与 C# 完全对齐）：
+/// - `key`：**资源键 = 中文源文**（「控制台」「添加成功」），后台列表 / CSV / DB `LanKey` 都用它；
 /// - `en`：英文文案（键不变，只变值）。
 ///
-/// **新增界面文案**：在这里加一行，再在视图里写 `@Model.lang.<标识符>`。
+/// 视图里写 `@T("控制台")`（zzig 模板的 `@T(...)` 是内建翻译调用，与 C# `T(...)` 同款），
+/// **不再**用 `@Model.lang.menu_console` 这种 ASCII 别名 —— 代码里也看不到 `menu.console` 了。
 pub const Builtin = struct {
     key: []const u8,
-    zh: []const u8,
     en: []const u8,
 
-    /// 对外键（= 中文原文）。
+    /// 对外键（= `key` 本身；保留方法名是为了调用点语义清晰）。
     pub fn publicKey(entry: Builtin) []const u8 {
-        return entry.zh;
+        return entry.key;
     }
 };
 
 pub const BUILTIN_STRINGS = [_]Builtin{
-    .{ .key = "menu.console", .zh = "控制台", .en = "Console" },
-    .{ .key = "menu.settings", .zh = "设置", .en = "Settings" },
-    .{ .key = "menu.product", .zh = "产品", .en = "Products" },
-    .{ .key = "menu.website", .zh = "网站", .en = "Website" },
-    .{ .key = "menu.welcome", .zh = "欢迎页", .en = "Dashboard" },
-    .{ .key = "menu.site_settings", .zh = "站点设置", .en = "Site settings" },
-    .{ .key = "menu.culture", .zh = "多语言", .en = "Cultures" },
-    .{ .key = "menu.languages", .zh = "语言包", .en = "Languages" },
-    .{ .key = "menu.article", .zh = "单页文章", .en = "Articles" },
-    .{ .key = "menu.admin_user", .zh = "管理员管理", .en = "Administrators" },
-    .{ .key = "user.greeting", .zh = "您好", .en = "Hello" },
-    .{ .key = "user.home", .zh = "访问首页", .en = "Visit site" },
-    .{ .key = "user.clear_cache", .zh = "清除缓存", .en = "Clear cache" },
-    .{ .key = "user.change_password", .zh = "修改密码", .en = "Change password" },
-    .{ .key = "user.logout", .zh = "安全退出", .en = "Sign out" },
-    .{ .key = "user.logout_confirm", .zh = "您确定退出吗?", .en = "Sign out now?" },
-    .{ .key = "user.language", .zh = "语言", .en = "Language" },
-    .{ .key = "common.save", .zh = "保存", .en = "Save" },
-    .{ .key = "common.delete", .zh = "删除", .en = "Delete" },
-    .{ .key = "common.edit", .zh = "编辑", .en = "Edit" },
-    .{ .key = "common.add", .zh = "新增", .en = "Add" },
-    .{ .key = "common.search", .zh = "搜索", .en = "Search" },
-    .{ .key = "common.export", .zh = "导出", .en = "Export" },
-    .{ .key = "common.import", .zh = "导入", .en = "Import" },
-    .{ .key = "common.cancel", .zh = "取消", .en = "Cancel" },
-    .{ .key = "common.error_request", .zh = "请求失败，请稍后重试", .en = "Request failed, please retry" },
-    .{ .key = "common.back", .zh = "返回", .en = "Back" },
-    .{ .key = "common.actions", .zh = "操作", .en = "Actions" },
-    .{ .key = "common.status", .zh = "状态", .en = "Status" },
-    .{ .key = "common.enabled", .zh = "启用", .en = "Enabled" },
-    .{ .key = "common.disabled", .zh = "停用", .en = "Disabled" },
-    .{ .key = "common.default", .zh = "默认", .en = "Default" },
-    .{ .key = "common.manage", .zh = "管理", .en = "Manage" },
-    .{ .key = "common.title", .zh = "标题", .en = "Title" },
-    .{ .key = "common.display_name", .zh = "显示名称", .en = "Display name" },
-    .{ .key = "common.keyword", .zh = "关键字", .en = "Keyword" },
-    .{ .key = "common.please_select", .zh = "请选择", .en = "Please select" },
-    .{ .key = "common.yes", .zh = "是", .en = "Yes" },
-    .{ .key = "common.no", .zh = "否", .en = "No" },
-    .{ .key = "common.select_all", .zh = "全选", .en = "Select all" },
-    .{ .key = "common.confirm_delete", .zh = "您确定要删除吗?", .en = "Delete this item?" },
-    .{ .key = "common.submit", .zh = "提交", .en = "Submit" },
-    .{ .key = "page.culture.flag", .zh = "旗帜", .en = "Flag" },
-    .{ .key = "page.culture.domain", .zh = "域名", .en = "Domain" },
-    .{ .key = "page.culture.is_default", .zh = "是否默认", .en = "Is default" },
-    .{ .key = "page.culture.remark", .zh = "描述", .en = "Remark" },
-    .{ .key = "page.languages.input", .zh = "请输入内容", .en = "Enter text" },
-    .{ .key = "page.culture.language", .zh = "语言缩写", .en = "Language culture" },
-    .{ .key = "common.name", .zh = "名称", .en = "Name" },
-    .{ .key = "common.order", .zh = "排序", .en = "Order" },
-    .{ .key = "common.saved", .zh = "保存成功", .en = "Saved" },
-    .{ .key = "page.dashboard.title", .zh = "管理后台", .en = "Admin panel" },
-    .{ .key = "page.dashboard.user", .zh = "当前用户", .en = "Current user" },
-    .{ .key = "page.dashboard.site_name", .zh = "站点名称", .en = "Site name" },
-    .{ .key = "page.dashboard.area", .zh = "当前区域", .en = "Area" },
-    .{ .key = "page.dashboard.area_desc", .zh = "路由前缀，可随配置改名", .en = "route prefix, configurable" },
-    .{ .key = "page.dashboard.upload", .zh = "上传目录", .en = "Upload folder" },
-    .{ .key = "page.dashboard.version", .zh = "后台版本", .en = "Version" },
-    .{ .key = "page.dashboard.shortcuts", .zh = "快捷入口", .en = "Shortcuts" },
-    .{ .key = "page.login.title", .zh = "登录", .en = "Sign in" },
-    .{ .key = "page.login.username", .zh = "用户名", .en = "Username" },
-    .{ .key = "page.login.password", .zh = "密码", .en = "Password" },
-    .{ .key = "page.login.captcha", .zh = "验证码", .en = "Captcha" },
-    .{ .key = "page.login.captcha_tip", .zh = "看不清？点击刷新", .en = "Click to refresh" },
-    .{ .key = "page.modifypw.title", .zh = "修改密码", .en = "Change password" },
-    .{ .key = "page.modifypw.old", .zh = "原密码", .en = "Current password" },
-    .{ .key = "page.modifypw.new", .zh = "新密码", .en = "New password" },
-    .{ .key = "page.modifypw.confirm", .zh = "确认新密码", .en = "Confirm new password" },
-    .{ .key = "page.culture.title", .zh = "多语言管理", .en = "Cultures" },
-    .{ .key = "page.culture.english", .zh = "英文名称", .en = "English name" },
-    .{ .key = "page.culture.code", .zh = "语言代码", .en = "Culture code" },
-    .{ .key = "page.languages.title", .zh = "语言包管理", .en = "Language resources" },
-    .{ .key = "page.languages.key", .zh = "资源键", .en = "Key" },
-    .{ .key = "page.languages.value", .zh = "翻译文本", .en = "Value" },
-    .{ .key = "page.languages.language", .zh = "语言", .en = "Language" },
-    .{ .key = "page.languages.export_need_culture", .zh = "请先选择语言再导出", .en = "Please select a language before exporting" },
-    .{ .key = "page.config.site_name", .zh = "网站名称", .en = "Site name" },
-    .{ .key = "page.config.seo_title", .zh = "网站Seo标题", .en = "SEO title" },
-    .{ .key = "page.config.seo_key", .zh = "网站Seo关键字", .en = "SEO keywords" },
-    .{ .key = "page.config.seo_desc", .zh = "网站Seo描述", .en = "SEO description" },
-    .{ .key = "page.config.icp", .zh = "ICP备案号", .en = "ICP license" },
-    .{ .key = "page.config.copyright", .zh = "版权", .en = "Copyright" },
-    .{ .key = "page.config.system_name", .zh = "系统名称", .en = "System name" },
-    .{ .key = "page.config.system_name_tip", .zh = "系统名称，将显示在后台顶部欢迎信息等位置", .en = "Shown in the admin header" },
-    .{ .key = "page.config.domain", .zh = "网站域名", .en = "Site domain" },
-    .{ .key = "page.config.domain_tip", .zh = "网站的域名，必须 http:// 或 https:// 开头", .en = "Must start with http:// or https://" },
-    .{ .key = "page.config.company", .zh = "公司名称", .en = "Company" },
-    .{ .key = "page.config.company_tip", .zh = "公司名称，将会显示在底部等位置", .en = "Shown in the footer" },
-    .{ .key = "page.config.tel", .zh = "客服联系电话", .en = "Service phone" },
-    .{ .key = "page.config.tel_tip", .zh = "客服联系电话，将会显示在头部或者底部等位置", .en = "Shown in header or footer" },
-    .{ .key = "page.config.header_html", .zh = "前台页头", .en = "Header HTML" },
-    .{ .key = "page.config.footer_html", .zh = "前台页脚", .en = "Footer HTML" },
-    .{ .key = "page.config.statistical", .zh = "流量统计配置", .en = "Analytics snippet" },
+    .{ .key = "控制台", .en = "Console" },
+    .{ .key = "设置", .en = "Settings" },
+    .{ .key = "产品", .en = "Products" },
+    .{ .key = "网站", .en = "Website" },
+    .{ .key = "欢迎页", .en = "Dashboard" },
+    .{ .key = "站点设置", .en = "Site settings" },
+    .{ .key = "多语言", .en = "Cultures" },
+    .{ .key = "语言包", .en = "Languages" },
+    .{ .key = "单页文章", .en = "Articles" },
+    .{ .key = "管理员管理", .en = "Administrators" },
+    .{ .key = "角色权限管理", .en = "Roles" },
+    .{ .key = "您好", .en = "Hello" },
+    .{ .key = "访问首页", .en = "Visit site" },
+    .{ .key = "清除缓存", .en = "Clear cache" },
+    .{ .key = "修改密码", .en = "Change password" },
+    .{ .key = "安全退出", .en = "Sign out" },
+    .{ .key = "您确定退出吗?", .en = "Sign out now?" },
+    .{ .key = "语言", .en = "Language" },
+    .{ .key = "保存", .en = "Save" },
+    .{ .key = "删除", .en = "Delete" },
+    .{ .key = "编辑", .en = "Edit" },
+    .{ .key = "新增", .en = "Add" },
+    .{ .key = "搜索", .en = "Search" },
+    .{ .key = "导出", .en = "Export" },
+    .{ .key = "导入", .en = "Import" },
+    .{ .key = "取消", .en = "Cancel" },
+    .{ .key = "请求失败，请稍后重试", .en = "Request failed, please retry" },
+    .{ .key = "返回", .en = "Back" },
+    .{ .key = "操作", .en = "Actions" },
+    .{ .key = "状态", .en = "Status" },
+    .{ .key = "启用", .en = "Enabled" },
+    .{ .key = "停用", .en = "Disabled" },
+    .{ .key = "默认", .en = "Default" },
+    .{ .key = "管理", .en = "Manage" },
+    .{ .key = "标题", .en = "Title" },
+    .{ .key = "显示名称", .en = "Display name" },
+    .{ .key = "关键字", .en = "Keyword" },
+    .{ .key = "请选择", .en = "Please select" },
+    .{ .key = "是", .en = "Yes" },
+    .{ .key = "否", .en = "No" },
+    .{ .key = "全选", .en = "Select all" },
+    .{ .key = "您确定要删除吗?", .en = "Delete this item?" },
+    .{ .key = "提交", .en = "Submit" },
+    .{ .key = "旗帜", .en = "Flag" },
+    .{ .key = "域名", .en = "Domain" },
+    .{ .key = "是否默认", .en = "Is default" },
+    .{ .key = "描述", .en = "Remark" },
+    .{ .key = "请输入内容", .en = "Enter text" },
+    .{ .key = "语言缩写", .en = "Language culture" },
+    .{ .key = "名称", .en = "Name" },
+    .{ .key = "排序", .en = "Order" },
+    .{ .key = "保存成功", .en = "Saved" },
+    .{ .key = "管理后台", .en = "Admin panel" },
+    .{ .key = "当前用户", .en = "Current user" },
+    .{ .key = "站点名称", .en = "Site name" },
+    .{ .key = "当前区域", .en = "Area" },
+    .{ .key = "路由前缀，可随配置改名", .en = "route prefix, configurable" },
+    .{ .key = "上传目录", .en = "Upload folder" },
+    .{ .key = "后台版本", .en = "Version" },
+    .{ .key = "快捷入口", .en = "Shortcuts" },
+    .{ .key = "登录", .en = "Sign in" },
+    .{ .key = "用户名", .en = "Username" },
+    .{ .key = "密码", .en = "Password" },
+    .{ .key = "验证码", .en = "Captcha" },
+    .{ .key = "看不清？点击刷新", .en = "Click to refresh" },
+    .{ .key = "修改密码", .en = "Change password" },
+    .{ .key = "原密码", .en = "Current password" },
+    .{ .key = "新密码", .en = "New password" },
+    .{ .key = "确认新密码", .en = "Confirm new password" },
+    .{ .key = "多语言管理", .en = "Cultures" },
+    .{ .key = "英文名称", .en = "English name" },
+    .{ .key = "语言代码", .en = "Culture code" },
+    .{ .key = "语言包管理", .en = "Language resources" },
+    .{ .key = "资源键", .en = "Key" },
+    .{ .key = "翻译文本", .en = "Value" },
+    .{ .key = "语言", .en = "Language" },
+    .{ .key = "请先选择语言再导出", .en = "Please select a language before exporting" },
+    .{ .key = "网站名称", .en = "Site name" },
+    .{ .key = "网站Seo标题", .en = "SEO title" },
+    .{ .key = "网站Seo关键字", .en = "SEO keywords" },
+    .{ .key = "网站Seo描述", .en = "SEO description" },
+    .{ .key = "ICP备案号", .en = "ICP license" },
+    .{ .key = "版权", .en = "Copyright" },
+    .{ .key = "系统名称", .en = "System name" },
+    .{ .key = "系统名称，将显示在后台顶部欢迎信息等位置", .en = "Shown in the admin header" },
+    .{ .key = "网站域名", .en = "Site domain" },
+    .{ .key = "网站的域名，必须 http:// 或 https:// 开头", .en = "Must start with http:// or https://" },
+    .{ .key = "公司名称", .en = "Company" },
+    .{ .key = "公司名称，将会显示在底部等位置", .en = "Shown in the footer" },
+    .{ .key = "客服联系电话", .en = "Service phone" },
+    .{ .key = "客服联系电话，将会显示在头部或者底部等位置", .en = "Shown in header or footer" },
+    .{ .key = "前台页头", .en = "Header HTML" },
+    .{ .key = "前台页脚", .en = "Footer HTML" },
+    .{ .key = "流量统计配置", .en = "Analytics snippet" },
 };
 
 /// 默认语言代码（没有默认语言记录时使用）。
@@ -390,7 +390,7 @@ pub const Store = struct {
                 try stmt.bindAll(&.{
                     .{ .int = target.id },
                     .{ .text = entry.publicKey() },
-                    .{ .text = if (target.english) entry.en else entry.zh },
+                    .{ .text = if (target.english) entry.en else entry.key },
                 });
                 try stmt.run();
                 rows_written += 1;
@@ -661,42 +661,23 @@ pub const Store = struct {
 
     /// 取文案：DB 覆盖 > 内置（按语言代码选中文/英文）> 键名本身。
     ///
-    /// `key` 可以传**视图别名**（`menu.console`）或**对外中文键**（「控制台」）：
-    /// - 先按别名找到内置条目（找不到就当它就是对外键）；
-    /// - DB 查「中文键」，未命中再查一次别名（兼容早期存英文键的数据）；
-    /// - 都没有 → 内置英文/中文 → 最后回退键名本身（对齐 C# 「某语言没这个键就用键名」）。
+    /// `key` 就是**中文资源键**（如「控制台」）：DB 命中用译文，否则英文语言给 `en`、中文语言给键本身。
+    /// 对齐 C# 「某语言没这个键就用键名」。
     pub fn text(self: *const Store, culture_id: i32, key: []const u8) []const u8 {
         var buf: [16]u8 = undefined;
         const culture_key = std.fmt.bufPrint(&buf, "{d}", .{culture_id}) catch "";
 
-        const entry = findByAlias(key);
-        const public_key = if (entry) |e| e.publicKey() else key;
-
         if (self.resources.get(culture_key)) |inner| {
-            if (inner.get(public_key)) |translated| {
+            if (inner.get(key)) |translated| {
                 if (translated.len > 0) return translated;
             }
-            // 兼容：早期数据把英文别名当键存过
-            if (entry != null) {
-                if (inner.get(key)) |legacy| {
-                    if (legacy.len > 0) return legacy;
-                }
-            }
         }
-        // 内置：按语言代码挑；未知语言回退中文
         const lang = self.byId(culture_id);
         const english = if (lang) |row| isEnglish(row.code) else false;
-        if (entry) |e| return if (english) e.en else e.zh;
-        return key;
-    }
-
-    fn findByAlias(alias: []const u8) ?Builtin {
         for (BUILTIN_STRINGS) |entry| {
-            if (std.mem.eql(u8, entry.key, alias)) return entry;
-            // 允许直接拿中文键来查
-            if (std.mem.eql(u8, entry.zh, alias)) return entry;
+            if (std.mem.eql(u8, entry.key, key)) return if (english) entry.en else entry.key;
         }
-        return null;
+        return key;
     }
 
     fn byId(self: *const Store, culture_id: i32) ?Language {
@@ -706,12 +687,13 @@ pub const Store = struct {
         return null;
     }
 
-    /// 构建视图用的 `lang` 对象：`@Model.lang.<标识符>`。
+    /// 构建视图用的 `lang` 对象：`{ 中文键 → 译文 }`。
+    ///
+    /// 视图写 `@T("控制台")`，zzig 模板在渲染期按这个对象查（取不到就用键名本身）。
     pub fn buildLangObject(self: *const Store, arena: std.mem.Allocator, culture_id: i32) !value.Value {
         var builder = value.ObjectBuilder.init(arena);
         for (BUILTIN_STRINGS) |entry| {
-            const ident = try identifier(arena, entry.key);
-            try builder.str(ident, self.text(culture_id, entry.key));
+            try builder.str(entry.publicKey(), self.text(culture_id, entry.key));
         }
         return builder.finish();
     }
@@ -845,12 +827,12 @@ fn rowInt(row: sqlite.Row, name: []const u8) i32 {
 
 const testing = std.testing;
 
-test "多语言：key 规范成 Razor 标识符" {
+test "多语言：key 规范成 Razor 标识符（遗留工具函数）" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    try testing.expectEqualStrings("menu_settings", try identifier(arena, "menu.settings"));
+    // 视图已改用 `@T("中文键")`，这个函数只给「自定义 ASCII 键」用；保留行为测试
     try testing.expectEqualStrings("page_languages_value", try identifier(arena, "page-languages.value"));
     try testing.expectEqualStrings("k_1a", try identifier(arena, "1a"));
 }
@@ -864,10 +846,10 @@ test "多语言：内置文案按语言代码回退（无 DB）" {
     // 两列并存（对齐 C#）：Url 缩写 `zh` + 语言缩写 `zh-CN`
     try testing.expectEqualStrings("zh", zh.code);
     try testing.expectEqualStrings("zh-CN", zh.language_culture);
-    try testing.expectEqualStrings("设置", store.text(zh.id, "menu.settings"));
+    try testing.expectEqualStrings("设置", store.text(zh.id, "设置"));
 
     const en = store.find("en-US").?;
-    try testing.expectEqualStrings("Settings", store.text(en.id, "menu.settings"));
+    try testing.expectEqualStrings("Settings", store.text(en.id, "设置"));
     // 未知键原样返回（不会崩）
     try testing.expectEqualStrings("no.such.key", store.text(zh.id, "no.such.key"));
 }
@@ -883,7 +865,7 @@ test "多语言：lang 对象包含全部内置键" {
 
     const lang = try store.buildLangObject(arena, store.defaultLanguage().?.id);
     for (BUILTIN_STRINGS) |entry| {
-        const ident = try identifier(arena, entry.key);
-        try testing.expect(lang.get(ident) != null);
+        // `@T("控制台")` 按中文键取值：lang 对象里必须有全部内置键
+        try testing.expect(lang.get(entry.key) != null);
     }
 }
