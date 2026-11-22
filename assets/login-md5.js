@@ -1,6 +1,7 @@
 // 登录口令的前端 MD5（对齐「登录口令规范」A 档：明文不出浏览器）。
 //
-// - 提交前把 `#Password` 的明文替换为 **32 位小写 MD5(UTF-8(明文))**；
+// - 提交前把 `#Password` 的明文替换为 **32 位 MD5(UTF-8(明文))，并转大写**
+//   （与 C# 登录页 `CryptoJS.MD5(...).toUpperCase()` 一致；后端校验忽略大小写）；
 // - 后端同时接受明文与 MD5（`password.verify` 的兼容分支），所以脚本没加载时照样能登录；
 // - 只用标准库 `TextEncoder` 取 UTF-8 字节（中文口令与 C#/Rust 端一致）；
 // - 刻意不依赖任何第三方库：本文件由服务端 `materializeDefaults()` 落地到
@@ -75,7 +76,7 @@
         return hex;
     }
 
-    // 暴露给页面与控制台自检用（与 C#/Rust 端同口径：小写十六进制）
+    // 自检用：返回**小写**十六进制（实测提交走 `bind()` 里的 `.toUpperCase()`，与 C# 一致）
     window.dsmalluiMd5 = md5Hex;
 
     function bind() {
