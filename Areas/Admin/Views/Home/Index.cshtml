@@ -1,3 +1,4 @@
+@* pek-zdsmallui:generated v3 *@
 @* pek-zdsmallui:generated v2 *@
 @{
     Layout = null;
@@ -19,8 +20,19 @@
     <link rel="stylesheet" href="/static/plugins/iconfont/iconfont.css">
     <style>
         html, body { height: 100%; margin: 0; }
-        .admincp-container { height: calc(100% - 60px); }
+        /* 框架页自身**不滚动**：滚动只发生在右侧 iframe 里。
+           不写这条的话，`.admincp-container`（admin.css 里 height:100%）叠加 55px 头
+           会把文档撑高 55px → 右侧出现垂直滚动条。 */
+        body.admincp { overflow: hidden; }
+        /* 头部实高是 55px（admin.css `.admincp-header{height:55px}`）。
+           这里只是背景层，高度由绝对定位的左右两栏撑，不要再给 100%。 */
+        .admincp-container { height: auto; }
         .admincp-container-right iframe { width: 100%; height: 100%; display: block; border: 0; }
+        /* 右上角菜单右对齐：原版 `.sub-meun{left:0!important}` 从 li 左边起算，
+           `.fr` 只有「您好，xxx」一个 li 且贴着视口右边 → 菜单向右溢出 20px（出水平滚动条）。
+           原版 C# 之所以没事，是因为 `.fr` 后面还有「清除缓存 / 访问首页」两个 li 撑着宽度。 */
+        .admincp-header .navbar .fr li .sub-meun { left: auto !important; right: 0; }
+        .admincp-header .navbar .fr li dl:after { left: auto; right: 12px; }
     </style>
 </head>
 <body class="admincp">

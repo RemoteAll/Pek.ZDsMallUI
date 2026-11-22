@@ -226,7 +226,7 @@ fn containsKey(keys: []const []const u8, key: []const u8) bool {
 /// 规则：文件首行是本标记 → 视为「库生成」，版本不同就自动升级；用户手改过的（没有标记）一律保留。
 /// 库再改视图时把 `v` 后面的数字递增即可。
 pub const generated_marker_prefix = "@* pek-zdsmallui:generated ";
-pub const generated_marker = "@* pek-zdsmallui:generated v2 *@";
+pub const generated_marker = "@* pek-zdsmallui:generated v3 *@";
 
 /// 把内置默认视图落到**指定区域**目录（只补缺失 / 升级库生成的旧版，不覆盖用户手改）。
 ///
