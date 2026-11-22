@@ -235,6 +235,7 @@ pub const LoginController = struct {
         try builder.str("error", error_message orelse "");
         try builder.boolean("requireCaptcha", needsCaptcha(self, fail_user, client_ip));
         try builder.str("captchaUrl", "/CaptCha/GetCheckCode");
+        try builder.put("lang", try admin_area.langObject(self, arena, user));
         return builder.finish();
     }
 };

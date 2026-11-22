@@ -372,6 +372,32 @@ fn readProjectModel(allocator: std.mem.Allocator, io: std.Io, path: []const u8) 
     return text;
 }
 
+/// JWT 密钥持久化：库里 `Setting.jwtSecret` 有就复用，没有就生成一次并写库。
+///
+/// 为什么必须持久化：密钥一变，所有已签发的令牌立刻失效 —— 表现在用户侧就是
+/// 「每次重启后台都要重新登录」。生成用进程级 CSPRNG（32 字节 → hex），
+/// `HS256:` 前缀与 `Auth` 的解析约定一致。
+fn ensureJwtSecret(allocator: std.mem.Allocator, be: *sqlite_backend_mod.SqliteBackend) ![]const u8 {
+    const setting_key = "jwtSecret";
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    if (try be.setting(arena_state.allocator(), setting_key)) |existing| {
+        return allocator.dupe(u8, existing);
+    }
+
+    var buffer: [32]u8 = undefined;
+    const source = std.Random.IoSource{ .io = zzig.compat.currentIo() };
+    source.interface().bytes(&buffer);
+    const hex = std.fmt.bytesToHex(buffer, .lower);
+    const secret = try std.fmt.allocPrint(allocator, "HS256:{s}", .{hex});
+    errdefer allocator.free(secret);
+
+    try be.putSetting(setting_key, secret);
+    zzig.Logger.info("[ZDsMallUI] 已生成 JWT 密钥并保存到 Setting 表（重启后令牌仍然有效）", .{});
+    return secret;
+}
+
 /// 构造器（对应 C# `PekStartup.ConfigureServices` 的配置面）。
 pub const Builder = struct {
     allocator: std.mem.Allocator,
@@ -715,8 +741,26 @@ pub const Builder = struct {
             }
         }
 
+        // JWT 密钥：**显式配置 > 库里持久化 > 首次随机生成并落库**。
+        //
+        // 以前没有配置时是「进程内随机」，后果是每次重启所有已登录用户全部掉线
+        // （日志里那句「重启后旧令牌全部失效」）。这里首次生成后写进 `Setting` 表，
+        // 之后重启复用同一密钥 —— 运维既不用配、也不会掉线。
+        // 仍未启 storage（纯内存后端）时保持进程内随机：那种模式本来就不持久化任何东西。
+        var jwt_secret_owned: ?[]const u8 = null;
+        const jwt_secret = if (self.jwt_secret.len > 0) self.jwt_secret else blk: {
+            if (sqlite_backend) |be| {
+                jwt_secret_owned = ensureJwtSecret(self.allocator, be) catch |e| {
+                    zzig.Logger.warn("[ZDsMallUI] 读取/生成持久化 JWT 密钥失败（{s}）：本次仍用进程内随机密钥", .{@errorName(e)});
+                    break :blk "";
+                };
+                if (jwt_secret_owned) |secret| break :blk secret;
+            }
+            break :blk "";
+        };
+
         const auth = try auth_mod.Auth.init(self.allocator, self.io, normalized_area, .{
-            .secret = self.jwt_secret,
+            .secret = jwt_secret,
             .issuer = self.jwt_issuer,
             .expire_minutes = self.jwt_expire_minutes,
             .cookie_secure = self.cookie_secure,

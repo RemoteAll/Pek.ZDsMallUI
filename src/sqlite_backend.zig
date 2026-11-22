@@ -134,6 +134,31 @@ pub const SqliteBackend = struct {
         return .{ .ptr = @ptrCast(self), .vtable = &vtable };
     }
 
+    /// 读一条 `Setting`（不存在返回 `null`）。给库内部用（如 JWT 密钥持久化）。
+    ///
+    /// 与 `settingsImpl` 的区别：那个是把整表读成页面用的对象，这个按 key 取单值、写进 `arena`。
+    pub fn setting(self: *SqliteBackend, arena: std.mem.Allocator, key: []const u8) !?[]const u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const row = try self.queryOne(arena, "SELECT Value FROM Setting WHERE Key = ?", &.{.{ .text = key }});
+        if (row.names.len == 0) return null;
+        const v = row.get("Value") orelse return null;
+        return switch (v) {
+            .text => |text| if (text.len > 0) text else null,
+            else => null,
+        };
+    }
+
+    /// 写一条 `Setting`（upsert）。给库内部用（如 JWT 密钥持久化）。
+    pub fn putSetting(self: *SqliteBackend, key: []const u8, value: []const u8) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.exec(
+            "INSERT INTO Setting (Key, Value) VALUES (?, ?) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value",
+            &.{ .{ .text = key }, .{ .text = value } },
+        );
+    }
+
     /// 用 `Pek.ZCode` 做增量建表（幂等：再跑一次不会重复建/不会报错）。
     ///
     /// `project_xml` 非 null 时，先**在模型对象层合并**（不拼 XML 字符串、更不跑两套 Dal），

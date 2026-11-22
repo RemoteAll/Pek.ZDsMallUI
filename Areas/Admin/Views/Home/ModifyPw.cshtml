@@ -18,7 +18,7 @@
         <div class="fixed-bar">
             <div class="item-title">
                 <div class="subject">
-                    <h3>修改密码</h3>
+                    <h3>@Model.lang.page_modifypw_title</h3>
                     <h5>当前用户：@Model.userName</h5>
                 </div>
             </div>
@@ -30,22 +30,22 @@
 
         <form method="post" action="@Model.areaRoute/home/modifypwsubmit" class="ncap-form-default">
             <dl>
-                <dt>原密码</dt>
+                <dt>@Model.lang.page_modifypw_old</dt>
                 <dd><input type="password" name="OldPassword" class="text" required autocomplete="current-password"></dd>
             </dl>
             <dl>
-                <dt>新密码</dt>
+                <dt>@Model.lang.page_modifypw_new</dt>
                 <dd><input type="password" name="Password" class="text" required minlength="6" autocomplete="new-password"></dd>
             </dl>
             <dl>
-                <dt>确认新密码</dt>
+                <dt>@Model.lang.page_modifypw_confirm</dt>
                 <dd><input type="password" name="RePassword" class="text" required minlength="6" autocomplete="new-password"></dd>
             </dl>
             <dl>
                 <dt></dt>
                 <dd>
-                    <button type="submit" class="btn">保存</button>
-                    <a href="@Model.areaRoute/home/dashboard" class="btn btn-default" style="margin-left:8px;">返回</a>
+                <button type="submit" class="btn">@Model.lang.common_save</button>
+                <a href="@Model.areaRoute/home/dashboard" class="btn btn-default" style="margin-left:8px;">@Model.lang.common_back</a>
                 </dd>
             </dl>
         </form>

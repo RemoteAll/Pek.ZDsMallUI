@@ -489,6 +489,14 @@ pub fn renderView(
 ///
 /// 视图里引用 `lang.<标识符>` 是编译期已知集合（[`language.BUILTIN_STRINGS`]），
 /// 所以缺键只会回退内置文案，不会出现「属性不存在」。
+///
+/// 取「当前后台语言」的文案对象（`@Model.lang.*`），给**不套 `_Layout`** 的独立页面用
+/// （登录页）：它没有 `withLanguage` 的上下文，但同样要按后台语言显示（未登录时用默认语言）。
+pub fn langObject(self: *AdminArea, arena: std.mem.Allocator, user_name: []const u8) !zzig.web.Value {
+    const store = self.languages orelse return .{ .object = &.{} };
+    return store.buildLangObject(arena, self.languageIdFor(user_name));
+}
+
 fn withLanguage(
     self: *AdminArea,
     arena: std.mem.Allocator,
