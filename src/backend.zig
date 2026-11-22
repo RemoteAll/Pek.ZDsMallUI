@@ -37,52 +37,61 @@ pub const LoginOutcome = union(enum) {
     err: []const u8,
 };
 
-/// 设置键（camelCase，与模板 `@Model.xxx` 对应）与默认值。
+/// 设置键。
+///
+/// - `key`：**模板字段名**（camelCase，视图里写 `@Model.siteName`）；
+/// - `store_key`：**库里 `Config.Name` 的值**（**PascalCase，严格对齐 C#**：
+///   C# 的框架配置表是 `Config(Category,Name,Value,Remark)`，键就是实体属性名）。
+///
+/// 两者分开是因为「显示名」属于模板约定，而「存储名」必须与 C# 完全一致 ——
+/// 这样同一份库在 C# / Zig 两侧读到的是同一批键，不会因为大小写差异互不认识。
 pub const SettingsEntry = struct {
     key: []const u8,
+    store_key: []const u8,
     default: []const u8,
 };
 
 /// 站点设置默认值（顺序即页面/JSON 输出顺序）。
 pub const DEFAULT_SETTINGS = [_]SettingsEntry{
-    .{ .key = "siteName", .default = "" },
-    .{ .key = "displayName", .default = "管理后台" },
-    .{ .key = "seoTitle", .default = "" },
-    .{ .key = "seoKey", .default = "" },
-    .{ .key = "seoDescribe", .default = "" },
-    .{ .key = "registration", .default = "" },
-    .{ .key = "copyright", .default = "" },
-    .{ .key = "customerTel", .default = "" },
-    .{ .key = "customerEmail", .default = "" },
-    .{ .key = "urlSuffix", .default = ".html" },
-    .{ .key = "statistical", .default = "" },
-    .{ .key = "pageFoot", .default = "" },
-    .{ .key = "headerCustomHtml", .default = "" },
-    .{ .key = "footerCustomHtml", .default = "" },
-    .{ .key = "curDomainUrl", .default = "" },
-    // 公司名称（C# 视图 `name="companyname"`）
-    .{ .key = "company", .default = "" },
+    .{ .key = "siteName", .store_key = "SiteName", .default = "" },
+    .{ .key = "displayName", .store_key = "DisplayName", .default = "管理后台" },
+    .{ .key = "seoTitle", .store_key = "SeoTitle", .default = "" },
+    .{ .key = "seoKey", .store_key = "SeoKey", .default = "" },
+    .{ .key = "seoDescribe", .store_key = "SeoDescribe", .default = "" },
+    .{ .key = "registration", .store_key = "Registration", .default = "" },
+    .{ .key = "copyright", .store_key = "Copyright", .default = "" },
+    .{ .key = "customerTel", .store_key = "CustomerTel", .default = "" },
+    .{ .key = "customerEmail", .store_key = "CustomerEmail", .default = "" },
+    .{ .key = "urlSuffix", .store_key = "UrlSuffix", .default = ".html" },
+    .{ .key = "statistical", .store_key = "Statistical", .default = "" },
+    .{ .key = "pageFoot", .store_key = "PageFoot", .default = "" },
+    .{ .key = "headerCustomHtml", .store_key = "HeaderCustomHtml", .default = "" },
+    .{ .key = "footerCustomHtml", .store_key = "FooterCustomHtml", .default = "" },
+    .{ .key = "curDomainUrl", .store_key = "CurDomainUrl", .default = "" },
+    // 公司名称（C# 视图 `name="companyname"`，实体属性 `Company`）
+    .{ .key = "company", .store_key = "Company", .default = "" },
 };
 
-/// 表单键（C# 视图字段名）→ 设置键（camelCase）；未识别的键返回 `null`（忽略）。
+/// 表单键（C# 视图字段名）→ `Config.Name`（**PascalCase，与 C# 库里的键一致**）；
+/// 未识别的键返回 `null`（忽略）。大小写不敏感匹配，所以 `companyname` 也能落到 `Company`。
 pub fn formKeyToSetting(key: []const u8) ?[]const u8 {
     const pairs = [_][2][]const u8{
-        .{ "SiteName", "siteName" },
-        .{ "DisplayName", "displayName" },
-        .{ "SeoTitle", "seoTitle" },
-        .{ "SeoKey", "seoKey" },
-        .{ "SeoDescribe", "seoDescribe" },
-        .{ "Registration", "registration" },
-        .{ "Copyright", "copyright" },
-        .{ "CustomerTel", "customerTel" },
-        .{ "CustomerEmail", "customerEmail" },
-        .{ "UrlSuffix", "urlSuffix" },
-        .{ "Statistical", "statistical" },
-        .{ "PageFoot", "pageFoot" },
-        .{ "HeaderCustomHtml", "headerCustomHtml" },
-        .{ "FooterCustomHtml", "footerCustomHtml" },
-        .{ "curDomainUrl", "curDomainUrl" },
-        .{ "companyname", "company" },
+        .{ "SiteName", "SiteName" },
+        .{ "DisplayName", "DisplayName" },
+        .{ "SeoTitle", "SeoTitle" },
+        .{ "SeoKey", "SeoKey" },
+        .{ "SeoDescribe", "SeoDescribe" },
+        .{ "Registration", "Registration" },
+        .{ "Copyright", "Copyright" },
+        .{ "CustomerTel", "CustomerTel" },
+        .{ "CustomerEmail", "CustomerEmail" },
+        .{ "UrlSuffix", "UrlSuffix" },
+        .{ "Statistical", "Statistical" },
+        .{ "PageFoot", "PageFoot" },
+        .{ "HeaderCustomHtml", "HeaderCustomHtml" },
+        .{ "FooterCustomHtml", "FooterCustomHtml" },
+        .{ "CurDomainUrl", "CurDomainUrl" },
+        .{ "companyname", "Company" },
     };
     for (pairs) |pair| {
         if (std.ascii.eqlIgnoreCase(pair[0], key)) return pair[1];
@@ -97,7 +106,7 @@ pub fn settingsValue(
 ) !zzig.web.Value {
     var builder = zzig.web.ObjectBuilder.init(arena);
     for (DEFAULT_SETTINGS) |entry| {
-        const value = if (overrides) |map| map.get(entry.key) orelse entry.default else entry.default;
+        const value = if (overrides) |map| map.get(entry.store_key) orelse entry.default else entry.default;
         try builder.str(entry.key, value);
     }
     return builder.finish();

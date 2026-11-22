@@ -19,7 +19,9 @@
         </div>
     </div>
 
-    <form method="post" action="@Model.areaRoute/config/updatebase" enctype="multipart/form-data" name="form1">
+    @* 不要加 `enctype="multipart/form-data"`：本页字段全是文本，而请求解析只支持
+       `application/x-www-form-urlencoded`，加了会让所有字段都读不到（表现为「网站名称不可为空」）。 *@
+    <form method="post" action="@Model.areaRoute/config/updatebase" name="form1">
         <div class="layui-tab layui-tab-brief Lan">
             <ul class="layui-tab-title">
                 <li class="layui-this">@(Model.lang.common_default):</li>

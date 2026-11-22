@@ -15,11 +15,20 @@
     <ConnName>DH</ConnName>
   </Option>
   <Tables>
-    <Table Name="Setting" TableName="Setting" Description="站点设置（键值）">
+    <!-- 配置表：**与 C# 框架的 `Config` 表同构**（Category / Name / Value / Remark），
+         `Name` 就是实体属性名（PascalCase，如 `SiteName`），两边读写同一批键。
+         旧版叫 `Setting(Key,Value)`，启动时会自动把数据搬过来（见 `migrateLegacySettingTable`）。 -->
+    <Table Name="Config" TableName="Config" Description="站点配置（键值，对齐 C# Config 表）">
       <Columns>
-        <Column Name="Key" DataType="String" Length="100" PrimaryKey="True" Description="配置键" />
-        <Column Name="Value" DataType="String" Length="4000" Description="配置值" />
+        <Column Name="Id" DataType="Int32" Identity="True" PrimaryKey="True" Description="编号" />
+        <Column Name="Category" DataType="String" Length="50" Nullable="True" Description="分类（可空）" />
+        <Column Name="Name" DataType="String" Length="100" Description="配置名（= 实体属性名，如 SiteName）" />
+        <Column Name="Value" DataType="String" Length="4000" Nullable="True" Description="配置值" />
+        <Column Name="Remark" DataType="String" Length="200" Nullable="True" Description="备注（可空）" />
       </Columns>
+      <Indexes>
+        <Index Columns="Name" Unique="True" />
+      </Indexes>
     </Table>
     <Table Name="AdminUser" TableName="AdminUser" Description="后台用户">
       <Columns>

@@ -25,7 +25,7 @@ const Value = zzig.db.Value;
 
 /// 内置模型（`assets/Model.xml`，与 C# 同格式、同名）。
 ///
-/// **只管框架自己的表**（`Setting` / `AdminUser` / `Session`）——相当于 C# 的 `Membership` 那部分；
+/// **只管框架自己的表**（`Config` / `AdminUser` / `Session`）——相当于 C# 的 `Membership` 那部分；
 /// 业务表与多语言表由**项目自己的 `Model.xml`** 定义（两份在各自身上的模型会合并后一次同步，结果是并集）。
 ///
 /// 两个文件同名不会冲突：库这份是 `@embedFile` 编进二进制的（只在库仓库里，不随部署流出去），
@@ -56,7 +56,7 @@ pub const SqliteBackend = struct {
     /// 同上，但额外带上**项目自己的模型**（项目 `Model.xml`）。
     ///
     /// 建表口径（对齐 C#：模型是项目级结构唯一来源，框架表由库负责）：
-    /// 1. 先跑框架内置模型（`Setting` / `AdminUser` / `Session` …）；
+    /// 1. 先跑框架内置模型（`Config` / `AdminUser` / `Session` …）；
     /// 2. 再跑项目模型（业务表 / 语言表 …）。
     /// `syncSchema` 是增量的（缺表建表、缺列补列、不删列），所以两次结果就是**并集**，
     /// 项目 `Model.xml` 不需要再把 `AdminUser` 这些框架表复制一遍。
@@ -114,6 +114,8 @@ pub const SqliteBackend = struct {
         errdefer self.db.close();
 
         try self.seedDefaultUser();
+        try self.migrateLegacySettingTable();
+        try self.normalizeConfigKeys();
         // 把**实际生效**的 journal_mode 打出来：WAL 在部分环境（网络盘 / 某些构建）会静默失败，
         // 而它是 32 倍写吞吐与「写时还能读」的关键，运维需要一眼能确认。
         var mode_buf: [32]u8 = undefined;
@@ -134,13 +136,13 @@ pub const SqliteBackend = struct {
         return .{ .ptr = @ptrCast(self), .vtable = &vtable };
     }
 
-    /// 读一条 `Setting`（不存在返回 `null`）。给库内部用（如 JWT 密钥持久化）。
+    /// 读一条 `Config`（不存在返回 `null`）。给库内部用（如 JWT 密钥持久化）。
     ///
     /// 与 `settingsImpl` 的区别：那个是把整表读成页面用的对象，这个按 key 取单值、写进 `arena`。
     pub fn setting(self: *SqliteBackend, arena: std.mem.Allocator, key: []const u8) !?[]const u8 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const row = try self.queryOne(arena, "SELECT Value FROM Setting WHERE Key = ?", &.{.{ .text = key }});
+        const row = try self.queryOne(arena, "SELECT Value FROM Config WHERE Name = ?", &.{.{ .text = key }});
         if (row.names.len == 0) return null;
         const v = row.get("Value") orelse return null;
         return switch (v) {
@@ -149,12 +151,12 @@ pub const SqliteBackend = struct {
         };
     }
 
-    /// 写一条 `Setting`（upsert）。给库内部用（如 JWT 密钥持久化）。
+    /// 写一条 `Config`（upsert）。给库内部用（如 JWT 密钥持久化）。
     pub fn putSetting(self: *SqliteBackend, key: []const u8, value: []const u8) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.exec(
-            "INSERT INTO Setting (Key, Value) VALUES (?, ?) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value",
+            "INSERT INTO Config (Name, Value) VALUES (?, ?) ON CONFLICT(Name) DO UPDATE SET Value = excluded.Value",
             &.{ .{ .text = key }, .{ .text = value } },
         );
     }
@@ -274,6 +276,51 @@ pub const SqliteBackend = struct {
         zzig.Logger.warn("[ZDsMallUI] 已创建默认账号 admin / admin123（**生产环境请立即修改**）", .{});
     }
 
+    /// 旧版框架表叫 `Setting(Key, Value)`；现在与 C# 同构改成 `Config(Category, Name, Value, Remark)`。
+    ///
+    /// 只搬「`Config` 里还没有」的键（`ON CONFLICT(Name) DO NOTHING`），**旧表保留**不删数据
+    /// （不可逆操作一律不做；确认无误后运维可自行 `DROP TABLE Setting`）。
+    fn migrateLegacySettingTable(self: *SqliteBackend) !void {
+        const legacy = self.queryScalarInt(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'Setting'",
+            &.{},
+        ) catch 0;
+        if (legacy == 0) return;
+
+        self.exec(
+            "INSERT INTO Config (Name, Value) SELECT [Key], Value FROM Setting WHERE 1 ON CONFLICT(Name) DO NOTHING",
+            &.{},
+        ) catch |e| {
+            zzig.Logger.warn("[ZDsMallUI] 旧 `Setting` 表迁移到 `Config` 失败（{s}）：旧数据未搬动", .{@errorName(e)});
+            return;
+        };
+        const total = self.queryScalarInt("SELECT COUNT(*) FROM Config", &.{}) catch 0;
+        zzig.Logger.info("[ZDsMallUI] 已把旧 `Setting` 表迁移到 `Config`（当前 {d} 条；旧表保留）", .{total});
+    }
+
+    /// 把历史遗留的 camelCase 键名规范成 C# 的 PascalCase（`siteName` → `SiteName`）。
+    ///
+    /// 早期版本把设置存成 camelCase，而 C# 的 `Config.Name` 是实体属性名（PascalCase）。
+    /// 两边要读同一批键，就必须规范化；`UPDATE OR IGNORE` 保证已经有新键时不会撞唯一索引。
+    /// 幂等：每次都跑，没有旧键就是空操作。
+    fn normalizeConfigKeys(self: *SqliteBackend) !void {
+        var changed: usize = 0;
+        for (backend_mod.DEFAULT_SETTINGS) |entry| {
+            if (std.mem.eql(u8, entry.key, entry.store_key)) continue;
+            self.exec(
+                "UPDATE OR IGNORE Config SET Name = ? WHERE Name = ?",
+                &.{ .{ .text = entry.store_key }, .{ .text = entry.key } },
+            ) catch |e| {
+                zzig.Logger.warn("[ZDsMallUI] 规范配置键名失败（{s} → {s}）：{s}", .{ entry.key, entry.store_key, @errorName(e) });
+                continue;
+            };
+            changed += 1;
+        }
+        if (changed > 0) {
+            zzig.Logger.info("[ZDsMallUI] 已规范化 {d} 个历史配置键名（camelCase → C# 的 PascalCase）", .{changed});
+        }
+    }
+
     // ---- AdminBackend 实现 ----
 
     const vtable = backend_mod.AdminBackend.VTable{
@@ -371,7 +418,7 @@ pub const SqliteBackend = struct {
         defer arena_state.deinit();
         const tmp = arena_state.allocator();
 
-        var stmt = try self.db.prepare(self.allocator, "SELECT Key, Value FROM Setting");
+        var stmt = try self.db.prepare(self.allocator, "SELECT Name AS Key, Value FROM Config");
         defer stmt.finalize();
         while (stmt.hasRow()) {
             const row = try stmt.readRow(tmp);
@@ -407,13 +454,45 @@ pub const SqliteBackend = struct {
         defer self.mutex.unlock();
         _ = arena;
 
+        // 写入 + 判断「内容是否真的变了」：没变就不 bump 版本戳（避免点一次保存就 +1 的噪音）
+        var dirty = false;
+        var buf: [12000]u8 = undefined;
         for (form) |field| {
             const target = backend_mod.formKeyToSetting(field.name) orelse continue;
+            if (!dirty) {
+                const existing = self.queryScalarText(
+                    "SELECT Value FROM Config WHERE Name = ?",
+                    &.{.{ .text = target }},
+                    &buf,
+                ) catch "";
+                if (!std.mem.eql(u8, existing, field.value)) dirty = true;
+            }
             try self.exec(
-                "INSERT INTO Setting (Key, Value) VALUES (?, ?) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value",
+                "INSERT INTO Config (Name, Value) VALUES (?, ?) ON CONFLICT(Name) DO UPDATE SET Value = excluded.Value",
                 &.{ .{ .text = target }, .{ .text = field.value } },
             );
         }
+        if (!dirty) return .ok;
+
+        // 设置版本戳：外部（如「配置 ↔ 数据库」同步、缓存失效）据此判断「库里的设置变新了」。
+        // 这是元数据、不是业务字段，所以不放进 `formKeyToSetting` 的白名单。
+        const prev_version = self.queryScalarInt(
+            "SELECT CAST(Value AS INTEGER) FROM Config WHERE Name = '__configVersion'",
+            &.{},
+        ) catch 0;
+        const next_version = prev_version + 1;
+        const version_text = try std.fmt.allocPrint(self.allocator, "{d}", .{next_version});
+        defer self.allocator.free(version_text);
+        const updated_text = try std.fmt.allocPrint(self.allocator, "{d}", .{zzig.compat.milliTimestamp()});
+        defer self.allocator.free(updated_text);
+        try self.exec(
+            "INSERT INTO Config (Name, Value) VALUES ('__configVersion', ?) ON CONFLICT(Name) DO UPDATE SET Value = excluded.Value",
+            &.{.{ .text = version_text }},
+        );
+        try self.exec(
+            "INSERT INTO Config (Name, Value) VALUES ('__configUpdatedAt', ?) ON CONFLICT(Name) DO UPDATE SET Value = excluded.Value",
+            &.{.{ .text = updated_text }},
+        );
         return .ok;
     }
 
@@ -481,7 +560,7 @@ pub const SqliteBackend = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const row = try self.queryOne(arena, "SELECT Value FROM Setting WHERE Key = 'displayName'", &.{});
+        const row = try self.queryOne(arena, "SELECT Value FROM Config WHERE Name = 'DisplayName'", &.{});
         if (row.names.len > 0) {
             if (row.get("Value")) |v| {
                 const text = std.mem.trim(u8, v.text, " \t\r\n");

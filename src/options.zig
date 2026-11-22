@@ -160,6 +160,8 @@ pub const DsMallUi = struct {
     pseudo_suffixes: []const []const u8 = &.{},
     /// 内置内存数据源（未指定外部 backend 时由本对象拥有）
     memory_backend: ?*backend_mod.MemoryBackend = null,
+    /// 内置 SQLite 数据源（`storage` 启用时由本对象拥有；供库内与项目侧内部读写）
+    sqlite_backend_ptr: ?*sqlite_backend_mod.SqliteBackend = null,
     /// 登录防爆破守卫（进程内计数，随本对象释放）
     login_guard: login_guard_mod.Guard,
     /// 图形验证码存储（`captcha_enabled` 为真时存在；登录失败达阈值后要求输入）
@@ -176,6 +178,13 @@ pub const DsMallUi = struct {
     /// 构造门面（默认配置）。
     pub fn builder(allocator: std.mem.Allocator, io: std.Io) Builder {
         return .{ .allocator = allocator, .io = io };
+    }
+
+    /// 具体 SQLite 后端（`storage` 未启用时为 `null`）。
+    ///
+    /// 给需要读写**非后台表单白名单** key 的场景用（如「配置 ↔ 数据库」同步写 `__configVersion`）。
+    pub fn sqliteBackend(self: *DsMallUi) ?*sqlite_backend_mod.SqliteBackend {
+        return self.sqlite_backend_ptr;
     }
 
     /// 释放控制器、视图缓存与自有字符串。
@@ -711,6 +720,7 @@ pub const Builder = struct {
             .login_guard = login_guard_mod.Guard.init(self.allocator, self.login_guard_options),
             .languages = languages,
             .menus = menus,
+            .sqlite_backend_ptr = sqlite_backend,
             .waf_instance = if (self.waf_base_dir) |base|
                 try pek_zwaf.Waf.load(self.allocator, self.io, base)
             else
