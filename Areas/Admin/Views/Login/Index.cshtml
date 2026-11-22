@@ -1,3 +1,4 @@
+@* pek-zdsmallui:generated v2 *@
 @* 登录页：**版式复用参考工程 C# `Areas/Admin/Views/Login/Index.cshtml`**
    （`admin.css` 里的 `.login / .login_body / .login_header / .login_content`，
    表单项 `.form-group` + `input.text`，按钮 `.btn`，背景图 `/static/admin/images/wallpage/bg_1.jpg`）。
@@ -38,6 +39,14 @@
                     <div class="form-group">
                         <input type="password" id="password" name="Password" placeholder="密码" required class="text" autocomplete="current-password">
                     </div>
+                    @if (Model.requireCaptcha) {
+                    <div class="form-group" style="display:flex;gap:8px;align-items:center;">
+                        <input type="text" name="Captcha" placeholder="验证码" required maxlength="8" autocomplete="off" class="text" style="flex:1;">
+                        <img src="@Model.captchaUrl" alt="验证码" title="看不清？点击刷新" data-url="@Model.captchaUrl"
+                             style="height:38px;border-radius:8px;cursor:pointer;"
+                             onclick="this.src=this.getAttribute('data-url')+'?t='+Date.now();">
+                    </div>
+                    }
                     <div class="form-group">
                         <input type="submit" class="btn" value="登录" style="width:100%">
                     </div>

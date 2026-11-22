@@ -16,6 +16,7 @@ const zzig = @import("zzig");
 
 const area_mod = @import("../../../src/area.zig");
 const auth_mod = @import("../../../src/auth.zig");
+const captcha_mod = @import("../../../src/captcha.zig");
 const admin_area = @import("AdminArea.zig");
 
 const router = zzig.web.router;
@@ -43,7 +44,7 @@ pub const LoginController = struct {
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         const self = admin_area.castSelf(raw);
         const return_url = admin_area.safeRedirect(c.queryValue("returnUrl") orelse "") orelse "";
-        const model = try buildModel(self, c.arena, admin_area.currentUser(c), null, return_url);
+        const model = try buildModel(self, c.arena, admin_area.currentUser(c), null, return_url, clientIp(c), "");
         return admin_area.renderView(self, c, "Login", "Index", model);
     }
 
@@ -56,7 +57,6 @@ pub const LoginController = struct {
         const return_url = std.mem.trim(u8, c.formValue("returnUrl") orelse "", " \t\r\n");
         const client_ip = clientIp(c);
         const now_ms = zzig.compat.milliTimestamp();
-
         // 防爆破：命中封禁则直接回 429（不查库、不耗 CPU 做口令散列）
         if (self.login_guard) |guard| {
             if (guard.retryAfterSeconds(user_name, client_ip, now_ms)) |secs| {
@@ -65,7 +65,28 @@ pub const LoginController = struct {
                 if (admin_area.isAjax(c)) {
                     return .{ .response = try controller_mod.jsonResult(c.arena, 429, msg, null) };
                 }
-                const model = try buildModel(self, c.arena, admin_area.currentUser(c), msg, admin_area.safeRedirect(return_url) orelse "");
+                const model = try buildModel(self, c.arena, admin_area.currentUser(c), msg, admin_area.safeRedirect(return_url) orelse "", client_ip, user_name);
+                return admin_area.renderView(self, c, "Login", "Index", model);
+            }
+        }
+
+        // 验证码：失败达阈值后必须填对（一次性消费；大小写不敏感）
+        // 放在查库之前 —— 攻击者连口令散列都拿不到，省 CPU 也防「换 IP 继续撞库」。
+        if (needsCaptcha(self, user_name, client_ip)) {
+            const cookie_name = try self.captchaCookieName(c.arena);
+            const captcha_id = zzig.cookie.value(c.req.header("cookie") orelse "", cookie_name) orelse "";
+            const answer = c.formValue("Captcha") orelse "";
+            const accepted = if (self.captcha) |store| store.take(captcha_id, answer, now_ms) else true;
+            if (!accepted) {
+                if (self.login_guard) |guard| {
+                    guard.recordFailure(user_name, client_ip, now_ms) catch {};
+                }
+                zzig.Logger.warn("[ZDsMallUI] 登录被拒（{s}@{s}）：验证码不正确或已过期", .{ user_name, client_ip });
+                const msg = "验证码不正确或已过期，请重新输入";
+                if (admin_area.isAjax(c)) {
+                    return .{ .response = try controller_mod.jsonResult(c.arena, 400, msg, null) };
+                }
+                const model = try buildModel(self, c.arena, admin_area.currentUser(c), msg, admin_area.safeRedirect(return_url) orelse "", client_ip, user_name);
                 return admin_area.renderView(self, c, "Login", "Index", model);
             }
         }
@@ -130,7 +151,7 @@ pub const LoginController = struct {
                 if (admin_area.isAjax(c)) {
                     return .{ .response = try controller_mod.jsonResult(c.arena, 401, message, null) };
                 }
-                const model = try buildModel(self, c.arena, admin_area.currentUser(c), message, admin_area.safeRedirect(return_url) orelse "");
+                const model = try buildModel(self, c.arena, admin_area.currentUser(c), message, admin_area.safeRedirect(return_url) orelse "", client_ip, user_name);
                 return admin_area.renderView(self, c, "Login", "Index", model);
             },
         }
@@ -197,6 +218,8 @@ pub const LoginController = struct {
         user: []const u8,
         error_message: ?[]const u8,
         return_url: []const u8,
+        client_ip: []const u8,
+        fail_user: []const u8,
     ) !zzig.web.Value {
         const display_name = try self.backend.displayName(arena);
         const route = try area_mod.routePrefix(arena, self.areaName());
@@ -210,6 +233,16 @@ pub const LoginController = struct {
         try builder.str("returnUrl", return_url);
         try builder.boolean("hasError", error_message != null);
         try builder.str("error", error_message orelse "");
+        try builder.boolean("requireCaptcha", needsCaptcha(self, fail_user, client_ip));
+        try builder.str("captchaUrl", "/CaptCha/GetCheckCode");
         return builder.finish();
     }
 };
+
+/// 是否需要验证码：已启用 + 失败次数达到阈值（用户/ IP 取大）。
+fn needsCaptcha(self: *admin_area.AdminArea, fail_user: []const u8, client_ip: []const u8) bool {
+    if (self.captcha == null) return false;
+    const guard = self.login_guard orelse return false;
+    if (fail_user.len == 0 and client_ip.len == 0) return false;
+    return guard.failCount(fail_user, client_ip, zzig.compat.milliTimestamp()) >= captcha_mod.require_for_fails;
+}

@@ -1,4 +1,4 @@
-﻿//! 后台 Area 的**共享上下文**（对齐 C# `Areas/Admin` 的区域级状态）。
+//! 后台 Area 的**共享上下文**（对齐 C# `Areas/Admin` 的区域级状态）。
 //!
 //! 「一个控制器一个文件」（与 C# 一致）：
 //! - [`@import("home.zig")`] → `HomeController`（`/{area}/home/index`）
@@ -18,6 +18,7 @@ const zzig = @import("zzig");
 const area_mod = @import("../../../src/area.zig");
 const auth_mod = @import("../../../src/auth.zig");
 const backend_mod = @import("../../../src/backend.zig");
+const captcha_mod = @import("../../../src/captcha.zig");
 const views_mod = @import("../../../src/views.zig");
 
 const config_controller = @import("ConfigController.zig");
@@ -60,6 +61,8 @@ pub const AdminArea = struct {
     auth: ?*auth_mod.Auth = null,
     /// 登录防爆破守卫（可选；由门面在 `build()` 时注入）
     login_guard: ?*@import("../../../src/login_guard.zig").Guard = null,
+    /// 图形验证码存储（可选；注入后「失败达阈值」的登录会要求验证码）
+    captcha: ?*captcha_mod.Store = null,
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
     /// 退役的旧快照（读线程可能还在用，延迟到 `deinit` 释放）
@@ -128,6 +131,11 @@ pub const AdminArea = struct {
     /// 注入登录防爆破守卫（不注入则不做失败计数）。
     pub fn setLoginGuard(self: *AdminArea, guard: *@import("../../../src/login_guard.zig").Guard) void {
         self.login_guard = guard;
+    }
+
+    /// 注入验证码存储（不注入则不启用验证码）。
+    pub fn setCaptcha(self: *AdminArea, store: *captcha_mod.Store) void {
+        self.captcha = store;
     }
 
     /// 登录页路径（`/{area}/login/index`）。
@@ -236,6 +244,11 @@ pub const AdminArea = struct {
         try app.router.any("/{area}", .{ .ctx = @ptrCast(self), .call = areaRootCall });
         try app.router.any("/{area}/", .{ .ctx = @ptrCast(self), .call = areaRootCall });
 
+        // 验证码图片（URL 对齐 C# `DHSetting.CaptChaUrl = "/CaptCha/GetCheckCode"`）：返回 SVG + 下发 id Cookie
+        if (self.captcha != null) {
+            try app.router.any("/CaptCha/GetCheckCode", .{ .ctx = @ptrCast(self), .call = captchaImageCall });
+        }
+
         {
             const prefix = try std.fmt.allocPrint(self.allocator, "{s}/home", .{segment});
             defer self.allocator.free(prefix);
@@ -285,6 +298,37 @@ pub const AdminArea = struct {
         if (!std.ascii.eqlIgnoreCase(segment, self.areaName())) return router.Response.notFound();
         const location = try std.fmt.allocPrint(c.arena, "/{s}/home/index", .{segment});
         return router.Response.redirectAlloc(c.arena, location);
+    }
+
+    /// 验证码 cookie 名（按区域区分，避免同域多实例串号）。
+    pub fn captchaCookieName(self: *AdminArea, arena: std.mem.Allocator) ![]u8 {
+        return std.fmt.allocPrint(arena, "{s}_captcha", .{self.areaName()});
+    }
+
+    /// `GET /CaptCha/GetCheckCode`：签发一份验证码，返回 SVG 并把 id 写进 HttpOnly Cookie。
+    fn captchaImageCall(raw: ?*anyopaque, c: *router.Ctx) anyerror!zzig.web.Response {
+        const self: *AdminArea = @ptrCast(@alignCast(raw orelse return router.Response.notFound()));
+        const store = self.captcha orelse return router.Response.notFound();
+
+        const now_ms = zzig.compat.milliTimestamp();
+        const issue = try store.issue(c.arena, now_ms);
+        const svg = try captcha_mod.renderSvg(c.arena, issue.code);
+
+        const cookie_name = try self.captchaCookieName(c.arena);
+        const cookie = try std.fmt.allocPrint(
+            c.arena,
+            "{s}={s}; Path=/; HttpOnly; SameSite=Lax; Max-Age={d}",
+            .{ cookie_name, issue.id, store.opts.ttl_seconds },
+        );
+
+        const headers = try c.arena.alloc(std.http.Header, 2);
+        headers[0] = .{ .name = "set-cookie", .value = cookie };
+        headers[1] = .{ .name = "cache-control", .value = "no-store" };
+        return .{
+            .content_type = "image/svg+xml; charset=utf-8",
+            .body = svg,
+            .headers = headers,
+        };
     }
 
     /// 给控制器动作包一层区域校验：区域不匹配直接 404（改区域名后旧地址立即失效）。

@@ -1,0 +1,55 @@
+@* pek-zdsmallui:generated v2 *@
+@{
+    Layout = null;
+}
+@* 修改密码页（iframe 内显示；对应 C# `Areas/Admin/Views/Home/ModifyPw.cshtml`）。
+   版式沿用 C# 原版 `admin.css` 的 `.page / .fixed-bar / .ncap-form-default`。 *@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+    <title>@Model.title</title>
+    <link rel="stylesheet" href="/static/admin/css/admin.css">
+    <link rel="stylesheet" href="/static/plugins/js/layui/css/layui.css">
+</head>
+<body>
+    <div class="page">
+        <div class="fixed-bar">
+            <div class="item-title">
+                <div class="subject">
+                    <h3>修改密码</h3>
+                    <h5>当前用户：@Model.userName</h5>
+                </div>
+            </div>
+        </div>
+
+        @if (Model.hasError) {
+        <div class="err-tip" style="margin:12px 20px;color:#d93026;">@Model.error</div>
+        }
+
+        <form method="post" action="@Model.areaRoute/home/modifypwsubmit" class="ncap-form-default">
+            <dl>
+                <dt>原密码</dt>
+                <dd><input type="password" name="OldPassword" class="text" required autocomplete="current-password"></dd>
+            </dl>
+            <dl>
+                <dt>新密码</dt>
+                <dd><input type="password" name="Password" class="text" required minlength="6" autocomplete="new-password"></dd>
+            </dl>
+            <dl>
+                <dt>确认新密码</dt>
+                <dd><input type="password" name="RePassword" class="text" required minlength="6" autocomplete="new-password"></dd>
+            </dl>
+            <dl>
+                <dt></dt>
+                <dd>
+                    <button type="submit" class="btn">保存</button>
+                    <a href="@Model.areaRoute/home/dashboard" class="btn btn-default" style="margin-left:8px;">返回</a>
+                </dd>
+            </dl>
+        </form>
+    </div>
+</body>
+</html>

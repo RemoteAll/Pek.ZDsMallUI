@@ -93,6 +93,21 @@ pub const Guard = struct {
         return self.entries.count();
     }
 
+    /// 失败次数（窗口内的最大值：`用户` 与 `IP` 取大）。
+    ///
+    /// 用途：达到 [`captcha.require_for_fails`] 就要求输入验证码 —— 比封禁更温和的门槛，
+    /// 攻击者换 IP 也能被「用户维度」的计数拦住。
+    pub fn failCount(self: *Guard, user: []const u8, ip: []const u8, now_ms: i64) u32 {
+        var ip_buf: [KEY_BUF_LEN]u8 = undefined;
+        var user_buf: [KEY_BUF_LEN]u8 = undefined;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return @max(
+            self.failsFor(keyOf(&ip_buf, PREFIX_IP, ip), now_ms),
+            self.failsFor(keyOf(&user_buf, PREFIX_USER, user), now_ms),
+        );
+    }
+
     // ---- 内部（调用方必须已持锁）----
 
     fn lockedSeconds(self: *Guard, key: []const u8, now_ms: i64) ?i64 {
@@ -100,6 +115,13 @@ pub const Guard = struct {
         if (entry.locked_until_ms <= now_ms) return null;
         // 向上取整：还剩 0.4 秒也要说「1 秒后再试」，不能报 0
         return @divTrunc(entry.locked_until_ms - now_ms + 999, 1000);
+    }
+
+    /// 窗口内的失败次数（过期或超窗口都算 0）。
+    fn failsFor(self: *Guard, key: []const u8, now_ms: i64) u32 {
+        const entry = self.entries.get(key) orelse return 0;
+        if (now_ms - entry.first_ms > self.opts.window_seconds * 1000) return 0;
+        return entry.fails;
     }
 
     fn bump(self: *Guard, key: []const u8, limit: u32, now_ms: i64) !void {

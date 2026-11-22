@@ -219,7 +219,16 @@ fn containsKey(keys: []const []const u8, key: []const u8) bool {
     return false;
 }
 
-/// 把内置默认视图落到**指定区域**目录（只补缺失，不覆盖已有文件）。
+/// 内置默认视图的**生成标记**（写入磁盘时放在首行）。
+///
+/// 为什么需要：`materializeFor` 过去只补缺失，**库升级改了视图后，老部署永远是旧版**
+/// （2026-11-22 连踩两次：登录验证码、后台框架页都因为磁盘上是旧文件而「改了没效果」）。
+/// 规则：文件首行是本标记 → 视为「库生成」，版本不同就自动升级；用户手改过的（没有标记）一律保留。
+/// 库再改视图时把 `v` 后面的数字递增即可。
+pub const generated_marker_prefix = "@* pek-zdsmallui:generated ";
+pub const generated_marker = "@* pek-zdsmallui:generated v2 *@";
+
+/// 把内置默认视图落到**指定区域**目录（只补缺失 / 升级库生成的旧版，不覆盖用户手改）。
 ///
 /// - 共享视图 → `{views_root}/Shared/…`（不随区域变化）；
 /// - 区域视图 → `{areas_root}/{Area}/Views/…`（默认区域落 `Areas/Admin/Views/…`）。
@@ -247,9 +256,22 @@ pub fn materializeFor(
             entry.relative;
         defer if (target_relative.ptr != entry.relative.ptr) allocator.free(target_relative);
 
-        if (zzig.fsio.exists(io, target_relative)) continue;
+        const should_write = blk: {
+            const existing = zzig.fsio.readFileAlloc(io, allocator, target_relative, 4 * 1024 * 1024) catch break :blk true;
+            defer allocator.free(existing);
+            if (!std.mem.startsWith(u8, existing, generated_marker_prefix)) {
+                // 兼容「带标记之前落地的」文件：内容与内置原样一致（= 用户没改过）才覆盖
+                break :blk std.mem.eql(u8, existing, entry.source);
+            }
+            // 库生成的旧版 → 升级到当前版本
+            break :blk !std.mem.startsWith(u8, existing, generated_marker);
+        };
+        if (!should_write) continue;
+
         if (std.fs.path.dirname(target_relative)) |parent| try zzig.fsio.makePath(io, parent);
-        try zzig.fsio.writeFile(io, target_relative, entry.source);
+        const body = try std.fmt.allocPrint(allocator, "{s}\n{s}", .{ generated_marker, entry.source });
+        defer allocator.free(body);
+        try zzig.fsio.writeFile(io, target_relative, body);
         written += 1;
     }
     return written;
@@ -383,15 +405,32 @@ test "视图：首页模型（菜单循环 + 条件）" {
     try menu.str("url", "/biz/config/index");
     try menu.str("desc", "站点信息");
 
+    var item = zzig.web.ObjectBuilder.init(arena);
+    try item.str("name", "站点设置");
+    try item.str("url", "/biz/config/index");
+    try item.str("icon", "&#xe614;");
+
+    var group = zzig.web.ObjectBuilder.init(arena);
+    try group.str("key", "system");
+    try group.str("name", "系统");
+    try group.list("items", &.{item.finish()});
+
     var builder = zzig.web.ObjectBuilder.init(arena);
+    try builder.str("title", "管理后台");
+    try builder.str("displayName", "管理后台");
+    try builder.str("userName", "admin");
     try builder.str("areaName", "Biz");
     try builder.str("areaRoute", "/biz");
+    try builder.str("dashboardUrl", "/biz/home/dashboard");
     try builder.list("menus", &.{menu.finish()});
+    try builder.list("groups", &.{group.finish()});
     try builder.boolean("hasMenus", true);
 
     const outcome = views.render(arena, "Admin", "Home", "Index", builder.finish());
     try testing.expect(outcome == .html);
-    try testing.expect(std.mem.indexOf(u8, outcome.html, "Biz") != null);
+    // 框架页：顶部 header + 左侧菜单 + 右侧 iframe
+    try testing.expect(std.mem.indexOf(u8, outcome.html, "admincp-header") != null);
+    try testing.expect(std.mem.indexOf(u8, outcome.html, "/biz/home/dashboard") != null);
     try testing.expect(std.mem.indexOf(u8, outcome.html, "站点设置") != null);
 }
 

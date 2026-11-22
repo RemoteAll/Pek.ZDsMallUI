@@ -1,4 +1,4 @@
-﻿//! 门面：一次性组装「静态资源 + 上传控制器 + 后台 Area」，对外只暴露 [`DsMallUi`]。
+//! 门面：一次性组装「静态资源 + 上传控制器 + 后台 Area」，对外只暴露 [`DsMallUi`]。
 //!
 //! 对应 C# 参考工程的 `PekStartup`（`IPekStartup` 实现）：
 //! `ConfigureServices` → [`Builder`]；`UseDHEndpoints`/`Configure` → [`DsMallUi.mount`]。
@@ -23,6 +23,7 @@ const zzig = @import("zzig");
 
 const area_mod = @import("area.zig");
 const auth_mod = @import("auth.zig");
+const captcha_mod = @import("captcha.zig");
 const backend_mod = @import("backend.zig");
 const sqlite_backend_mod = @import("sqlite_backend.zig");
 const sqlite_session_mod = @import("sqlite_session_store.zig");
@@ -159,6 +160,8 @@ pub const DsMallUi = struct {
     memory_backend: ?*backend_mod.MemoryBackend = null,
     /// 登录防爆破守卫（进程内计数，随本对象释放）
     login_guard: login_guard_mod.Guard,
+    /// 图形验证码存储（`captcha_enabled` 为真时存在；登录失败达阈值后要求输入）
+    captcha_store: ?captcha_mod.Store = null,
     /// WAF（`null` = 未启用；由 `Builder.waf(base_dir)` 创建，`mount` 首行注册中间件）
     waf_instance: ?*pek_zwaf.Waf = null,
     /// SQLite 会话吊销表（`storage` 启用且未给外部 store 时自动创建；随本对象释放）
@@ -172,6 +175,7 @@ pub const DsMallUi = struct {
     /// 释放控制器、视图缓存与自有字符串。
     pub fn deinit(self: *DsMallUi) void {
         self.login_guard.deinit();
+        if (self.captcha_store) |*store| store.deinit();
         if (self.waf_instance) |w| w.deinit();
         if (self.session_store) |st| st.deinit();
         self.upload_controller.deinit();
@@ -296,10 +300,14 @@ pub const DsMallUi = struct {
         for (ADMIN_STATIC_ASSETS) |asset| {
             const target = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.web_root, asset.relative });
             defer self.allocator.free(target);
-            if (zzig.fsio.exists(self.io, target)) continue;
-            if (std.fs.path.dirname(target)) |parent| try zzig.fsio.makePath(self.io, parent);
-            try zzig.fsio.writeFile(self.io, target, asset.source);
-            written += 1;
+            if (!zzig.fsio.exists(self.io, target)) {
+                if (std.fs.path.dirname(target)) |parent| try zzig.fsio.makePath(self.io, parent);
+                try zzig.fsio.writeFile(self.io, target, asset.source);
+                written += 1;
+            }
+            // 预压缩：`StaticFiles` 在客户端支持时优先下发同名 `.gz`
+            // （主文件已存在也要补 —— 否则升级后拿不到压缩收益；内容以磁盘为准）
+            try writeGzipSibling(self.allocator, self.io, target, asset.relative);
         }
 
         return written;
@@ -344,6 +352,8 @@ pub const Builder = struct {
     jwt_expire_minutes: i64 = 120,
     /// 是否强制后台页面登录
     require_login: bool = false,
+    /// 是否启用图形验证码（登录失败达 `captcha.require_for_fails` 次后才要求；默认关）
+    captcha_enabled: bool = false,
     /// Cookie 是否加 `Secure`（HTTPS 部署时应为 `true`）
     cookie_secure: bool = false,
     /// 会话存储（默认内存；可选 `SqliteStore` / `FileStore` / `RedisStore`）
@@ -439,6 +449,13 @@ pub const Builder = struct {
     pub fn jwtExpireMinutes(self: Builder, minutes: i64) Builder {
         var copy = self;
         copy.jwt_expire_minutes = if (minutes > 0) minutes else 120;
+        return copy;
+    }
+
+    /// 是否启用图形验证码（失败达阈值后登录页才要求）。
+    pub fn captchaEnabled(self: Builder, enabled: bool) Builder {
+        var copy = self;
+        copy.captcha_enabled = enabled;
         return copy;
     }
 
@@ -626,6 +643,12 @@ pub const Builder = struct {
         // 登录防爆破：失败到阈值后按「IP / 用户名」双维度封禁
         ui.admin_area.setLoginGuard(&ui.login_guard);
 
+        // 图形验证码（可选）：失败 3 次后登录页要求输入，挡住「换 IP 继续撞库」
+        if (self.captcha_enabled) {
+            ui.captcha_store = captcha_mod.Store.init(self.allocator, .{});
+            ui.admin_area.setCaptcha(&ui.captcha_store.?);
+        }
+
         // 下载白名单 = 默认清单 + 追加清单（去重后交给上传控制器）
         const merged = try mergeExtensions(self.allocator, self.download_extensions, self.extra_download_extensions);
         defer self.allocator.free(merged);
@@ -635,6 +658,43 @@ pub const Builder = struct {
         return ui;
     }
 };
+
+/// 文本类资源才值得预压缩（图片/字体已压缩，再压反而变大）。
+fn isCompressible(relative: []const u8) bool {
+    const exts = [_][]const u8{ ".css", ".js", ".json", ".svg", ".html", ".htm", ".xml", ".txt", ".map" };
+    for (exts) |ext| {
+        if (relative.len > ext.len and std.ascii.endsWithIgnoreCase(relative, ext)) return true;
+    }
+    return false;
+}
+
+/// 为静态文件写一份同名 `.gz`（已存在则跳过）。
+///
+/// `zzig.web.StaticFiles` 在客户端 `Accept-Encoding: gzip` 时优先下发 `.gz` 并补 `Vary`；
+/// **预压缩**（一次性）比每请求压缩省 CPU，契合「非必要不做周期性全量劳作」的口径。
+fn writeGzipSibling(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    target: []const u8,
+    relative: []const u8,
+) !void {
+    if (!isCompressible(relative)) return;
+
+    const gz_path = try std.fmt.allocPrint(allocator, "{s}.gz", .{target});
+    defer allocator.free(gz_path);
+    if (zzig.fsio.exists(io, gz_path)) return;
+
+    const content = zzig.fsio.readFileAlloc(io, allocator, target, 8 * 1024 * 1024) catch return;
+    defer allocator.free(content);
+    if (content.len < 256) return;
+
+    const gz = zzig.Http.gzipCompressAlloc(allocator, content, .default) catch |err| {
+        zzig.Logger.warn("[ZDsMallUI] 预压缩失败（{s}）：{s}", .{ target, @errorName(err) });
+        return;
+    };
+    defer allocator.free(gz);
+    try zzig.fsio.writeFile(io, gz_path, gz);
+}
 
 /// 合并扩展名清单（大小写不敏感去重；结果容器由调用方释放，字符串借用原入参）。
 fn mergeExtensions(
@@ -782,10 +842,16 @@ test "门面：起服务后四个入口都可访问（端到端冒烟）" {
     defer app.deinit();
     try ui.mount(&app);
 
-    // 首页
+    // 首页（框架页：顶部导航 + 左侧菜单 + iframe）
     const home = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/home/index" });
     try testing.expectEqual(std.http.Status.ok, home.status);
-    try testing.expect(std.mem.indexOf(u8, home.body, "Biz") != null);
+    try testing.expect(std.mem.indexOf(u8, home.body, "admincp-container") != null);
+    try testing.expect(std.mem.indexOf(u8, home.body, "main-frame") != null);
+
+    // 欢迎页（iframe 内容）：区域名与快捷入口在这里
+    const dashboard = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/home/dashboard" });
+    try testing.expectEqual(std.http.Status.ok, dashboard.status);
+    try testing.expect(std.mem.indexOf(u8, dashboard.body, "Biz") != null);
 
     // 设置页
     const config = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/config/index" });
@@ -863,7 +929,12 @@ test "门面：伪静态 .html 后缀命中动态路由（官网类站点）" {
     // `/biz/home/index.html` → `/biz/home/index`
     const home = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/home/index.html" });
     try testing.expectEqual(std.http.Status.ok, home.status);
-    try testing.expect(std.mem.indexOf(u8, home.body, "快捷入口") != null);
+    try testing.expect(std.mem.indexOf(u8, home.body, "main-frame") != null);
+
+    // 欢迎页（iframe 内容）同样可加后缀，且承载「快捷入口」
+    const dashboard = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/home/dashboard.html" });
+    try testing.expectEqual(std.http.Status.ok, dashboard.status);
+    try testing.expect(std.mem.indexOf(u8, dashboard.body, "快捷入口") != null);
 
     // 登录页同样可加后缀
     const login = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/login/index.html" });
