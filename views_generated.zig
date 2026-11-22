@@ -1,4 +1,4 @@
-//! **自动生成，请勿手改** —— `zig build` 时由 `build.zig` 扫描
+//! **自动生成，请勿手改** —— `zig build` 时由 `tools/gen_views.zig` 扫描
 //! `Views/**` 与 `Areas/**/Views/**` 下的 `.zshtml` 生成；新增视图不用改任何清单。
 
 pub const Entry = struct {
