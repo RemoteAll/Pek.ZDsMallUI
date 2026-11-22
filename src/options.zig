@@ -639,8 +639,20 @@ pub const Builder = struct {
         return copy;
     }
 
-    /// 组装（失败时已分配的资源全部回滚）。
+    /// 组装（不注入项目实体；等价 `buildWithEntities(.{})`）。
     pub fn build(self: Builder) !*DsMallUi {
+        return self.buildInternal(.{});
+    }
+
+    /// 组装，并注入**消费方项目的实体**（`@import("entities/mod.zig").all`）。
+    ///
+    /// 建表 = `Model.xml` ∪ 实体：`Model.xml` 里清理掉的表/列，只要实体还在被代码引用就继续存在。
+    pub fn buildWithEntities(self: Builder, comptime entities: anytype) !*DsMallUi {
+        return self.buildInternal(entities);
+    }
+
+    /// 组装（失败时已分配的资源全部回滚）。
+    fn buildInternal(self: Builder, comptime entities: anytype) !*DsMallUi {
         const normalized_area = try area_mod.normalize(self.allocator, self.admin_area);
         defer self.allocator.free(normalized_area);
 
@@ -692,7 +704,7 @@ pub const Builder = struct {
                     break :blk_model null;
                 };
                 defer if (model_xml) |text| self.allocator.free(text);
-                if (sqlite_backend_mod.SqliteBackend.initWithModel(self.allocator, self.io, db_path, model_xml)) |created| {
+                if (sqlite_backend_mod.SqliteBackend.initWithModelEntities(self.allocator, self.io, db_path, model_xml, entities)) |created| {
                     sqlite_backend = created;
                     break :blk created.backend();
                 } else |e| {

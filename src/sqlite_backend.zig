@@ -67,12 +67,23 @@ pub const SqliteBackend = struct {
         path: []const u8,
         project_xml: ?[]const u8,
     ) !*SqliteBackend {
+        return initWithModelEntities(allocator, io, path, project_xml, .{});
+    }
+
+    /// 同上，并注入**消费方项目的实体**（`@import("entities/mod.zig").all`）。
+    pub fn initWithModelEntities(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        path: []const u8,
+        project_xml: ?[]const u8,
+        comptime entities: anytype,
+    ) !*SqliteBackend {
         if (std.fs.path.dirname(path)) |dir| {
             if (dir.len > 0) try zzig.fsio.makePath(io, dir);
         }
         const conn = try std.fmt.allocPrint(allocator, "Data Source={s};Provider=SQLite", .{path});
         defer allocator.free(conn);
-        return initWithConnection(allocator, io, conn, project_xml);
+        return initWithConnectionEntities(allocator, io, conn, project_xml, entities);
     }
 
     /// **任意连接串**（`Provider=SQLite|MySQL|PostgreSQL|...`）——这也是「切库」的唯一入口：
@@ -83,13 +94,27 @@ pub const SqliteBackend = struct {
         conn_str: []const u8,
         project_xml: ?[]const u8,
     ) !*SqliteBackend {
+        return initWithConnectionEntities(allocator, io, conn_str, project_xml, .{});
+    }
+
+    /// 同上，并额外带上**消费方项目的实体**（`@import("entities/mod.zig").all` 这类 tuple）。
+    ///
+    /// 建表口径是 **`Model.xml` ∪ 实体**：`Model.xml` 可能被人为清理掉表/列，而实体仍被代码引用，
+    /// 此时表/列必须继续存在（见 `EntityModel.mergeEntityTypes`）。
+    pub fn initWithConnectionEntities(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        conn_str: []const u8,
+        project_xml: ?[]const u8,
+        comptime entities: anytype,
+    ) !*SqliteBackend {
         const model_arena = try allocator.create(std.heap.ArenaAllocator);
         model_arena.* = std.heap.ArenaAllocator.init(allocator);
         errdefer {
             model_arena.deinit();
             allocator.destroy(model_arena);
         }
-        const model = try mergeModel(model_arena.allocator(), project_xml);
+        const model = try mergeModel(model_arena.allocator(), project_xml, entities);
 
         const self = try allocator.create(SqliteBackend);
         errdefer allocator.destroy(self);
@@ -555,7 +580,7 @@ pub const SqliteBackend = struct {
 };
 
 /// 合并三层模型并按 C# 语义补全列属性（详见文件头注释）。
-fn mergeModel(allocator: std.mem.Allocator, project_xml: ?[]const u8) !zcode.EntityModel {
+fn mergeModel(allocator: std.mem.Allocator, project_xml: ?[]const u8, comptime entities: anytype) !zcode.EntityModel {
     var model = zcode.EntityModel.parse(allocator, MEMBER_XML) catch |e| {
         zzig.Logger.err("[ZDsMallUI] 解析 C# 同源 Member.xml 失败（{s}）：Pek.ZCode 内置模型损坏", .{@errorName(e)});
         return e;
@@ -567,9 +592,38 @@ fn mergeModel(allocator: std.mem.Allocator, project_xml: ?[]const u8) !zcode.Ent
     // 不改 `Member.xml` 本身（它是 C# 同源文件）。
     for (model.tables) |*table| table.conn_name = null;
 
+    // ★ 实体保底：建表 = `Model.xml` ∪ 实体。
+    //   XML 被清理掉表/列时，只要实体还在被代码引用，表/列就继续建出来。
+    try mergeEntityTypesInto(&model, entities);
+
     // 按 C# XCode 语义补全：string/datetime 可空、值类型 NOT NULL + 默认 0
     model.applyCsharpColumnDefaults();
     return model;
+}
+
+/// 把内置实体（C# 同源 Membership + 库自身）与消费方项目实体并入模型，并汇总日志。
+fn mergeEntityTypesInto(model: *zcode.EntityModel, comptime entities: anytype) !void {
+    const members = model.mergeEntityTypes(zcode.membership.entities.all) catch |e| {
+        zzig.Logger.err("[ZDsMallUI] 并入 C# 同源 Membership 实体失败（{s}）：模型不完整，建表可能缺表", .{@errorName(e)});
+        return e;
+    };
+    const lib = model.mergeEntityTypes(@import("entities/mod.zig").all) catch |e| {
+        zzig.Logger.err("[ZDsMallUI] 并入库内置实体（Config/Session/UserDetail）失败（{s}）", .{@errorName(e)});
+        return e;
+    };
+    const proj = model.mergeEntityTypes(entities) catch |e| {
+        zzig.Logger.err("[ZDsMallUI] 并入项目实体失败（{s}）：请检查 `builder.entities(...)` 的类型列表", .{@errorName(e)});
+        return e;
+    };
+
+    const tables_added = members.tables_added + lib.tables_added + proj.tables_added;
+    const columns_added = members.columns_added + lib.columns_added + proj.columns_added;
+    if (tables_added > 0 or columns_added > 0) {
+        zzig.Logger.info(
+            "[ZDsMallUI] 实体保底：Model.xml 里缺失但实体仍在用 → 补表 {d} / 补列 {d}",
+            .{ tables_added, columns_added },
+        );
+    }
 }
 
 fn appendTables(

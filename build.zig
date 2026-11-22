@@ -47,6 +47,13 @@ pub fn build(b: *std.Build) void {
     const lib_tests = b.addTest(.{ .root_module = mod });
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
+    // 语义检查（编译到 .o，**不链接、不跑测试**）：改代码时先跑它，比完整 `zig build` 快一档。
+    //   实测（2026-11-22，Windows / 改一个库源文件）：`zig build` ≈ 14.0s，`zig build check` ≈ 10s，
+    //   无改动缓存命中 ≈ 0.3s。
+    const check_obj = b.addObject(.{ .name = "zdsmallui-check", .root_module = mod });
+    const check_step = b.step("check", "只做语义检查（编译到 .o，不链接；比 zig build 快）");
+    check_step.dependOn(&check_obj.step);
+
     const test_step = b.step("test", "运行单元测试");
     test_step.dependOn(&run_lib_tests.step);
 
