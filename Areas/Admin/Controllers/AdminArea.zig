@@ -838,6 +838,8 @@ pub const AdminArea = struct {
     ) fn (?*anyopaque, *router.Ctx) anyerror!controller_mod.ActionResult {
         return struct {
             fn call(raw: ?*anyopaque, c: *router.Ctx) anyerror!controller_mod.ActionResult {
+                // 后台页「计算」耗时的起点：守卫一进来就开始计时（含区域校验 / RBAC / 取数）
+                request_started_ms = nowMillis();
                 const self = castSelf(raw);
                 if (!areaMatches(c, self.areaName())) return .{ .response = router.Response.notFound() };
                 // RBAC：管理员放行；其他人按「角色权限串」校验当前页面
@@ -878,16 +880,25 @@ pub fn renderView(
     view: []const u8,
     model: zzig.web.Value,
 ) !ActionResult {
-    // 页面底部「服务端耗时」：从 renderView 入口到视图渲染完。
-    // 注：不含此前的鉴权/取数（那些在各控制器里，本函数拿不到）；前台门户的口径是
-    // 「收到请求 → 输出完成」，后台这里明确标注为「渲染」以免误读。
-    const started = nowMillis();
+    // 页面底部「服务端耗时」：分两段量。
+    //
+    // - **计算**：从守卫（区域校验 / RBAC）进入控制器到准备开始渲染，
+    //   包含鉴权、取数与模型装配；
+    // - **渲染**：视图模板渲染自身。
+    //
+    // 两段分开量是为了区分「数据慢」还是「模板慢」；放模板占位注释里而7不是正文，
+    // 这样不影响页面观感（前台风扇页同口径）。
+    const render_started = nowMillis();
     // 与用户语言相关的装配统一放这里：所有后台页面的 `@Model.lang.*` 都能用
     const localized = withLanguage(self, c.arena, currentUser(c), model) catch model;
     // 构建信息（程序版本 / Zig 版本）无条件注入：后台底部要展示，且与是否启用多语言无关
     const decorated = withBuildInfo(self, c.arena, localized) catch localized;
     return switch (self.views.render(c.arena, self.areaName(), controller, view, decorated)) {
-        .html => |html| .{ .response = adminHtml(c.arena, try injectRenderMs(c.arena, html, nowMillis() - started)) },
+        .html => |html| blk: {
+            const finished = nowMillis();
+            const calc_ms = if (request_started_ms > 0) render_started - request_started_ms else 0;
+            break :blk .{ .response = adminHtml(c.arena, try injectTimings(c.arena, html, calc_ms, finished - render_started)) };
+        },
         .fail => |message| blk: {
             zzig.Logger.err("[ZDsMallUI] {s}", .{message});
             const envelope = try controller_mod.jsonResult(c.arena, 500, message, null);
@@ -915,11 +926,26 @@ fn nowMillis() i64 {
     return @intCast(@divTrunc(zzig.compat.nanoTimestamp(), 1_000_000));
 }
 
-/// 把 layout 里的 `<!--render-ms-->` 占位换成实际毫秒数（占位符才能量到渲染本身）。
-fn injectRenderMs(arena: std.mem.Allocator, html: []const u8, ms: i64) ![]const u8 {
-    const needle = "<!--render-ms-->";
+/// 本次请求的起点（由 `guarded` 写入）。0 表示未知（非后台页 / 未经守卫）。
+///
+/// 用 threadlocal 而不是塞进 `Ctx`：zzig 是 thread-per-connection，一个线程同一时刻只跑
+/// 一个请求，用 threadlocal 不侵入框架的 `Ctx` 结构，也不会有跨请求串号。
+threadlocal var request_started_ms: i64 = 0;
+
+/// 把 layout 里的 `<!--calc-ms-->` / `<!--render-ms-->` 占位换成实际毫秒数
+/// （用占位符才能分别量到「计算」与「渲染」本身）。
+fn injectTimings(arena: std.mem.Allocator, html: []const u8, calc_ms: i64, render_ms: i64) ![]const u8 {
+    const calc_text = try std.fmt.allocPrint(arena, "{d}", .{calc_ms});
+    const render_text = try std.fmt.allocPrint(arena, "{d}", .{render_ms});
+    var out = html;
+    out = try replaceOnce(arena, out, "<!--calc-ms-->", calc_text);
+    out = try replaceOnce(arena, out, "<!--render-ms-->", render_text);
+    return out;
+}
+
+/// 替换一次占位（没有占位就原样返回，避免为不套 layout 的页面多做分配）。
+fn replaceOnce(arena: std.mem.Allocator, html: []const u8, needle: []const u8, replacement: []const u8) ![]const u8 {
     if (std.mem.indexOf(u8, html, needle) == null) return html;
-    const replacement = try std.fmt.allocPrint(arena, "{d}", .{ms});
     const size = std.mem.replacementSize(u8, html, needle, replacement);
     const out = try arena.alloc(u8, size);
     _ = std.mem.replace(u8, html, needle, replacement, out);

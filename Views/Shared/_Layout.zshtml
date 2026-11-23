@@ -80,12 +80,12 @@
     <!-- 服务端耗时（右下角小角标）：渲染入口 → 输出完，不含网络 -->
     @* 右下角角标顺带显示「程序版本 + 编译用 Zig 版本」：运维一眼看到跑的是哪一版，
        也便于对外展示本项目由 ziglang 编译（零依赖、单文件）。 *@
-    <div class="server-timing" title="服务端渲染耗时：renderView 入口 → 视图输出完成，不含网络与前置取数；左侧为程序版本与编译用 Zig 版本">
+    <div class="server-timing" title="服务端耗时：计算 = 守卫（区域校验/RBAC）→ 开始渲染，含鉴权与取数；渲染 = 视图模板自身耗时；均不含网络。左侧为程序版本与编译用 Zig 版本">
         <span class="st-app">v@Model.version</span>
         <span class="st-sep">·</span>
         <span class="st-zig">Zig @Model.zigVersion</span>
         <span class="st-sep">·</span>
-        <span>渲染 <!--render-ms--> ms</span>
+        <span>计算 <!--calc-ms--> ms · 渲染 <!--render-ms--> ms</span>
     </div>
     <style>
         .server-timing {

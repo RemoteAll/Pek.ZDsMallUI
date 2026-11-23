@@ -175,7 +175,6 @@ pub const HomeController = struct {
     }
 };
 
-
 /// unix 秒 → `2026-11-23 09:29:42`（本地时区；0 表示未知）。
 fn formatUnix(arena: std.mem.Allocator, unix_seconds: i64) ![]const u8 {
     if (unix_seconds <= 0) return arena.dupe(u8, "—");
