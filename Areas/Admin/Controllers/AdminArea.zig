@@ -108,6 +108,11 @@ pub const AdminArea = struct {
     /// 「库值如何落到业务配置文件」是业务知识（文件名/格式/热加载），库不该写死。
     settings_saved_ctx: ?*anyopaque = null,
     settings_saved_hook: ?*const fn (ctx: ?*anyopaque, arena: std.mem.Allocator) void = null,
+    /// WAF 实例（可选；门面 `build()` 装配时注入）。
+    ///
+    /// 「搜索引擎 / AI 抓取」是**配置项**，就该在设置页改，而不是塞在体检页里；
+    /// 设置页控制器靠它读写 `Config/Waf.toml`（`Waf.applyConfig` = 落盘 + 立即生效）。
+    waf: ?*@import("pek_zwaf").Waf = null,
     /// 站点信息按语言分 Tab 的数据源（项目侧用 `entities` 实现，库不碰业务表）
     language_tabs_ctx: ?*anyopaque = null,
     language_tabs_hook: ?*const fn (ctx: ?*anyopaque, arena: std.mem.Allocator) zzig.web.Value = null,
@@ -484,6 +489,8 @@ pub const AdminArea = struct {
             const ctrl = try self.newController(prefix);
             try ctrl.mapWithContext("GET", "index", @ptrCast(self), guarded(config_controller.ConfigController.index));
             try ctrl.mapWithContext("POST", "updatebase", @ptrCast(self), guarded(config_controller.ConfigController.updateBase));
+            // 抓取开关（配置项 → 设置页）：写回 `Config/Waf.toml` 并立即生效
+            try ctrl.mapWithContext("POST", "savecrawl", @ptrCast(self), guarded(config_controller.ConfigController.saveCrawl));
             try ctrl.mount(&app.router);
         }
         {

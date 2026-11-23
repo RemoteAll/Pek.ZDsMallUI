@@ -856,6 +856,8 @@ pub const Builder = struct {
 
         ui.admin_area = try controllers.admin_area.AdminArea.init(self.allocator, self.io, admin_backend, &ui.ui_views);
         errdefer ui.admin_area.deinit();
+        // 配置页要在线改「抓取开关」：把 WAF 实例交给 AdminArea（未启用 WAF 时为 null，页面不渲染该区块）
+        ui.admin_area.waf = ui.waf_instance;
         try ui.admin_area.setAreaName(normalized_area);
         try ui.admin_area.setUploadPrefix(upload_prefix);
 

@@ -221,6 +221,38 @@
             </dl>
         </div>
     </form>
+
+    @if (Model.hasWaf) {
+    @* 抓取开关：**配置项就该在配置页**（体检页只负责提醒「去哪里调」，不放表单）。
+       独立 form：它写的是 `Config/Waf.toml`（WAF 配置），与上面的站点设置（数据库 Setting）不是一回事，
+       混在一个表单里会让「保存」同时触发两套落盘逻辑，排查困难。 *@
+    <div class="explanation">
+        <div class="title"><h4>@T("抓取开关")</h4><span class="up"></span></div>
+    </div>
+    <div class="ds-default-table">
+        <form method="post" action="@Model.areaRoute/config/savecrawl" name="formCrawl">
+            <dl>
+                <dt>@T("搜索引擎与 AI")</dt>
+                <dd>
+                    <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+                        <input type="checkbox" name="allowSearchBots" value="1" @if (Model.searchBotsAllowed) {<text>checked</text>}>
+                        <span>@T("搜索引擎抓取（Google / Bing 等）")</span>
+                    </label>
+                    <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-left:18px;">
+                        <input type="checkbox" name="allowAiBots" value="1" @if (Model.aiBotsAllowed) {<text>checked</text>}>
+                        <span>@T("AI 抓取（GPTBot / PerplexityBot 等，GEO）")</span>
+                    </label>
+                    <p class="notic">@T("关掉搜索引擎抓取 = 所有爬虫（含 Google / Bing）拿到 403，整站搜不到；")@T("AI 抓取按需开启：内容站通常想被生成式引擎引用，内部系统 / 付费内容通常不想。")</p>
+                    <p class="notic">@T("保存在 Config/Waf.toml，改完立即生效，无需重启。")</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt></dt>
+                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms['formCrawl'].submit()">@T("保存抓取开关")</a></dd>
+            </dl>
+        </form>
+    </div>
+    }
 </div>
 @* 语言 Tab 切换（不引 layui 的 element 模块，10 行原生 JS 足够）：
    点标题 → 切 `.layui-this` 与 `.layui-tab-item.layui-show`。 *@
