@@ -42,12 +42,12 @@ pub const DEFAULT_MODEL_FILE = "Model.xml";
 /// 默认数据库目录（与 C# 侧 `Data/` 同构）。
 pub const DEFAULT_DB_DIR = "Data";
 
-/// 站点设置快照的 TTL：设置几乎不变，60 秒足够；真正的「立即生效」靠 `saveSettings` 主动失效。
-const settings_ttl_ms: i64 = 60_000;
-
-/// 快照类型：`at_ms` 为写入时刻，`map` 是 `Config` 的「名称 → 值」（**自己持有内存**）。
+/// 快照类型：`Config` 的「名称 → 值」（**自己持有内存**，进程内常驻）。
+///
+/// 为什么不用 TTL：站点设置只由本后端写入（`saveSettings`），写入时这里会立刻失效；
+/// 因此「常驻 + 写失效」就能保证「后台改完立即生效」，没必要再去赌一个过期时间。
+/// 外部脚本直接改库时，调 `invalidateSettingsCache()` 或重启即可。
 const SettingsCache = struct {
-    at_ms: i64,
     map: std.StringHashMapUnmanaged([]const u8),
 };
 
@@ -84,12 +84,13 @@ pub const SqliteBackend = struct {
     tables: @import("membership_tables.zig").Tables = .{},
     /// 装配时用的选项（`membership = false` 表示没合并 C# 同源 `Member.xml`）
     model_options: ModelOptions = .{},
-    /// 站点设置（`Config` 表）的**短 TTL 快照**。
+    /// 站点设置（`Config` 表）的**进程内常驻快照**。
     ///
     /// 前台每个页面都要读站点名 / 版权 / 备案号 / 页脚 HTML；原来每次 `settings()` 都整表查一遍
     /// `Config`（2026-11-23 实测：无缓存时每页一次全表查询 + 分配）。这里只缓存「名称 → 值」
     /// 这一层，返回给调用方的 `Value` 仍拷进请求 arena，不会悬垂。
-    /// 失效时机：`saveSettings` 成功时立刻清（后台改完立即生效）；外部直接改库靠 TTL 兜底。
+    /// 失效时机：`saveSettings` 成功时立刻清（后台改完立即生效）；外部直接改库请调
+    /// `invalidateSettingsCache()`（不再靠 TTL —— 设置只由本进程写，没必要猜过期时间）。
     settings_cache: ?SettingsCache = null,
 
     /// 按 SQLite 文件路径打开（不存在则创建目录与库文件）。
@@ -491,11 +492,8 @@ pub const SqliteBackend = struct {
         defer self.mutex.unlock();
 
         // 命中快照：直接拼值，**不碰库**（前台每页都要读站点设置，这是最频繁的查询）
-        const now = zzig.compat.milliTimestamp();
         if (self.settings_cache) |cache| {
-            if (now - cache.at_ms < settings_ttl_ms) {
-                return backend_mod.settingsValue(arena, &cache.map);
-            }
+            return backend_mod.settingsValue(arena, &cache.map);
         }
 
         settings_queries += 1;
@@ -539,7 +537,7 @@ pub const SqliteBackend = struct {
 
         // 用新快照替换旧快照（旧值在这里释放）
         self.invalidateSettingsCacheLocked();
-        self.settings_cache = .{ .at_ms = now, .map = stored };
+        self.settings_cache = .{ .map = stored };
         return backend_mod.settingsValue(arena, &self.settings_cache.?.map);
     }
 
