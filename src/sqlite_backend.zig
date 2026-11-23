@@ -579,8 +579,12 @@ pub const SqliteBackend = struct {
         _ = try wu.eq("ID", .{ .int = user.ID });
         var sets: [3]zcode.sqlbuild.Field = undefined;
         var n: usize = 0;
-        if (result.upgraded) |upgraded| {
-            defer self.allocator.free(upgraded);
+        // ★ `defer free` 必须挂在**函数作用域**：原先写在 `if (result.upgraded)` 块里，
+        //   块一结束就释放了，后面 `updateOne` 拿的是已释放内存 → 库里落进 55 个 0x55（'U'），
+        //   表现为「登录成功一次后，该账号口令永久损坏」（2026-11-23 实测踩到，`User.Password='UUU…'`）。
+        const upgraded_opt = result.upgraded;
+        defer if (upgraded_opt) |upgraded| self.allocator.free(upgraded);
+        if (upgraded_opt) |upgraded| {
             sets[n] = zcode.dbtable.field("Password", .{ .text = upgraded });
             n += 1;
         }

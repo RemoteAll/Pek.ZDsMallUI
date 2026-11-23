@@ -1,4 +1,4 @@
-﻿@charset "utf-8";
+@charset "utf-8";
 
 *{ word-wrap:break-word; outline:none; }
 body{ background:#EAECEF;}
@@ -126,6 +126,10 @@ h6 { font-size:12px;}
 .dsui-btn-del i{font-size:12px;padding-right:2px;}
 .dsui-btn-del i:before {content: "\e725";}
 .dsui-btn-del:hover{color:#fff;}
+/* 禁用态：形状/尺寸不变，只降对比度 —— 用于「看得见但点不动」的项（如系统内置角色不能删除） */
+.dsui-btn-del.is-disabled, .dsui-btn-del.is-disabled:hover,
+.dsui-btn-edit.is-disabled, .dsui-btn-edit.is-disabled:hover,
+.dsui-btn-view.is-disabled, .dsui-btn-view.is-disabled:hover { background-color:#cfd4da; color:#fff; cursor:not-allowed; opacity:.9; }
 .dsui-btn-add{display:inline-block;border:none;padding:0px 5px;height:22px;line-height:22px;border-radius:3px;background-color:#009688;color:#fff;vertical-align:middle;text-align:center;cursor:pointer;font-size:12px;float:left;margin:2px 5px 2px 0;}
 .dsui-btn-add i{font-size:12px;padding-right:2px;}
 .dsui-btn-add i:before {content: "\e731";}

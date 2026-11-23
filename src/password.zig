@@ -41,3 +41,8 @@ pub fn verifyAndUpgrade(
     _ = provider;
     return core.verifyAndUpgradeAlloc(allocator, password, stored);
 }
+
+test "口令互通：C# 口径（HMAC key=MD5, msg=盐）的散列必须能通过 verify" {
+    const stored = "$md5+sha1$0ynUlRVGHtQj9l9p$/Y9A0d8JVdtNr0czrEEi8TpoxJA=";
+    try std.testing.expect(verify("admin123", stored));
+}

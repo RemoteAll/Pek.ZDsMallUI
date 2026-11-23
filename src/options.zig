@@ -958,7 +958,10 @@ fn writeGzipSibling(
 
     const gz_path = try std.fmt.allocPrint(allocator, "{s}.gz", .{target});
     defer allocator.free(gz_path);
-    if (zzig.fsio.exists(io, gz_path)) return;
+    // **每次启动都重压**（只用于内置的几个资源，几毫秒）：
+    // 原先 gz 存在就跳过 会让「改了 admin.css 却一直是旧样式」——
+    // 浏览器优先拿预压缩的 .gz，源文件已更新、压缩副本还是旧的（2026-11-23 实测踩到）。
+    // 代价可忽略：ADMIN_STATIC_ASSETS 只有 6 个文件。
 
     const content = zzig.fsio.readFileAlloc(io, allocator, target, 8 * 1024 * 1024) catch return;
     defer allocator.free(content);

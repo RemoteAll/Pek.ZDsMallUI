@@ -70,9 +70,9 @@
                     @if (row.isSystem == false) {
                     <a href="javascript:;" onclick="javascript:dsLayerConfirm('@Model.areaRoute/role/delete?id=@row.id','@T("您确定要删除吗?")',@row.id)" class="dsui-btn-del">@T("删除")</a>
                     } else {
-                    @* 系统内置角色不可删：仍然渲染按钮（置灰 + 提示），
-                       否则列表里「完全看不到删除」会让人以为缺功能。 *@
-                    <a href="javascript:;" onclick="javascript:layer.msg('@T("系统内置角色不允许删除")')" style="color:#bbb;margin-left:8px;cursor:not-allowed;" title="@T("系统内置角色不允许删除")">@T("删除")</a>
+                    @* 系统内置角色不可删：仍然渲染成按钮（置灰 + 点不动 + 提示），
+                       否则列表里「完全看不到删除」会让人以为缺功能；灰字链接又和旁边的蓝色按钮不搭。 *@
+                    <a href="javascript:;" onclick="javascript:layer.msg('@T("系统内置角色不允许删除")')" class="dsui-btn-del is-disabled" title="@T("系统内置角色不允许删除")">@T("删除")</a>
                     }
                 </td>
             </tr>
