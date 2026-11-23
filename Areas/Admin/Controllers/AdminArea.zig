@@ -96,6 +96,8 @@ pub const AdminArea = struct {
     /// 实例启动记录文件（`Instance.toml`）路径；`null` = 没配，仪表盘就不显示安装时间/启动次数。
     /// 应用启动时调 [`setInstancePath`] 传入（由应用自己决定放哪：一般与配置文件同目录）。
     instance_path: ?[]const u8 = null,
+    /// 未命中区域名时的兜底处理器（可选）：站点注入自己的 404 页，避免访客看到 JSON。
+    not_found: ?zzig.web.Handler = null,
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
     /// 退役的旧快照（读线程可能还在用，延迟到 `deinit` 释放）
@@ -283,6 +285,11 @@ pub const AdminArea = struct {
     /// 典型用法：应用启动时先 `sysinfo.recordStartup(alloc, io, path)` 落盘，再把这个路径交给后台。
     pub fn setInstancePath(self: *AdminArea, path: []const u8) void {
         self.instance_path = path;
+    }
+
+    /// 设置「区域名不匹配」时的兜底处理器（站点调它挂自己的页面 404）。
+    pub fn setNotFoundHandler(self: *AdminArea, handler: zzig.web.Handler) void {
+        self.not_found = handler;
     }
 
     /// 当前用户的后台界面语言：用户偏好 → 默认语言 → 0。
@@ -806,7 +813,14 @@ pub const AdminArea = struct {
     fn areaRootCall(raw: ?*anyopaque, c: *router.Ctx) anyerror!zzig.web.Response {
         const self: *AdminArea = @ptrCast(@alignCast(raw orelse return router.Response.notFound()));
         const segment = c.param("area") orelse return router.Response.notFound();
-        if (!std.ascii.eqlIgnoreCase(segment, self.areaName())) return router.Response.notFound();
+        // 区域名不匹配 = 这只是个「没对上的单段路径」。
+        // `/{area}` 路由会吃掉所有单段路径，如果这里直接回 `router.notFound()`（JSON），
+        // 访客输错网址就只能看到一屏 `{"code":404}`。站点可以注入自己的 404 页处理器
+        // （`setNotFoundHandler`）把页面请求交给前端渲染。
+        if (!std.ascii.eqlIgnoreCase(segment, self.areaName())) {
+            if (self.not_found) |handler| return handler.call(handler.ctx, c);
+            return router.Response.notFound();
+        }
         const location = try std.fmt.allocPrint(c.arena, "/{s}/home/index", .{segment});
         return router.Response.redirectAlloc(c.arena, location);
     }

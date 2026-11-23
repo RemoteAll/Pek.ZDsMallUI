@@ -42,6 +42,18 @@ pub const DEFAULT_MODEL_FILE = "Model.xml";
 /// 默认数据库目录（与 C# 侧 `Data/` 同构）。
 pub const DEFAULT_DB_DIR = "Data";
 
+/// 站点设置快照的 TTL：设置几乎不变，60 秒足够；真正的「立即生效」靠 `saveSettings` 主动失效。
+const settings_ttl_ms: i64 = 60_000;
+
+/// 快照类型：`at_ms` 为写入时刻，`map` 是 `Config` 的「名称 → 值」（**自己持有内存**）。
+const SettingsCache = struct {
+    at_ms: i64,
+    map: std.StringHashMapUnmanaged([]const u8),
+};
+
+/// 测试用计数：真正查 `Config` 表的次数（命中快照时不增加）。
+pub var settings_queries: usize = 0;
+
 /// 模型装配选项。
 ///
 /// 默认 `membership = true`：合并 `Pek.ZCode` 的 C# 同源 `Member.xml`（User/Department/Role/Menu/
@@ -72,6 +84,13 @@ pub const SqliteBackend = struct {
     tables: @import("membership_tables.zig").Tables = .{},
     /// 装配时用的选项（`membership = false` 表示没合并 C# 同源 `Member.xml`）
     model_options: ModelOptions = .{},
+    /// 站点设置（`Config` 表）的**短 TTL 快照**。
+    ///
+    /// 前台每个页面都要读站点名 / 版权 / 备案号 / 页脚 HTML；原来每次 `settings()` 都整表查一遍
+    /// `Config`（2026-11-23 实测：无缓存时每页一次全表查询 + 分配）。这里只缓存「名称 → 值」
+    /// 这一层，返回给调用方的 `Value` 仍拷进请求 arena，不会悬垂。
+    /// 失效时机：`saveSettings` 成功时立刻清（后台改完立即生效）；外部直接改库靠 TTL 兜底。
+    settings_cache: ?SettingsCache = null,
 
     /// 按 SQLite 文件路径打开（不存在则创建目录与库文件）。
     pub fn init(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !*SqliteBackend {
@@ -192,12 +211,34 @@ pub const SqliteBackend = struct {
     }
 
     pub fn deinit(self: *SqliteBackend) void {
+        self.invalidateSettingsCacheLocked();
         self.session.deinit();
         self.allocator.destroy(self.session);
         self.dal.deinit();
         self.model_arena.deinit();
         self.allocator.destroy(self.model_arena);
         self.allocator.destroy(self);
+    }
+
+    /// 让站点设置快照失效（外部直接改库 / 测试用）。
+    /// `saveSettings` 成功时会自动清，日常不需要调。
+    pub fn invalidateSettingsCache(self: *SqliteBackend) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.invalidateSettingsCacheLocked();
+    }
+
+    fn invalidateSettingsCacheLocked(self: *SqliteBackend) void {
+        if (self.settings_cache) |cache| {
+            var map = cache.map;
+            var it = map.iterator();
+            while (it.next()) |kv| {
+                self.allocator.free(kv.key_ptr.*);
+                self.allocator.free(kv.value_ptr.*);
+            }
+            map.deinit(self.allocator);
+            self.settings_cache = null;
+        }
     }
 
     pub fn backend(self: *SqliteBackend) backend_mod.AdminBackend {
@@ -448,10 +489,20 @@ pub const SqliteBackend = struct {
         const self: *SqliteBackend = @ptrCast(@alignCast(ptr));
         self.mutex.lock();
         defer self.mutex.unlock();
+
+        // 命中快照：直接拼值，**不碰库**（前台每页都要读站点设置，这是最频繁的查询）
+        const now = zzig.compat.milliTimestamp();
+        if (self.settings_cache) |cache| {
+            if (now - cache.at_ms < settings_ttl_ms) {
+                return backend_mod.settingsValue(arena, &cache.map);
+            }
+        }
+
+        settings_queries += 1;
         self.session.resetResults();
 
         var stored = std.StringHashMapUnmanaged([]const u8).empty;
-        defer {
+        errdefer {
             var it = stored.iterator();
             while (it.next()) |kv| {
                 self.allocator.free(kv.key_ptr.*);
@@ -486,7 +537,10 @@ pub const SqliteBackend = struct {
             try stored.put(self.allocator, owned_key, owned_val);
         }
 
-        return backend_mod.settingsValue(arena, &stored);
+        // 用新快照替换旧快照（旧值在这里释放）
+        self.invalidateSettingsCacheLocked();
+        self.settings_cache = .{ .at_ms = now, .map = stored };
+        return backend_mod.settingsValue(arena, &self.settings_cache.?.map);
     }
 
     /// 保存配置（表单参数）：与 C# 一致的口径 —— 网站名称必填、值没变不算脏、
@@ -525,6 +579,9 @@ pub const SqliteBackend = struct {
             try self.putSettingLocked(target, field.value);
         }
         if (!dirty) return .ok;
+
+        // 库里的设置要变了 → 快照立即失效（后台保存后马上生效，不用等 TTL）
+        self.invalidateSettingsCacheLocked();
 
         // 版本戳：外部（「配置 ↔ 数据库」同步、缓存失效）据此判断「库里的设置变新了」。
         // 元数据、不是业务字段，不在 `formKeyToSetting` 白名单里。
@@ -964,4 +1021,55 @@ test "后端：membership=false 时只建库自身与项目的表，不建 C# �
     try testing.expectError(error.TableNotFound, be.dal.table("Tenant"));
     try testing.expectError(error.TableNotFound, be.dal.table("Department"));
     try testing.expect(be.model_options.membership == false);
+}
+
+test "后端：站点设置快照命中缓存，saveSettings 后立即失效" {
+    const dir = ".zig-cache/zdsmallui-test-settings-cache";
+    std.Io.Dir.cwd().deleteTree(testing.io, dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, dir) catch {};
+    try zzig.fsio.makePath(testing.io, dir);
+
+    const be_opt: ?*SqliteBackend = SqliteBackend.init(testing.allocator, testing.io, dir ++ "/Cache.db") catch |e| {
+        std.debug.print("[SKIP] 本机没有可用 SQLite 驱动：{s}\n", .{@errorName(e)});
+        return;
+    };
+    defer if (be_opt) |b| b.deinit();
+    const be = be_opt.?;
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // 第一次：查库（快照为空）
+    _ = try be.backend().settings(arena);
+    const queries_after_first = settings_queries;
+
+    // 第二次：命中快照，不再查库
+    _ = try be.backend().settings(arena);
+    try testing.expectEqual(queries_after_first, settings_queries);
+
+    // 保存设置 → 快照立即失效，读到的必须是新值
+    const form = [_]router.Param{.{ .name = "SiteName", .value = "快照站" }};
+    try testing.expect((try be.backend().saveSettings(arena, &form)) == .ok);
+
+    // 失效后再读：必须重新查库，并读到新值
+    const value = try be.backend().settings(arena);
+    try testing.expect(settings_queries > queries_after_first);
+
+    var site_name: []const u8 = "";
+    switch (value) {
+        .object => |fields| {
+            for (fields) |field| {
+                if (std.mem.eql(u8, field.name, "siteName")) site_name = field.value.asString() orelse "";
+            }
+        },
+        else => {},
+    }
+    try testing.expectEqualStrings("快照站", site_name);
+
+    // 手动失效（外部直接改库的场景）也只能多查一次
+    const before_invalidate = settings_queries;
+    be.invalidateSettingsCache();
+    _ = try be.backend().settings(arena);
+    try testing.expectEqual(before_invalidate + 1, settings_queries);
 }
