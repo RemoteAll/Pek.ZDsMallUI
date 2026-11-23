@@ -499,6 +499,8 @@ pub const Builder = struct {
     login_guard_options: login_guard_mod.Options = .{},
     /// WAF 配置目录（含 `Config/Waf.toml`；`null` = 不启用 WAF）
     waf_base_dir: ?[]const u8 = null,
+    /// WAF 预设（`null` = `WafConfig.adminApi()`）
+    waf_preset: ?pek_zwaf.WafConfig = null,
     /// 数据目录（`null` = 内存后端；设置后启用 SQLite，库文件为 `{dir}/{Area}.db`）
     storage_dir: ?[]const u8 = null,
     /// 下载扩展名白名单（默认常用类型；`&.{}` = 禁止一切下载）
@@ -678,9 +680,21 @@ pub const Builder = struct {
     /// 启用 WAF（读 `{base_dir}/Config/Waf.toml`，首启自动生成模板）。
     ///
     /// 启用后 `mount` 会把 WAF 中间件注册在**最前面**，另建议在示例里挂 `ServerGuard` 做早拒。
+    /// 默认预设是 `WafConfig.adminApi()`；公网站点把 `allowSearchBots` 等改掉后
+    /// 用 [`wafPreset`] 替换（首启生成的模板与「文件中缺的键」都按它走）。
     pub fn waf(self: Builder, base_dir: []const u8) Builder {
         var copy = self;
         copy.waf_base_dir = base_dir;
+        return copy;
+    }
+
+    /// 指定 WAF 预设（不传 = `WafConfig.adminApi()`）。
+    ///
+    /// 为什么需要：`Config/` 通常不入库，部署时是「首启按预设生成模板」—— 预设错了，
+    /// 生产配置就错。例如公网站点漏了 `allowSearchBots = true`，搜索引擎会整站 403（真实踩过）。
+    pub fn wafPreset(self: Builder, preset: pek_zwaf.WafConfig) Builder {
+        var copy = self;
+        copy.waf_preset = preset;
         return copy;
     }
 
@@ -834,7 +848,7 @@ pub const Builder = struct {
             .menus = menus,
             .sqlite_backend_ptr = sqlite_backend,
             .waf_instance = if (self.waf_base_dir) |base|
-                try pek_zwaf.Waf.load(self.allocator, self.io, base)
+                try pek_zwaf.Waf.loadWithPreset(self.allocator, self.io, base, self.waf_preset orelse pek_zwaf.WafConfig.adminApi())
             else
                 null,
         };
