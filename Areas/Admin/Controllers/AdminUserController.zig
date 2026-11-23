@@ -209,7 +209,7 @@ fn listUsers(self: *admin_area.AdminArea, arena: std.mem.Allocator) ![]const zzi
     _ = q.filterWhere(&w);
     _ = try q.orderBy("ID", false);
 
-    const ref = try dal.table("User");
+    const ref = try dal.table(self.tables.user);
     s.resetResults();
     const rows = try ref.queryRows(s, &q);
 
@@ -237,7 +237,7 @@ const RoleLite = struct { id: i32, name: []const u8, permission: []const u8 };
 fn loadRolesMap(self: *admin_area.AdminArea, arena: std.mem.Allocator) ![]const RoleLite {
     const dal = self.dal orelse return &.{};
     const s = self.session orelse return &.{};
-    const ref = try dal.table("Role");
+    const ref = try dal.table(self.tables.role);
     var q = zcode.Query.init(s.gpa);
     defer q.deinit();
     _ = try q.orderBy("Sort", false);
@@ -277,7 +277,7 @@ fn roleOptions(self: *admin_area.AdminArea, arena: std.mem.Allocator, current: i
 fn loadUser(self: *admin_area.AdminArea, id: i32) !UserRow {
     const dal = self.dal orelse return error.NotAttached;
     const s = self.session orelse return error.NotAttached;
-    const ref = try dal.table("User");
+    const ref = try dal.table(self.tables.user);
     var w = zcode.Where.init(s.gpa);
     defer w.deinit();
     _ = try w.eq("ID", .{ .int = id });
@@ -306,7 +306,7 @@ fn loadUser(self: *admin_area.AdminArea, id: i32) !UserRow {
 fn saveUser(self: *admin_area.AdminArea, input: SaveInput) !void {
     const dal = self.dal orelse return error.NotAttached;
     const s = self.session orelse return error.NotAttached;
-    const ref = try dal.table("User");
+    const ref = try dal.table(self.tables.user);
 
     // 登录名唯一（排除自己）
     {
@@ -394,7 +394,7 @@ fn removeUser(self: *admin_area.AdminArea, id: i32, operator_name: []const u8) !
     defer w.deinit();
     _ = try w.eq("ID", .{ .int = id });
     s.resetResults();
-    const ref = try dal.table("User");
+    const ref = try dal.table(self.tables.user);
     var q = zcode.Query.init(s.gpa);
     defer q.deinit();
     _ = q.filterWhere(&w);
@@ -418,7 +418,7 @@ fn removeUser(self: *admin_area.AdminArea, id: i32, operator_name: []const u8) !
 fn countSuperAdmins(self: *admin_area.AdminArea, exclude_id: i32) !usize {
     const dal = self.dal orelse return 0;
     const s = self.session orelse return 0;
-    const ref = try dal.table("User");
+    const ref = try dal.table(self.tables.user);
 
     var w = zcode.Where.init(s.gpa);
     defer w.deinit();
@@ -443,7 +443,7 @@ fn roleHasStar(self: *admin_area.AdminArea, role_id: i32) bool {
     if (role_id == 0) return false;
     const dal = self.dal orelse return false;
     const s = self.session orelse return false;
-    const ref = dal.table("Role") catch return false;
+    const ref = dal.table(self.tables.role) catch return false;
     var w = zcode.Where.init(s.gpa);
     defer w.deinit();
     _ = w.eq("ID", .{ .int = role_id }) catch return false;

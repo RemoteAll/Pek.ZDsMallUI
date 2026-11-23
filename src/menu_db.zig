@@ -26,6 +26,8 @@ const value = zzig.web.value;
 pub const Store = struct {
     dal: *zcode.Dal,
     session: *zcode.Session,
+    /// 菜单表名（默认 `Menu`；业务换表时由 `AdminArea.setTables` 一并带过来）
+    tables: @import("membership_tables.zig").Tables = .{},
 };
 
 /// `Menu.Type`：1 = 目录（顶部导航分组）
@@ -35,7 +37,7 @@ pub const TYPE_MENU: i32 = 2;
 
 /// 表里有没有菜单数据（决定渲染走表还是走内存注册表）。
 pub fn hasRows(store: Store) bool {
-    const ref = store.dal.table("Menu") catch return false;
+    const ref = store.dal.table(store.tables.menu) catch return false;
     var q = zcode.Query.init(store.session.gpa);
     defer q.deinit();
     _ = q.take(1);
@@ -53,7 +55,7 @@ pub fn seedFromRegistry(
     groups: []const menu_mod.Group,
     items: []const menu_mod.Item,
 ) !usize {
-    const ref = try store.dal.table("Menu");
+    const ref = try store.dal.table(store.tables.menu);
     const session = store.session;
     var written: usize = 0;
 
@@ -136,7 +138,7 @@ pub fn buildValue(
     languages: *const language.Store,
     culture_id: i32,
 ) !?value.Value {
-    const ref = try store.dal.table("Menu");
+    const ref = try store.dal.table(store.tables.menu);
     const session = store.session;
 
     var q = zcode.Query.init(session.gpa);
@@ -203,7 +205,7 @@ const UpdateInput = struct {
 };
 
 fn updateMeta(store: Store, id: i32, input: UpdateInput) !void {
-    const ref = try store.dal.table("Menu");
+    const ref = try store.dal.table(store.tables.menu);
     var w = zcode.Where.init(store.session.gpa);
     defer w.deinit();
     _ = try w.eq("ID", .{ .int = id });
@@ -221,7 +223,7 @@ fn updateMeta(store: Store, id: i32, input: UpdateInput) !void {
 /// 按 `ParentID + Name` 查一行（`Menu` 的唯一索引就是这两列）。
 /// 返回的 `display_name` 用调用方 allocator 复制，用完要 `freeMaybe`。
 fn loadByPath(allocator: std.mem.Allocator, store: Store, parent_id: i32, name: []const u8) !?Row {
-    const ref = store.dal.table("Menu") catch return null;
+    const ref = store.dal.table(store.tables.menu) catch return null;
     var w = zcode.Where.init(store.session.gpa);
     defer w.deinit();
     _ = try w.eq("ParentID", .{ .int = parent_id });

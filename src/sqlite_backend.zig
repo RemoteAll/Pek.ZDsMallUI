@@ -1,4 +1,4 @@
-﻿//! 数据访问后端：**表结构由 `Pek.ZCode` 的 `syncSchema` 同步，读写一律走 ORM**
+//! 数据访问后端：**表结构由 `Pek.ZCode` 的 `syncSchema` 同步，读写一律走 ORM**
 //! （`Dal.table()` + `TableRef`，账号用生成实体 `zcode.membership.entities.User`）。
 //!
 //! # 为什么必须走 ORM（用户要求，2026-11-22）
@@ -42,6 +42,20 @@ pub const DEFAULT_MODEL_FILE = "Model.xml";
 /// 默认数据库目录（与 C# 侧 `Data/` 同构）。
 pub const DEFAULT_DB_DIR = "Data";
 
+/// 模型装配选项。
+///
+/// 默认 `membership = true`：合并 `Pek.ZCode` 的 C# 同源 `Member.xml`（User/Department/Role/Menu/
+/// Parameter/Area/Log/Tenant/TenantUser 九张表）—— 这是「与 C# 共用同一个库、同一批数据」的前提。
+///
+/// 业务系统想**完全自己定义**成员域（不想要那九张表），可以 `membership = false`：
+/// 此时只装配本库的 `Config`/`Session`/`UserDetail` + 项目 `Model.xml` + 项目实体；
+/// 但后台框架仍按列名读写 `User`/`Role`/`Menu`，所以**项目必须自己声明这三张表且列名兼容**，
+/// 表名不同则再用 `AdminArea.setTables` 指过去。详见 `src/membership_tables.zig`。
+pub const ModelOptions = struct {
+    /// 是否合并 C# 同源 `Member.xml`（默认 true）
+    membership: bool = true,
+};
+
 pub const SqliteBackend = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -54,6 +68,10 @@ pub const SqliteBackend = struct {
     /// 按值复制进结构体后那个地址就悬垂了（free 时报 `attempt to use null value`）。
     model_arena: *std.heap.ArenaAllocator,
     mutex: zzig.compat.Mutex = .{},
+    /// 成员域三表名（默认 User / Role / Menu，与 C# Member.xml 同源；业务可 setTables 换成自己的表）
+    tables: @import("membership_tables.zig").Tables = .{},
+    /// 装配时用的选项（`membership = false` 表示没合并 C# 同源 `Member.xml`）
+    model_options: ModelOptions = .{},
 
     /// 按 SQLite 文件路径打开（不存在则创建目录与库文件）。
     pub fn init(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !*SqliteBackend {
@@ -108,17 +126,30 @@ pub const SqliteBackend = struct {
         project_xml: ?[]const u8,
         comptime entities: anytype,
     ) !*SqliteBackend {
+        return initWithConnectionOptions(allocator, io, conn_str, project_xml, entities, .{});
+    }
+
+    /// 同 [`initWithConnectionEntities`]，但可指定 [`ModelOptions`]
+    /// （`membership = false` = 业务自备成员域，不合并 C# 同源 `Member.xml`）。
+    pub fn initWithConnectionOptions(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        conn_str: []const u8,
+        project_xml: ?[]const u8,
+        comptime entities: anytype,
+        options: ModelOptions,
+    ) !*SqliteBackend {
         const model_arena = try allocator.create(std.heap.ArenaAllocator);
         model_arena.* = std.heap.ArenaAllocator.init(allocator);
         errdefer {
             model_arena.deinit();
             allocator.destroy(model_arena);
         }
-        const model = try mergeModel(model_arena.allocator(), project_xml, entities);
+        const model = try mergeModel(model_arena.allocator(), project_xml, entities, options);
 
         const self = try allocator.create(SqliteBackend);
         errdefer allocator.destroy(self);
-        self.* = .{ .allocator = allocator, .io = io, .dal = undefined, .session = undefined, .model_arena = model_arena };
+        self.* = .{ .allocator = allocator, .io = io, .dal = undefined, .session = undefined, .model_arena = model_arena, .model_options = options };
 
         self.dal = zcode.Dal.initWithModel(allocator, conn_str, model) catch |e| {
             zzig.Logger.err("[ZDsMallUI] 打开数据库失败（{s}）：连接串 {s}", .{ @errorName(e), conn_str });
@@ -277,7 +308,7 @@ pub const SqliteBackend = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const ref = try self.dal.table("Role");
+        const ref = try self.dal.table(self.tables.role);
         // 表里有角色就不再 seed（新库首次启动才建默认角色；不做老库兼容）
         if (try ref.count(self.session, null) > 0) return;
 
@@ -308,7 +339,7 @@ pub const SqliteBackend = struct {
 
     /// 超级管理员角色的 ID（按名字查；查不到回退 1）。默认账号的 `User.RoleID` 用它。
     fn superAdminRoleId(self: *SqliteBackend) !i32 {
-        const ref = self.dal.table("Role") catch return 1;
+        const ref = self.dal.table(self.tables.role) catch return 1;
         var w = zcode.Where.init(self.session.gpa);
         defer w.deinit();
         _ = w.eq("Name", .{ .text = "超级管理员" }) catch return 1;
@@ -387,7 +418,7 @@ pub const SqliteBackend = struct {
         _ = try q.column("ID");
         _ = q.filterWhere(&w);
 
-        const ref = try self.dal.table("User");
+        const ref = try self.dal.table(self.tables.user);
         const rows = try ref.queryRows(self.session, &q);
         var ids: std.ArrayList(i64) = .empty;
         defer ids.deinit(self.allocator);
@@ -542,7 +573,7 @@ pub const SqliteBackend = struct {
         //
         // **必须走 `updateOne` 显式列**：生成的实体 `dirty` 位图只由 setter 置位，
         // 直接赋值字段不算脏列，`entity.update` 会「无脏列 → 不发 SQL」（踩过：改密「成功」却登不上）。
-        const ref = try self.dal.table("User");
+        const ref = try self.dal.table(self.tables.user);
         var wu = zcode.Where.init(self.allocator);
         defer wu.deinit();
         _ = try wu.eq("ID", .{ .int = user.ID });
@@ -576,7 +607,7 @@ pub const SqliteBackend = struct {
     /// 角色是否是超级管理员（`Role.Permission` 含 `*`）；查不到按「否」处理。
     fn roleIsSuper(self: *SqliteBackend, role_id: i32) bool {
         if (role_id == 0) return false;
-        const ref = self.dal.table("Role") catch return false;
+        const ref = self.dal.table(self.tables.role) catch return false;
         var w = zcode.Where.init(self.session.gpa);
         defer w.deinit();
         _ = w.eq("ID", .{ .int = role_id }) catch return false;
@@ -643,7 +674,7 @@ pub const SqliteBackend = struct {
         defer self.allocator.free(hashed);
 
         // 显式列更新（不依赖实体脏位图：直接赋字段不会置脏，会变成「不发 SQL」）
-        const ref = try self.dal.table("User");
+        const ref = try self.dal.table(self.tables.user);
         var wu = zcode.Where.init(self.allocator);
         defer wu.deinit();
         _ = try wu.eq("ID", .{ .int = users[0].ID });
@@ -708,7 +739,7 @@ pub const SqliteBackend = struct {
         _ = try q.column("ID");
         _ = q.filterWhere(&w);
 
-        const ref = try self.dal.table("User");
+        const ref = try self.dal.table(self.tables.user);
         const rows = try ref.queryRows(self.session, &q);
         if (rows.len == 0 or rows[0].values.len == 0) return null;
         return rows[0].values[0].asI64();
@@ -716,12 +747,24 @@ pub const SqliteBackend = struct {
 };
 
 /// 合并三层模型并按 C# 语义补全列属性（详见文件头注释）。
-fn mergeModel(allocator: std.mem.Allocator, project_xml: ?[]const u8, comptime entities: anytype) !zcode.EntityModel {
-    var model = zcode.EntityModel.parse(allocator, MEMBER_XML) catch |e| {
-        zzig.Logger.err("[ZDsMallUI] 解析 C# 同源 Member.xml 失败（{s}）：Pek.ZCode 内置模型损坏", .{@errorName(e)});
-        return e;
-    };
-    try appendTables(allocator, &model, MODEL_XML, "库内置 Model.xml");
+fn mergeModel(
+    allocator: std.mem.Allocator,
+    project_xml: ?[]const u8,
+    comptime entities: anytype,
+    options: ModelOptions,
+) !zcode.EntityModel {
+    // `membership = false`：不碰 `Member.xml`，只从本库的 Model.xml 起头（表全部由库 + 项目自备）
+    var model = if (options.membership)
+        zcode.EntityModel.parse(allocator, MEMBER_XML) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 解析 C# 同源 Member.xml 失败（{s}）：Pek.ZCode 内置模型损坏", .{@errorName(e)});
+            return e;
+        }
+    else
+        zcode.EntityModel.parse(allocator, MODEL_XML) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 解析库内置 Model.xml 失败（{s}）", .{@errorName(e)});
+            return e;
+        };
+    if (options.membership) try appendTables(allocator, &model, MODEL_XML, "库内置 Model.xml");
     if (project_xml) |xml| try appendTables(allocator, &model, xml, "项目 Model.xml");
 
     // **单库部署**：表级 `ConnName` 归零，等价 C# `ConnectionStrings` 的 `X: MapTo=DH`。
@@ -730,7 +773,7 @@ fn mergeModel(allocator: std.mem.Allocator, project_xml: ?[]const u8, comptime e
 
     // ★ 实体保底：建表 = `Model.xml` ∪ 实体。
     //   XML 被清理掉表/列时，只要实体还在被代码引用，表/列就继续建出来。
-    try mergeEntityTypesInto(&model, entities);
+    try mergeEntityTypesInto(&model, entities, options.membership);
 
     // 按 C# XCode 语义补全：string/datetime 可空、值类型 NOT NULL + 默认 0
     model.applyCsharpColumnDefaults();
@@ -738,11 +781,17 @@ fn mergeModel(allocator: std.mem.Allocator, project_xml: ?[]const u8, comptime e
 }
 
 /// 把内置实体（C# 同源 Membership + 库自身）与消费方项目实体并入模型，并汇总日志。
-fn mergeEntityTypesInto(model: *zcode.EntityModel, comptime entities: anytype) !void {
-    const members = model.mergeEntityTypes(zcode.membership.entities.all) catch |e| {
-        zzig.Logger.err("[ZDsMallUI] 并入 C# 同源 Membership 实体失败（{s}）：模型不完整，建表可能缺表", .{@errorName(e)});
-        return e;
-    };
+fn mergeEntityTypesInto(model: *zcode.EntityModel, comptime entities: anytype, with_membership: bool) !void {
+    var members_tables: usize = 0;
+    var members_columns: usize = 0;
+    if (with_membership) {
+        const members = model.mergeEntityTypes(zcode.membership.entities.all) catch |e| {
+            zzig.Logger.err("[ZDsMallUI] 并入 C# 同源 Membership 实体失败（{s}）：模型不完整，建表可能缺表", .{@errorName(e)});
+            return e;
+        };
+        members_tables = members.tables_added;
+        members_columns = members.columns_added;
+    }
     const lib = model.mergeEntityTypes(@import("entities/mod.zig").all) catch |e| {
         zzig.Logger.err("[ZDsMallUI] 并入库内置实体（Config/Session/UserDetail）失败（{s}）", .{@errorName(e)});
         return e;
@@ -752,8 +801,8 @@ fn mergeEntityTypesInto(model: *zcode.EntityModel, comptime entities: anytype) !
         return e;
     };
 
-    const tables_added = members.tables_added + lib.tables_added + proj.tables_added;
-    const columns_added = members.columns_added + lib.columns_added + proj.columns_added;
+    const tables_added = members_tables + lib.tables_added + proj.tables_added;
+    const columns_added = members_columns + lib.columns_added + proj.columns_added;
     if (tables_added > 0 or columns_added > 0) {
         zzig.Logger.info(
             "[ZDsMallUI] 实体保底：Model.xml 里缺失但实体仍在用 → 补表 {d} / 补列 {d}",
@@ -881,4 +930,34 @@ test "后端：ORM 建表 + 设置读写 + 登录 + 重开数据仍在" {
         try testing.expectEqualStrings("保存链路站", (try be2.setting(arena, "siteName")).?);
         try testing.expectEqual(@as(i32, 2), be2.backend().languageId("admin"));
     }
+}
+
+test "后端：membership=false 时只建库自身与项目的表，不建 C# 同源九张表" {
+    const dir = ".zig-cache/zdsmallui-test-nomember";
+    std.Io.Dir.cwd().deleteTree(testing.io, dir) catch {};
+    defer std.Io.Dir.cwd().deleteTree(testing.io, dir) catch {};
+    try zzig.fsio.makePath(testing.io, dir);
+
+    const path = dir ++ "/NoMember.db";
+    const be_opt: ?*SqliteBackend = SqliteBackend.initWithConnectionOptions(
+        testing.allocator,
+        testing.io,
+        "Data Source=" ++ path ++ ";Provider=SQLite",
+        null,
+        .{},
+        .{ .membership = false },
+    ) catch |e| {
+        std.debug.print("[SKIP] 本机没有可用 SQLite 驱动：{s}\n", .{@errorName(e)});
+        return;
+    };
+    defer if (be_opt) |b| b.deinit();
+    const be = be_opt.?;
+
+    // 库自身的表在
+    _ = try be.dal.table("Config");
+    _ = try be.dal.table("Session");
+    // C# 同源 Membership 的表不在（Tenant / Department 属于 Member.xml）
+    try testing.expectError(error.TableNotFound, be.dal.table("Tenant"));
+    try testing.expectError(error.TableNotFound, be.dal.table("Department"));
+    try testing.expect(be.model_options.membership == false);
 }

@@ -83,6 +83,10 @@ pub const AdminArea = struct {
     dal: ?*@import("zcode").Dal = null,
     /// 与 `dal` 配套的**长连接**（不能每请求 `openSession`：实测单条 INSERT ~1.1s）。
     session: ?*@import("zcode").Session = null,
+    /// 成员域三表的**表名映射**（`User` / `Role` / `Menu`）。默认与 C# `Member.xml` 一致；
+    /// 业务想用自己命名的表（如 `SysUser`）就 `setTables`，不必改框架源码。
+    /// 详见 `src/membership_tables.zig`（为何只开放这三张、换表时列名仍要兼容）。
+    tables: @import("../../../src/membership_tables.zig").Tables = .{},
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
     /// 退役的旧快照（读线程可能还在用，延迟到 `deinit` 释放）
@@ -243,6 +247,17 @@ pub const AdminArea = struct {
     pub fn setDal(self: *AdminArea, dal: ?*@import("zcode").Dal, session: ?*@import("zcode").Session) void {
         self.dal = dal;
         self.session = session;
+    }
+
+    /// 换成业务自己的 `User` / `Role` / `Menu` 表名（默认与 C# `Member.xml` 一致）。
+    ///
+    /// ```zig
+    /// // 项目 main.zig：Deps 建好之后
+    /// deps.ui.admin_area.setTables(.{ .user = "SysUser", .role = "SysRole" });
+    /// ```
+    /// 约束见 `src/membership_tables.zig`：**列名仍要兼容**（登录、权限、数据范围都按列名读写）。
+    pub fn setTables(self: *AdminArea, tables: @import("../../../src/membership_tables.zig").Tables) void {
+        self.tables = tables;
     }
 
     /// 当前用户的后台界面语言：用户偏好 → 默认语言 → 0。
@@ -659,7 +674,7 @@ pub const AdminArea = struct {
         if (user_name.len == 0) return null;
 
         // User.RoleID → Role.DataScope / DataDepartmentIds
-        const uref = dal.table("User") catch return null;
+        const uref = dal.table(self.tables.user) catch return null;
         var uw = zcode.Where.init(s.gpa);
         defer uw.deinit();
         _ = uw.eq("Name", .{ .text = user_name }) catch return null;
@@ -672,7 +687,7 @@ pub const AdminArea = struct {
         if (users.len == 0) return null;
         const role_id = columnInt(users[0], "RoleID");
 
-        const rref = dal.table("Role") catch return null;
+        const rref = dal.table(self.tables.role) catch return null;
         var rw = zcode.Where.init(s.gpa);
         defer rw.deinit();
         _ = rw.eq("ID", .{ .int = role_id }) catch return null;
@@ -734,7 +749,7 @@ pub const AdminArea = struct {
         const dal = self.dal orelse return null;
         const s = self.session orelse return null;
 
-        const users = dal.table("User") catch return null;
+        const users = dal.table(self.tables.user) catch return null;
         var wu = zcode_mod.Where.init(s.gpa);
         defer wu.deinit();
         _ = wu.eq("Name", .{ .text = user_name }) catch return null;
@@ -748,7 +763,7 @@ pub const AdminArea = struct {
         const role_id = rowInt(user_rows[0], "RoleID");
         if (role_id == 0) return "";
 
-        const roles = dal.table("Role") catch return null;
+        const roles = dal.table(self.tables.role) catch return null;
         var wr = zcode_mod.Where.init(s.gpa);
         defer wr.deinit();
         _ = wr.eq("ID", .{ .int = role_id }) catch return null;

@@ -214,7 +214,7 @@ fn listMenus(self: *admin_area.AdminArea, arena: std.mem.Allocator) ![]const zzi
     _ = try q.orderBy("Sort", false);
     _ = try q.orderBy("ID", false);
 
-    const ref = try dal.table("Menu");
+    const ref = try dal.table(self.tables.menu);
     s.resetResults();
     const rows = try ref.queryRows(s, &q);
 
@@ -268,7 +268,7 @@ fn parentOptions(self: *admin_area.AdminArea, arena: std.mem.Allocator) ![]const
     defer q.deinit();
     _ = try q.orderBy("Sort", false);
 
-    const ref = try dal.table("Menu");
+    const ref = try dal.table(self.tables.menu);
     s.resetResults();
     const rows = try ref.queryRows(s, &q);
 
@@ -295,7 +295,7 @@ fn parentOptions(self: *admin_area.AdminArea, arena: std.mem.Allocator) ![]const
 fn loadMenu(self: *admin_area.AdminArea, id: i32) !MenuRow {
     const dal = self.dal orelse return error.NotAttached;
     const s = self.session orelse return error.NotAttached;
-    const ref = try dal.table("Menu");
+    const ref = try dal.table(self.tables.menu);
     var w = zcode.Where.init(s.gpa);
     defer w.deinit();
     _ = try w.eq("ID", .{ .int = id });
@@ -326,7 +326,7 @@ fn loadMenu(self: *admin_area.AdminArea, id: i32) !MenuRow {
 fn saveMenu(self: *admin_area.AdminArea, input: SaveInput) !void {
     const dal = self.dal orelse return error.NotAttached;
     const s = self.session orelse return error.NotAttached;
-    const ref = try dal.table("Menu");
+    const ref = try dal.table(self.tables.menu);
 
     // 目录不能有父级；菜单项必须有目录父级
     var parent_id = input.parent_id;
@@ -412,7 +412,7 @@ fn removeMenu(self: *admin_area.AdminArea, id: i32) !bool {
     var wc = zcode.Where.init(s.gpa);
     defer wc.deinit();
     _ = try wc.eq("ParentID", .{ .int = id });
-    const ref = try dal.table("Menu");
+    const ref = try dal.table(self.tables.menu);
     s.resetResults();
     if (try ref.count(s, &wc) > 0) return error.HasChildren;
 

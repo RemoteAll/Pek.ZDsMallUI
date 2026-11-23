@@ -267,7 +267,7 @@ fn permissionTree(
     _ = try q.orderBy("Sort", false);
     _ = try q.orderBy("ID", false);
 
-    const ref = try dal.table("Menu");
+    const ref = try dal.table(self.tables.menu);
     s.resetResults();
     const rows = try ref.queryRows(s, &q);
 
@@ -365,7 +365,7 @@ fn listRoles(self: *admin_area.AdminArea, arena: std.mem.Allocator) ![]const zzi
     _ = try q.orderBy("Sort", false);
     _ = try q.orderBy("ID", false);
 
-    const ref = try dal.table("Role");
+    const ref = try dal.table(self.tables.role);
     s.resetResults();
     const rows = try ref.queryRows(s, &q);
 
@@ -386,7 +386,7 @@ fn listRoles(self: *admin_area.AdminArea, arena: std.mem.Allocator) ![]const zzi
 fn loadRole(self: *admin_area.AdminArea, id: i32) !RoleRow {
     const dal = self.dal orelse return error.NotAttached;
     const s = self.session orelse return error.NotAttached;
-    const ref = try dal.table("Role");
+    const ref = try dal.table(self.tables.role);
     var w = zcode.Where.init(s.gpa);
     defer w.deinit();
     _ = try w.eq("ID", .{ .int = id });
@@ -417,7 +417,7 @@ fn loadRole(self: *admin_area.AdminArea, id: i32) !RoleRow {
 fn saveRole(self: *admin_area.AdminArea, input: SaveInput) !void {
     const dal = self.dal orelse return error.NotAttached;
     const s = self.session orelse return error.NotAttached;
-    const ref = try dal.table("Role");
+    const ref = try dal.table(self.tables.role);
 
     // 唯一性（排除自己）
     var w = zcode.Where.init(s.gpa);
@@ -490,7 +490,7 @@ fn removeRole(self: *admin_area.AdminArea, id: i32) !bool {
     defer w.deinit();
     _ = try w.eq("ID", .{ .int = id });
     s.resetResults();
-    const ref = try dal.table("Role");
+    const ref = try dal.table(self.tables.role);
     var q = zcode.Query.init(s.gpa);
     defer q.deinit();
     _ = q.filterWhere(&w);
@@ -503,7 +503,7 @@ fn removeRole(self: *admin_area.AdminArea, id: i32) !bool {
     var wu = zcode.Where.init(s.gpa);
     defer wu.deinit();
     _ = try wu.eq("RoleID", .{ .int = id });
-    const users = try dal.table("User");
+    const users = try dal.table(self.tables.user);
     s.resetResults();
     if (try users.count(s, &wu) > 0) return error.RoleInUse;
 
