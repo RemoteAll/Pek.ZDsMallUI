@@ -60,6 +60,14 @@
                     <span class="svc-label">@T("启动时间")</span>
                 </div>
                 <div class="svc-item">
+                    <b class="svc-value svc-text">@Model.statInstalled</b>
+                    <span class="svc-label">@T("安装时间")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value">@Model.statStarts</b>
+                    <span class="svc-label">@T("累计启动")</span>
+                </div>
+                <div class="svc-item">
                     <b class="svc-value">@Model.statIoRead</b>
                     <span class="svc-label">@T("累计磁盘读")</span>
                 </div>

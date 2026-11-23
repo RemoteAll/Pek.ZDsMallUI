@@ -157,14 +157,31 @@ pub const HomeController = struct {
 
         // 服务状态（欢迎页的卡片区）：进程资源快照。取数失败不影响页面（视图显示「—」）。
         const snap = sysinfo.collect(arena, self.io);
+        // 实例记录（安装时间 / 启动次数）：由应用启动时写入 `Instance.toml`。
+        // **pid 对不上就不采信**（上次崩溃留下的旧值 / 多实例共用数据目录）。
+        var instance = sysinfo.InstanceInfo{};
+        if (self.instance_path) |path| instance = sysinfo.loadInstance(arena, self.io, path);
+        const instance_ok = instance.pid != 0 and instance.pid == snap.pid and instance.started_unix > 0;
+        const up_seconds: u64 = if (instance_ok) blk: {
+            const now: i64 = @intCast(@divTrunc(zzig.compat.nanoTimestamp(), std.time.ns_per_s));
+            const diff = now - instance.started_unix;
+            break :blk if (diff > 0 and diff < (1 << 40)) @intCast(diff) else 0;
+        } else snap.up_seconds;
+        const start_unix: i64 = if (instance_ok) instance.started_unix else snap.start_unix;
+
         try builder.boolean("statOk", snap.ok);
         try builder.int("statPid", @intCast(snap.pid));
         try builder.int("statThreads", @intCast(snap.threads));
         try builder.int("statHandles", @intCast(snap.handles));
         try builder.str("statRss", try sysinfo.formatBytes(arena, snap.rss_bytes));
         try builder.str("statCpu", try std.fmt.allocPrint(arena, "{d:.1}%", .{snap.cpu_percent}));
-        try builder.str("statUptime", try sysinfo.formatUptime(arena, snap.up_seconds));
-        try builder.str("statStartAt", try formatUnix(arena, snap.start_unix));
+        try builder.str("statUptime", try sysinfo.formatUptime(arena, up_seconds));
+        try builder.str("statStartAt", try formatUnix(arena, start_unix));
+        try builder.str("statInstalled", try formatUnix(arena, instance.installed_unix));
+        try builder.str("statStarts", if (instance_ok)
+            try std.fmt.allocPrint(arena, "第 {d} 次", .{instance.start_count})
+        else
+            "—");
         try builder.str("statIoRead", try sysinfo.formatBytes(arena, snap.io_read_bytes));
         try builder.str("statIoWrite", try sysinfo.formatBytes(arena, snap.io_write_bytes));
         try builder.str("statEnv", @tagName(@import("builtin").os.tag));

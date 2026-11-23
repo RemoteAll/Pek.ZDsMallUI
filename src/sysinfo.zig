@@ -117,6 +117,92 @@ fn unixNow() u64 {
     return @intCast(@divTrunc(zzig.compat.nanoTimestamp(), std.time.ns_per_s));
 }
 
+// ───────────────────── 实例启动记录（安装时间 / 启动次数） ─────────────────────
+
+/// 当前进程号（跨平台；取不到返回 0）。
+pub fn currentPid() u32 {
+    return switch (builtin.os.tag) {
+        .windows => win.GetCurrentProcessId(),
+        .linux => @intCast(std.os.linux.getpid()),
+        else => 0,
+    };
+}
+
+/// 实例运行记录：写在应用自己的状态文件里，供后台显示「安装时间 / 第 N 次启动」。
+///
+/// 为什么要落盘：进程一重启「运行时长」就归零，运维看不出「这服务部署多久了」；
+/// 有了这份记录，**安装时间（首次运行）** 与 **累计启动次数** 就能跨重启保留。
+pub const InstanceInfo = struct {
+    /// 安装时间（首次运行），unix 秒；写一次后不再变
+    installed_unix: i64 = 0,
+    /// 本次启动时间，unix 秒
+    started_unix: i64 = 0,
+    /// 累计启动次数
+    start_count: u32 = 0,
+    /// 写入时的进程号：对不上说明是别的实例或上次崩溃留下的记录，不采信
+    pid: u32 = 0,
+};
+
+/// 读实例记录（文件缺失 / 内容损坏一律当作「首次启动」，不报错）。
+pub fn loadInstance(allocator: std.mem.Allocator, io: std.Io, path: []const u8) InstanceInfo {
+    const text = zzig.fsio.readFileAlloc(io, allocator, path, 8192) catch return .{};
+    defer allocator.free(text);
+
+    var out = InstanceInfo{};
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#' or line[0] == '[') continue;
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        const key = std.mem.trim(u8, line[0..eq], " \t");
+        const value = std.mem.trim(u8, line[eq + 1 ..], " \t");
+        if (std.mem.eql(u8, key, "InstalledAt")) {
+            out.installed_unix = std.fmt.parseInt(i64, value, 10) catch 0;
+        } else if (std.mem.eql(u8, key, "StartedAt")) {
+            out.started_unix = std.fmt.parseInt(i64, value, 10) catch 0;
+        } else if (std.mem.eql(u8, key, "StartCount")) {
+            out.start_count = std.fmt.parseInt(u32, value, 10) catch 0;
+        } else if (std.mem.eql(u8, key, "Pid")) {
+            out.pid = std.fmt.parseInt(u32, value, 10) catch 0;
+        }
+    }
+    return out;
+}
+
+/// 记录本次启动：安装时间只在首次写，启动次数递增；写完返回更新后的记录。
+///
+/// 写失败只记一条警告（不能因为写不了文件就启动不了），返回内存里的记录。
+pub fn recordStartup(allocator: std.mem.Allocator, io: std.Io, path: []const u8) InstanceInfo {
+    const now: i64 = @intCast(unixNow());
+    var info = loadInstance(allocator, io, path);
+    if (info.installed_unix <= 0) info.installed_unix = now;
+    info.started_unix = now;
+    info.start_count = if (info.start_count == 0) 1 else info.start_count + 1;
+    info.pid = currentPid();
+
+    const text = std.fmt.allocPrint(
+        allocator,
+        "# 实例启动记录（程序启动时自动写入，请不要手工编辑）\n" ++
+            "# InstalledAt：安装时间（首次运行，写一次不再变）；StartCount：累计启动次数\n" ++
+            "[Instance]\n" ++
+            "Pid = {d}\n" ++
+            "InstalledAt = {d}\n" ++
+            "StartedAt = {d}\n" ++
+            "StartCount = {d}\n",
+        .{ info.pid, info.installed_unix, info.started_unix, info.start_count },
+    ) catch {
+        zzig.Logger.warn("[ZDsMallUI] 实例记录拼接失败，本次不落盘：{s}", .{path});
+        return info;
+    };
+    defer allocator.free(text);
+
+    zzig.fsio.ensureParent(io, path) catch {};
+    zzig.fsio.writeFileAtomic(io, allocator, path, text) catch |err| {
+        zzig.Logger.warn("[ZDsMallUI] 实例记录写入失败（{s}）：{s}；安装时间与启动次数本次不持久化", .{ path, @errorName(err) });
+    };
+    return info;
+}
+
 // ───────────────────────── Windows ─────────────────────────
 
 const win = std.os.windows;

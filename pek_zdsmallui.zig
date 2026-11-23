@@ -51,6 +51,7 @@ pub const ueditor = @import("src/ueditor/mod.zig");
 pub const views = @import("src/views.zig");
 pub const language = @import("src/language.zig");
 pub const menu = @import("src/menu.zig");
+pub const sysinfo = @import("src/sysinfo.zig");
 pub const version_info = @import("src/version.zig");
 
 /// `Areas/Admin/Controllers/AdminArea.zig` 的**模块导出**（不只是 struct 类型）。

@@ -93,6 +93,9 @@ pub const AdminArea = struct {
     /// 运维看到的「这个站是哪个版本」应当是**应用自己的**版本，故业务项目启动时用
     /// [`setAppVersion`] 覆盖它（例：`ui.admin().setAppVersion(opts.version)`）。
     app_version: ?[]const u8 = null,
+    /// 实例启动记录文件（`Instance.toml`）路径；`null` = 没配，仪表盘就不显示安装时间/启动次数。
+    /// 应用启动时调 [`setInstancePath`] 传入（由应用自己决定放哪：一般与配置文件同目录）。
+    instance_path: ?[]const u8 = null,
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
     /// 退役的旧快照（读线程可能还在用，延迟到 `deinit` 释放）
@@ -273,6 +276,13 @@ pub const AdminArea = struct {
     /// ```
     pub fn setAppVersion(self: *AdminArea, version: []const u8) void {
         self.app_version = version;
+    }
+
+    /// 设置实例启动记录文件路径（仪表盘的「安装时间 / 累计启动」读它）。
+    ///
+    /// 典型用法：应用启动时先 `sysinfo.recordStartup(alloc, io, path)` 落盘，再把这个路径交给后台。
+    pub fn setInstancePath(self: *AdminArea, path: []const u8) void {
+        self.instance_path = path;
     }
 
     /// 当前用户的后台界面语言：用户偏好 → 默认语言 → 0。
