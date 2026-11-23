@@ -217,22 +217,41 @@ pub const SeedLanguage = struct {
 
 /// 预置语言清单：一次性把常见语言摆进 `Language` 表，**默认只启用简体中文**。
 ///
-/// 为什么预置而不是「让人一条条新建」：语言表几乎是静态配置，手工建 10 条既费时又容易
+/// 为什么预置而不是「让人一条条新建」：语言表几乎是静态配置，手工建 28 条既费时又容易
 /// 把 `LanguageCulture` / `UniqueSeoCode` 写错（这两个直接决定 URL 前缀与 `hreflang`）；
 /// 预置停用语言**不产生任何开销** —— 语言包只为 `Status = 1` 的语言落库内置文案。
 ///
-/// 顺序即后台列表顺序，`order` 也用它。
+/// 顺序即后台列表顺序，`order` 也用它。简体中文排第一并设为默认。
+/// 中文变体的 URL 前缀由项目侧 `front_lang.shortLangCode` 决定（简繁不能共用 `cn`）。
 pub const SEED_LANGUAGES = [_]SeedLanguage{
     .{ .name = "简体中文", .display_name = "简体中文", .english_name = "Chinese (Simplified)", .culture = "zh-CN", .code = "zh", .status = true, .order = 1, .is_default = true },
-    .{ .name = "English", .display_name = "English", .english_name = "English", .culture = "en-US", .code = "en", .status = false, .order = 2, .is_default = false },
-    .{ .name = "繁體中文", .display_name = "繁體中文", .english_name = "Chinese (Traditional)", .culture = "zh-TW", .code = "zh-TW", .status = false, .order = 3, .is_default = false },
+    .{ .name = "繁體中文", .display_name = "繁體中文", .english_name = "Chinese (Traditional)", .culture = "zh-TW", .code = "zh-TW", .status = false, .order = 2, .is_default = false },
+    .{ .name = "English", .display_name = "English", .english_name = "English", .culture = "en-US", .code = "en", .status = false, .order = 3, .is_default = false },
     .{ .name = "日本語", .display_name = "日本語", .english_name = "Japanese", .culture = "ja-JP", .code = "ja", .status = false, .order = 4, .is_default = false },
     .{ .name = "한국어", .display_name = "한국어", .english_name = "Korean", .culture = "ko-KR", .code = "ko", .status = false, .order = 5, .is_default = false },
     .{ .name = "Deutsch", .display_name = "Deutsch", .english_name = "German", .culture = "de-DE", .code = "de", .status = false, .order = 6, .is_default = false },
     .{ .name = "Français", .display_name = "Français", .english_name = "French", .culture = "fr-FR", .code = "fr", .status = false, .order = 7, .is_default = false },
     .{ .name = "Español", .display_name = "Español", .english_name = "Spanish", .culture = "es-ES", .code = "es", .status = false, .order = 8, .is_default = false },
-    .{ .name = "Русский", .display_name = "Русский", .english_name = "Russian", .culture = "ru-RU", .code = "ru", .status = false, .order = 9, .is_default = false },
-    .{ .name = "Português", .display_name = "Português", .english_name = "Portuguese", .culture = "pt-BR", .code = "pt", .status = false, .order = 10, .is_default = false },
+    .{ .name = "Português", .display_name = "Português", .english_name = "Portuguese", .culture = "pt-BR", .code = "pt", .status = false, .order = 9, .is_default = false },
+    .{ .name = "Русский", .display_name = "Русский", .english_name = "Russian", .culture = "ru-RU", .code = "ru", .status = false, .order = 10, .is_default = false },
+    .{ .name = "Italiano", .display_name = "Italiano", .english_name = "Italian", .culture = "it-IT", .code = "it", .status = false, .order = 11, .is_default = false },
+    .{ .name = "Nederlands", .display_name = "Nederlands", .english_name = "Dutch", .culture = "nl-NL", .code = "nl", .status = false, .order = 12, .is_default = false },
+    .{ .name = "Polski", .display_name = "Polski", .english_name = "Polish", .culture = "pl-PL", .code = "pl", .status = false, .order = 13, .is_default = false },
+    .{ .name = "Türkçe", .display_name = "Türkçe", .english_name = "Turkish", .culture = "tr-TR", .code = "tr", .status = false, .order = 14, .is_default = false },
+    .{ .name = "العربية", .display_name = "العربية", .english_name = "Arabic", .culture = "ar-SA", .code = "ar", .status = false, .order = 15, .is_default = false },
+    .{ .name = "हिन्दी", .display_name = "हिन्दी", .english_name = "Hindi", .culture = "hi-IN", .code = "hi", .status = false, .order = 16, .is_default = false },
+    .{ .name = "ไทย", .display_name = "ไทย", .english_name = "Thai", .culture = "th-TH", .code = "th", .status = false, .order = 17, .is_default = false },
+    .{ .name = "Tiếng Việt", .display_name = "Tiếng Việt", .english_name = "Vietnamese", .culture = "vi-VN", .code = "vi", .status = false, .order = 18, .is_default = false },
+    .{ .name = "Bahasa Indonesia", .display_name = "Bahasa Indonesia", .english_name = "Indonesian", .culture = "id-ID", .code = "id", .status = false, .order = 19, .is_default = false },
+    .{ .name = "Bahasa Melayu", .display_name = "Bahasa Melayu", .english_name = "Malay", .culture = "ms-MY", .code = "ms", .status = false, .order = 20, .is_default = false },
+    .{ .name = "Svenska", .display_name = "Svenska", .english_name = "Swedish", .culture = "sv-SE", .code = "sv", .status = false, .order = 21, .is_default = false },
+    .{ .name = "Dansk", .display_name = "Dansk", .english_name = "Danish", .culture = "da-DK", .code = "da", .status = false, .order = 22, .is_default = false },
+    .{ .name = "Norsk bokmål", .display_name = "Norsk bokmål", .english_name = "Norwegian", .culture = "nb-NO", .code = "no", .status = false, .order = 23, .is_default = false },
+    .{ .name = "Suomi", .display_name = "Suomi", .english_name = "Finnish", .culture = "fi-FI", .code = "fi", .status = false, .order = 24, .is_default = false },
+    .{ .name = "Čeština", .display_name = "Čeština", .english_name = "Czech", .culture = "cs-CZ", .code = "cs", .status = false, .order = 25, .is_default = false },
+    .{ .name = "Ελληνικά", .display_name = "Ελληνικά", .english_name = "Greek", .culture = "el-GR", .code = "el", .status = false, .order = 26, .is_default = false },
+    .{ .name = "עברית", .display_name = "עברית", .english_name = "Hebrew", .culture = "he-IL", .code = "he", .status = false, .order = 27, .is_default = false },
+    .{ .name = "Українська", .display_name = "Українська", .english_name = "Ukrainian", .culture = "uk-UA", .code = "uk", .status = false, .order = 28, .is_default = false },
 };
 
 /// 语言包读取结果（`culture_id` → 键值）。线程安全：整体替换快照，读路径无锁。
