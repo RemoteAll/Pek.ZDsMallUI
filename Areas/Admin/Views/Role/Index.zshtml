@@ -1,13 +1,12 @@
 @{
     Layout = "Shared/_Layout";
 }
-@* 角色权限管理 —— 版式与库内 `Culture/Index.zshtml` 一致（`.page > .fixed-bar`、`table.ds-default-table`）。 *@
+@* 角色权限管理 —— 版式与库内 Culture/Index.zshtml 一致（.page > .fixed-bar、table.ds-default-table）。 *@
 <div class="page">
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
                 <h3>@T("角色权限管理")</h3>
-                <h5>角色 = 权限集合；用户通过 `User.RoleID` 归属角色</h5>
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/role/index" class="current"><span>@T("管理")</span></a></li>
@@ -16,6 +15,13 @@
         </div>
     </div>
 
+    <div class="explanation">
+        <div class="title"><h4>@T("操作提示")</h4><span class="up"></span></div>
+        <ul>
+            <li>@T("角色 = 权限集合；用户通过 User.RoleID 归属角色。")</li>
+            <li>@T("系统内置角色（超级管理员 / 管理员 / 普通用户）不可删除，但可以改权限与数据范围。")</li>
+        </ul>
+    </div>
     @if (Model.saved != "") {
     <div class="explanation"><div class="title"><h4>保存成功</h4></div></div>
     }

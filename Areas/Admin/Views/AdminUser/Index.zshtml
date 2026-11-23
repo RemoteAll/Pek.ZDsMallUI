@@ -1,13 +1,12 @@
 @{
     Layout = "Shared/_Layout";
 }
-@* 管理员管理 —— 版式与 `Role/Index.zshtml` 一致；只列后台账号（`User.Ex1 = 1`）。 *@
+@* 管理员管理 —— 版式与 Role/Index.zshtml 一致；只列后台账号（User.Ex1 = 1）。 *@
 <div class="page">
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
                 <h3>@T("管理员管理")</h3>
-                <h5>@T("后台账号 = User.Ex1=1；权限由所属角色决定（在角色权限管理里勾选）")</h5>
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/adminuser/index" class="current"><span>@T("管理")</span></a></li>
@@ -16,6 +15,13 @@
         </div>
     </div>
 
+    <div class="explanation">
+        <div class="title"><h4>@T("操作提示")</h4><span class="up"></span></div>
+        <ul>
+            <li>@T("后台账号指 User.Ex1 = 1 的记录；普通前台用户不会出现在这里。")</li>
+            <li>@T("权限由所属角色决定 —— 新建账号后到「角色权限管理」里给对应角色勾模块与动作。")</li>
+        </ul>
+    </div>
     @if (Model.saved != "") {
     <div class="explanation"><div class="title"><h4>@T("保存成功")</h4></div></div>
     }

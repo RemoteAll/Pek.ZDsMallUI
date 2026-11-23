@@ -1,14 +1,13 @@
 @{
     Layout = "Shared/_Layout";
 }
-@* 菜单管理 —— 版式与 `Role/Index.zshtml` 一致（`.page > .fixed-bar`、`table.ds-default-table`）。
-   数据来自 `Menu` 表（C# 同源）：目录 `Type=1`、菜单项 `Type=2`；`level` 用于缩进表示层级。 *@
+@* 菜单管理 —— 版式与 Role/Index.zshtml 一致（.page > .fixed-bar、table.ds-default-table）。
+   数据来自 Menu 表（C# 同源）：目录 Type=1、菜单项 Type=2；level 用于缩进表示层级。 *@
 <div class="page">
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
                 <h3>@T("菜单管理")</h3>
-                <h5>@T("后台所有菜单：目录 / 菜单项，改完刷新即生效（渲染以本表为准）")</h5>
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/menu/index" class="current"><span>@T("管理")</span></a></li>
@@ -17,6 +16,13 @@
         </div>
     </div>
 
+    <div class="explanation">
+        <div class="title"><h4>@T("操作提示")</h4><span class="up"></span></div>
+        <ul>
+            <li>@T("列表就是后台左侧 / 顶部导航的数据源，改完刷新即生效（渲染以本表为准）。")</li>
+            <li>@T("「目录」是分组（顶部一级），「菜单」是叶子项；排序小的在前。")</li>
+        </ul>
+    </div>
     @if (Model.saved != "") {
     <div class="explanation"><div class="title"><h4>@T("保存成功")</h4></div></div>
     }

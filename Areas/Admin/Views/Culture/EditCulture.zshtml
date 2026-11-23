@@ -13,7 +13,6 @@
         <div class="item-title">
             <div class="subject">
                 <h3>@T("多语言")</h3>
-                <h5></h5>
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/culture/index"><span>@T("管理")</span></a></li>

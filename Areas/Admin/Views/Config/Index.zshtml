@@ -24,7 +24,6 @@
         <div class="item-title">
             <div class="subject">
                 <h3>@T("站点设置")</h3>
-                <h5></h5>
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/config/index" class="current"><span>@T("站点设置")</span></a></li>

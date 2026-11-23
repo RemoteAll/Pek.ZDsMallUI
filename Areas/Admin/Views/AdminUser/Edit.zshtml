@@ -1,13 +1,12 @@
 @{
     Layout = "Shared/_Layout";
 }
-@* 管理员 - 新增/编辑（版式照抄 `Role/Edit.zshtml`）。口令留空 = 不修改。 *@
+@* 管理员 - 新增/编辑（版式照抄 Role/Edit.zshtml）。口令留空 = 不修改。 *@
 <div class="page">
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
                 <h3>@T("管理员管理")</h3>
-                <h5>@T("口令留空表示不修改；新增必须设置口令")</h5>
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/adminuser/index"><span>@T("管理")</span></a></li>
@@ -16,6 +15,13 @@
         </div>
     </div>
 
+    <div class="explanation">
+        <div class="title"><h4>@T("操作提示")</h4><span class="up"></span></div>
+        <ul>
+            <li>@T("口令留空表示不修改（新增时必须填）。")</li>
+            <li>@T("口令按 md5+sha1 加盐存储，与 C# 口径一致；前端只提交 MD5，明文不进反代日志。")</li>
+        </ul>
+    </div>
     @if (Model.error != "") {
     <div class="explanation"><div class="title"><h4 style="color:#c00;">@Model.error</h4></div></div>
     }

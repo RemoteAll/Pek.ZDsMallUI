@@ -1,14 +1,13 @@
 @{
     Layout = "Shared/_Layout";
 }
-@* 菜单 - 新增/编辑（版式照抄 `Role/Edit.zshtml`）。
-   字段与 `Menu` 表一致：目录 `type=1`、菜单项 `type=2`（菜单项必须有上级目录）。 *@
+@* 菜单 - 新增/编辑（版式照抄 Role/Edit.zshtml）。
+   字段与 Menu 表一致：目录 type=1、菜单项 type=2（菜单项必须有上级目录）。 *@
 <div class="page">
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
                 <h3>@T("菜单管理")</h3>
-                <h5>@T("显示名称就是语言包键（中文源文），视图里的 @T 会按它翻译")</h5>
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/menu/index"><span>@T("管理")</span></a></li>
@@ -17,6 +16,13 @@
         </div>
     </div>
 
+    <div class="explanation">
+        <div class="title"><h4>@T("操作提示")</h4><span class="up"></span></div>
+        <ul>
+            <li>@T("显示名称就是语言包键（中文源文）—— 视图里的 @T(...) 会按它取翻译。")</li>
+            <li>@T("URL 填控制器路径（如 /admin/article），权限判定取它的控制器段。")</li>
+        </ul>
+    </div>
     @if (Model.error != "") {
     <div class="explanation"><div class="title"><h4 style="color:#c00;">@Model.error</h4></div></div>
     }
