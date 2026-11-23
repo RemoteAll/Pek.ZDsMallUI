@@ -1,4 +1,4 @@
-﻿//! 后台 Area 的**共享上下文**（对齐 C# `Areas/Admin` 的区域级状态）。
+//! 后台 Area 的**共享上下文**（对齐 C# `Areas/Admin` 的区域级状态）。
 //!
 //! 「一个控制器一个文件」（与 C# 一致）：
 //! - [`@import("home.zig")`] → `HomeController`（`/{area}/home/index`）
@@ -684,11 +684,35 @@ pub const AdminArea = struct {
         const roles = rref.queryRows(s, &rq) catch return null;
         if (roles.len == 0) return null;
 
-        return .{
-            .scope = columnInt(roles[0], "DataScope"),
-            .dept_ids = columnText(roles[0], "DataDepartmentIds"),
-            .scope_map = columnText(roles[0], "Ex4"),
-        };
+        // 超级管理员（权限串含 `*`）固定「全部数据」：角色上即便被误配了 DataScope / Ex4 也一概忽略。
+        // 否则把超管的范围改成「仅本人」一次，全站业务列表就只剩自己那几条（2026-11-23 用户指出：
+        // 「超级管理员应该是默认有全部的权限吧」——功能权限与数据权限都应该是全的）。
+        return resolveScope(
+            columnText(roles[0], "Permission"),
+            columnInt(roles[0], "DataScope"),
+            columnText(roles[0], "DataDepartmentIds"),
+            columnText(roles[0], "Ex4"),
+        );
+    }
+
+    /// 把角色行上的三列（`Permission` / `DataScope` / `DataDepartmentIds` / `Ex4`）折算成有效数据范围。
+    ///
+    /// **超管短路就在这里**：权限串含 `*` → 一律 `全部数据`、清空自定义部门与按资源覆盖。
+    /// 抽成纯函数是为了能脱库单测（`dataScopeOf` 本身要查 User / Role 两张表）。
+    pub fn resolveScope(permission: []const u8, data_scope: i32, dept_ids: []const u8, scope_map: []const u8) DataScope {
+        if (hasAllPermission(permission)) return .{ .scope = DataScope.ALL, .dept_ids = "", .scope_map = "" };
+        return .{ .scope = data_scope, .dept_ids = dept_ids, .scope_map = scope_map };
+    }
+
+    /// 权限串里是否有通配 `*`（= 超级管理员，拥有一切功能权限与数据权限）。
+    pub fn hasAllPermission(permissions: []const u8) bool {
+        var it = std.mem.splitScalar(u8, permissions, ',');
+        while (it.next()) |raw| {
+            const one = std.mem.trim(u8, raw, " \t\r\n");
+            if (one.len == 0) continue;
+            if (std.mem.eql(u8, one, "*")) return true;
+        }
+        return false;
     }
 
     /// **指定资源**的数据范围：优先取 `Role.Ex4` 里按资源的覆盖，没有就回落角色级 `DataScope`。
@@ -1026,6 +1050,30 @@ test "区域：站内跳转只允许单斜杠相对路径" {
     try testing.expect(safeRedirect("http://evil.example") == null);
     try testing.expect(safeRedirect("//evil.example") == null);
     try testing.expect(safeRedirect("/a\\b") == null);
+}
+
+test "超级管理员：权限串含 `*` 即拥有全部功能与数据权限" {
+    try testing.expect(AdminArea.hasAllPermission("*"));
+    try testing.expect(AdminArea.hasAllPermission(" article.index , * "));
+    try testing.expect(!AdminArea.hasAllPermission("article.index,article.export"));
+    try testing.expect(!AdminArea.hasAllPermission(""));
+    // `**` / `*x` 都不是通配（避免前缀误判成超管）
+    try testing.expect(!AdminArea.hasAllPermission("**"));
+    try testing.expect(!AdminArea.hasAllPermission("*x"));
+}
+
+test "超管的数据范围恒为「全部」，误配一律忽略" {
+    const sup = AdminArea.resolveScope("*", 3, "1,2", "article=3");
+    try testing.expectEqual(DataScope.ALL, sup.scope);
+    try testing.expectEqualStrings("", sup.dept_ids);
+    try testing.expectEqualStrings("", sup.scope_map);
+    try testing.expectEqual(DataScope.ALL, sup.effective("article"));
+
+    // 普通角色原样透传（角色级 + 按资源覆盖）
+    const normal = AdminArea.resolveScope("article.index", 1, "", "article=3");
+    try testing.expectEqual(DataScope.DEPT_AND_CHILD, normal.scope);
+    try testing.expectEqual(DataScope.SELF, normal.effective("article"));
+    try testing.expectEqual(DataScope.DEPT_AND_CHILD, normal.effective("config"));
 }
 
 /// 数据范围（`Role.DataScope`）：0 全部 / 1 本部门及下级 / 2 本部门 / 3 仅本人 / 4 自定义部门。

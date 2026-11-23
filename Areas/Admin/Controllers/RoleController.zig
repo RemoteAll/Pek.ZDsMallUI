@@ -72,7 +72,9 @@ pub const RoleController = struct {
         try putRole(&builder, row, id);
         // 权限勾选树：来自 `Menu` 表（目录分组 + 菜单项），勾选值 = 该菜单 URL 的**控制器段**
         // （与 `AdminArea.canAccess` 同一口径，所以勾完立刻生效）
-        try builder.list("permissionGroups", permissionTree(self, arena, row.permission, row.data_scope_map) catch &.{});
+        var module_count: usize = 0;
+        try builder.list("permissionGroups", permissionTree(self, arena, row.permission, row.data_scope_map, &module_count) catch &.{});
+        try builder.int("moduleCount", @intCast(module_count));
         return admin_area.renderView(self, c, "Role", "Edit", builder.finish());
     }
 
@@ -254,7 +256,9 @@ fn permissionTree(
     arena: std.mem.Allocator,
     current: []const u8,
     scope_map: []const u8,
+    total_out: ?*usize,
 ) ![]const zzig.web.Value {
+    if (total_out) |t| t.* = 0;
     const dal = self.dal orelse return &.{};
     const s = self.session orelse return &.{};
 
@@ -310,6 +314,8 @@ fn permissionTree(
         const group_title = columnText(row, "DisplayName");
         var gb = zzig.web.ObjectBuilder.init(arena);
         try gb.str("name", if (group_title.len == 0) try arena.dupe(u8, columnText(row, "Name")) else group_title);
+        try gb.int("count", @intCast(items.items.len));
+        if (total_out) |t| t.* += items.items.len;
         try gb.list("items", try items.toOwnedSlice(arena));
         try groups.append(arena, gb.finish());
     }
@@ -458,14 +464,21 @@ fn saveRole(self: *admin_area.AdminArea, input: SaveInput) !void {
     const current_name = columnText(rows[0], "Name");
     if (is_system and !std.mem.eql(u8, current_name, input.name)) return error.SystemRoleRename;
 
+    // 超级管理员（权限串 `*`）的数据范围固定「全部」：视图里已不渲染选项，
+    // 但手工 POST / 旧书签仍可能提交小范围，这里再兜一层，避免超管把自己锁成「仅本人」。
+    const is_super = admin_area.AdminArea.hasAllPermission(input.permission);
+    const data_scope = if (is_super) 0 else input.data_scope;
+    const data_dept_ids: []const u8 = if (is_super) "" else input.data_dept_ids;
+    const data_scope_map: []const u8 = if (is_super) "" else input.data_scope_map;
+
     _ = try ref.updateOne(s, &.{
         zcode.dbtable.field("Name", .{ .text = input.name }),
         zcode.dbtable.field("Enable", .{ .int = if (input.enable) 1 else 0 }),
         zcode.dbtable.field("Sort", .{ .int = input.sort }),
         zcode.dbtable.field("Permission", .{ .text = input.permission }),
-        zcode.dbtable.field("DataScope", .{ .int = input.data_scope }),
-        zcode.dbtable.field("DataDepartmentIds", .{ .text = input.data_dept_ids }),
-        zcode.dbtable.field("Ex4", .{ .text = input.data_scope_map }),
+        zcode.dbtable.field("DataScope", .{ .int = data_scope }),
+        zcode.dbtable.field("DataDepartmentIds", .{ .text = data_dept_ids }),
+        zcode.dbtable.field("Ex4", .{ .text = data_scope_map }),
     }, &w2, 0);
 }
 
@@ -512,7 +525,9 @@ fn renderSaveError(
     try putRole(&builder, row, id);
     // 校验失败回到表单时同样要给出勾选树：视图里的 `@foreach (Model.permissionGroups)`
     // 一旦为 null 会直接渲染失败（整页 500），所以这里与 edit() 保持同一套模型。
-    try builder.list("permissionGroups", permissionTree(self, c.arena, row.permission, row.data_scope_map) catch &.{});
+    var module_count: usize = 0;
+    try builder.list("permissionGroups", permissionTree(self, c.arena, row.permission, row.data_scope_map, &module_count) catch &.{});
+    try builder.int("moduleCount", @intCast(module_count));
     return admin_area.renderView(self, c, "Role", "Edit", builder.finish());
 }
 

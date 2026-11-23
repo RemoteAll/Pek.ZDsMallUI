@@ -9,13 +9,20 @@
         <div class="item-title">
             <div class="subject">
                 <h3>@T("角色权限管理")</h3>
-                <h5>@T("功能权限控制「能不能做」，数据权限控制「能看到哪些数据」")</h5>
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/role/index"><span>@T("管理")</span></a></li>
                 <li><a href="javascript:void(0)" class="current"><span>@Model.title</span></a></li>
             </ul>
         </div>
+    </div>
+
+    <div class="explanation">
+        <div class="title"><h4>@T("操作提示")</h4><span class="up"></span></div>
+        <ul>
+            <li>@T("功能权限控制「能不能做」：按模块逐个勾动作，未勾选一律 403；动作数量由控制器声明决定。")</li>
+            <li>@T("数据权限控制「能看到哪些数据」：角色级默认范围 + 可按模块单独覆盖；超级管理员固定全部。")</li>
+        </ul>
     </div>
 
     @if (Model.error != "") {
@@ -80,7 +87,7 @@
             }
             @if (Model.row.permission != "*") {
             <div class="perm-toolbar">
-                <label class="perm-all-label"><input type="checkbox" id="perm-all"> @T("全部全选")</label>
+                <label class="perm-all-label"><input type="checkbox" id="perm-all"> @T("全部全选")（@(Model.moduleCount) 个模块）</label>
                 <span class="perm-count">@T("按模块逐个授权，动作数量由控制器声明决定")</span>
                 <a href="javascript:void(0)" id="perm-none">@T("全部取消")</a>
             </div>
@@ -89,7 +96,7 @@
             <div class="perm-group">
                 <div class="perm-group-head">
                     <span class="perm-group-name">@group.name</span>
-                    <label class="perm-group-all"><input type="checkbox" class="group-all"> @T("全选本组")</label>
+                    <label class="perm-group-all"><input type="checkbox" class="group-all"> @T("全选本组")（@(group.count)）</label>
                 </div>
                 @foreach (var item in group.items) {
                 <div class="perm-row">
@@ -112,6 +119,12 @@
 
         @* ————— 数据权限 ————— *@
         <div class="role-pane" id="pane-data">
+            @if (Model.row.permission == "*") {
+            <div class="perm-tip-ok">@T("超级管理员固定为「全部数据」，不受数据范围限制；如需按部门 / 本人限制，请改用普通角色。")</div>
+            <input type="hidden" name="dataScope" value="0" />
+            <input type="hidden" name="dataDeptIds" value="" />
+            }
+            @if (Model.row.permission != "*") {
             <table class="ds-default-table form-table">
                 <tbody>
                     <tr>
@@ -197,6 +210,7 @@
                     </tr>
                 </tbody>
             </table>
+            }
         </div>
 
         <div class="role-actions">
@@ -303,6 +317,11 @@
     .perm-chip input, .perm-row-all input, .perm-group-all input, .perm-all-label input {
         margin: 0;
         vertical-align: -2px;
+        /* 勾选态用面板主色（layui 蓝），与列表页复选框观感一致；不引入额外 JS 渲染 */
+        width: 14px;
+        height: 14px;
+        accent-color: #1e9fff;
+        cursor: pointer;
     }
     .perm-tip, .perm-tip-ok {
         margin: 8px 1%;
