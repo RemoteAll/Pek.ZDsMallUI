@@ -10,6 +10,11 @@
 //!
 //! `cpu_percent` 是**平均占用**（累计 CPU / 运行时长），不是瞬时值：
 //! 瞬时值要后台周期采样，与「非必要不做周期性劳作」冲突；平均占用足以看出「是不是吃满一个核」。
+//!
+//! 取数**不要求实时**（用户 2026-11-23 原话：「这个就不需要实时获取资源占用吧」）：
+//! `collect()` 自己带 30 秒缓存，代价最高的一项是 Windows 的系统级线程枚举
+//! （`CreateToolhelp32Snapshot`，本机实测 ~80 ms；其它 API 都是微秒级）。
+//! 「运行时长」不进缓存 —— 用缓存的启动时刻现算，任何时刻刷新都是准的。
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -39,8 +44,44 @@ pub const Snapshot = struct {
     ok: bool = false,
 };
 
-/// 采集当前进程快照。Windows 全是本地 API；Linux 读 3 个小文件。
+/// 快照缓存的有效期。仪表盘是给人看的概览，30 秒内的资源变化没有意义，
+/// 但每次都枚举全机线程（~80 ms）纯属浪费。
+const snapshot_ttl_ms: i64 = 30_000;
+
+/// 最近一次快照（写入时先存内容、再用 release 存时间戳，读者用 acquire 检新鲜度）。
+/// 偶发的并发刷新只是多采一次，结果仍然正确，不需要锁。
+var cached_snapshot: Snapshot = .{};
+var cached_at_ms = std.atomic.Value(i64).init(0);
+
+/// 采集当前进程快照（带 30 秒缓存）。Windows 全是本地 API；Linux 读 3 个小文件。
 pub fn collect(allocator: std.mem.Allocator, io: std.Io) Snapshot {
+    const now_ms = clockMillis();
+    const at = cached_at_ms.load(.acquire);
+    if (at != 0 and now_ms - at >= 0 and now_ms - at < snapshot_ttl_ms) {
+        return refreshUptime(cached_snapshot);
+    }
+
+    const fresh = collectFresh(allocator, io);
+    cached_snapshot = fresh;
+    cached_at_ms.store(now_ms, .release);
+    return fresh;
+}
+
+/// 用缓存的启动时刻重算「已运行秒数」，其余字段原样返回。
+fn refreshUptime(snap: Snapshot) Snapshot {
+    var out = snap;
+    if (out.ok and out.start_unix > 0) {
+        const up = unixNow() - @as(u64, @intCast(out.start_unix));
+        if (up < (1 << 40)) out.up_seconds = up;
+    }
+    return out;
+}
+
+fn clockMillis() i64 {
+    return @intCast(@divTrunc(zzig.compat.nanoTimestamp(), 1_000_000));
+}
+
+fn collectFresh(allocator: std.mem.Allocator, io: std.Io) Snapshot {
     return switch (builtin.os.tag) {
         .windows => collectWindows(),
         .linux => collectLinux(allocator, io),
@@ -145,6 +186,69 @@ extern "kernel32" fn CreateToolhelp32Snapshot(flags: u32, pid: u32) callconv(.wi
 extern "kernel32" fn Thread32First(h: win.HANDLE, entry: *THREADENTRY32) callconv(.winapi) win.BOOL;
 extern "kernel32" fn Thread32Next(h: win.HANDLE, entry: *THREADENTRY32) callconv(.winapi) win.BOOL;
 extern "kernel32" fn CloseHandle(h: win.HANDLE) callconv(.winapi) win.BOOL;
+
+const SYSTEMTIME = extern struct {
+    wYear: u16 = 0,
+    wMonth: u16 = 0,
+    wDayOfWeek: u16 = 0,
+    wDay: u16 = 0,
+    wHour: u16 = 0,
+    wMinute: u16 = 0,
+    wSecond: u16 = 0,
+    wMilliseconds: u16 = 0,
+};
+
+extern "kernel32" fn FileTimeToSystemTime(ft: *const FILETIME, st: *SYSTEMTIME) callconv(.winapi) win.BOOL;
+extern "kernel32" fn SystemTimeToTzSpecificLocalTime(
+    tz: ?*const anyopaque,
+    utc: *const SYSTEMTIME,
+    local: *SYSTEMTIME,
+) callconv(.winapi) win.BOOL;
+
+/// unix 秒 → **本地**时间字符串 `2026-11-23 12:01:06`。
+///
+/// ★ 2026-11-23 修：后台仪表盘原来直接用 `std.time.epoch` 格式化，那是 **UTC**，
+/// 注释却写「本地时区」—— 东八区机器上「启动时间」会早 8 小时
+/// （实测显示 `04:00`，而当时是 `12:00`）。
+///
+/// Windows 走 `SystemTimeToTzSpecificLocalTime`（含夏令时，无需 libc）；
+/// 其它平台没有免 libc 的时区库，退回 UTC 并**显式标注 `UTC`**，不假装成本地时间。
+pub fn formatLocalTime(arena: std.mem.Allocator, unix_seconds: i64) ![]const u8 {
+    if (unix_seconds <= 0) return arena.dupe(u8, "—");
+    if (builtin.os.tag == .windows) {
+        if (windowsLocalTime(unix_seconds)) |t| {
+            return std.fmt.allocPrint(arena, "{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+                t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond,
+            });
+        }
+    }
+    const epoch = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_seconds) };
+    const day = epoch.getEpochDay();
+    const year_day = day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const seconds_day = epoch.getDaySeconds();
+    return std.fmt.allocPrint(arena, "{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2} UTC", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        seconds_day.getHoursIntoDay(),
+        seconds_day.getMinutesIntoHour(),
+        seconds_day.getSecondsIntoMinute(),
+    });
+}
+
+fn windowsLocalTime(unix_seconds: i64) ?SYSTEMTIME {
+    // unix 秒 → FILETIME（从 1601-01-01 起的 100ns）
+    const since_1601: i64 = unix_seconds + 11_644_473_600;
+    if (since_1601 < 0) return null;
+    const ticks: u64 = @as(u64, @intCast(since_1601)) * 10_000_000;
+    var ft = FILETIME{ .low = @truncate(ticks), .high = @intCast(ticks >> 32) };
+    var utc = SYSTEMTIME{};
+    if (!FileTimeToSystemTime(&ft, &utc).toBool()) return null;
+    var local = SYSTEMTIME{};
+    if (!SystemTimeToTzSpecificLocalTime(null, &utc, &local).toBool()) return null;
+    return local;
+}
 
 fn countThreadsWindows(pid: u32) u32 {
     const snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
@@ -284,4 +388,17 @@ test "sysinfo：采集到的字段自洽（pid 非 0、内存非 0）" {
     if (!snap.ok) return; // 无权限的环境跳过
     try std.testing.expect(snap.pid != 0);
     try std.testing.expect(snap.rss_bytes > 0);
+}
+
+test "sysinfo：本地时间格式化（0 表示未知，正常值形如 yyyy-MM-dd HH:mm:ss）" {
+    const unknown = try formatLocalTime(std.testing.allocator, 0);
+    defer std.testing.allocator.free(unknown);
+    try std.testing.expectEqualStrings("—", unknown);
+
+    // 2020-09-13T12:26:40Z：任何时区下都还是 2020-09-13（±14h 内也不会跨出 13/14 两天）
+    const text = try formatLocalTime(std.testing.allocator, 1_600_000_000);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(text.len >= 19);
+    try std.testing.expect(std.mem.startsWith(u8, text, "2020-09-1"));
+    try std.testing.expectEqual(@as(u8, ':'), text[13]);
 }

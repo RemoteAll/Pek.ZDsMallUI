@@ -175,23 +175,11 @@ pub const HomeController = struct {
     }
 };
 
-/// unix 秒 → `2026-11-23 09:29:42`（本地时区；0 表示未知）。
+/// unix 秒 → `2026-11-23 09:29:42`（**本地时区**；0 表示未知）。
+///
+/// 具体实现（含「曾经误把 UTC 当本地时间」的说明）在 [`sysinfo.formatLocalTime`]。
 fn formatUnix(arena: std.mem.Allocator, unix_seconds: i64) ![]const u8 {
-    if (unix_seconds <= 0) return arena.dupe(u8, "—");
-    const seconds: u64 = @intCast(unix_seconds);
-    const epoch = std.time.epoch.EpochSeconds{ .secs = seconds };
-    const day = epoch.getEpochDay();
-    const year_day = day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    const seconds_day = epoch.getDaySeconds();
-    return std.fmt.allocPrint(arena, "{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
-        year_day.year,
-        month_day.month.numeric(),
-        month_day.day_index + 1,
-        seconds_day.getHoursIntoDay(),
-        seconds_day.getMinutesIntoHour(),
-        seconds_day.getSecondsIntoMinute(),
-    });
+    return sysinfo.formatLocalTime(arena, unix_seconds);
 }
 
 /// 构造左侧二级菜单项（`name` / `url` / `icon`）。
