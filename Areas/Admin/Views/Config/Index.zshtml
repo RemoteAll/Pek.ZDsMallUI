@@ -25,12 +25,19 @@
             <div class="subject">
                 <h3>@T("站点设置")</h3>
             </div>
+            @* 页签：**配置项全部集中在设置页**，按性质分两个标签。
+               安全 / WAF 单独一标签（而不是藏在站点设置表单下面）—— 它们是**安全类配置**，
+               以后 WAF 模式、CSRF、CC 限流也往这里放，不会和站点文案混在一起。 *@
             <ul class="tab-base ds-row">
-                <li><a href="@Model.areaRoute/config/index" class="current"><span>@T("站点设置")</span></a></li>
+                <li><a href="javascript:void(0)" class="current" data-cfg-tab="base"><span>@T("站点设置")</span></a></li>
+                @if (Model.hasWaf) {
+                <li><a href="javascript:void(0)" data-cfg-tab="security"><span>@T("安全（WAF）")</span></a></li>
+                }
             </ul>
         </div>
     </div>
 
+    <div class="cfg-pane" data-cfg-pane="base">
     @* 不要加 `enctype="multipart/form-data"`：本页字段全是文本，而请求解析只支持
        `application/x-www-form-urlencoded`，加了会让所有字段都读不到（表现为「网站名称不可为空」）。 *@
     <form method="post" action="@Model.areaRoute/config/updatebase" name="form1">
@@ -221,35 +228,37 @@
             </dl>
         </div>
     </form>
+    </div>
 
     @if (Model.hasWaf) {
-    @* 抓取开关：**配置项就该在配置页**（体检页只负责提醒「去哪里调」，不放表单）。
-       独立 form：它写的是 `Config/Waf.toml`（WAF 配置），与上面的站点设置（数据库 Setting）不是一回事，
+    @* 安全标签：抓取开关等**安全类配置**放这里（体检页只负责提醒「去哪里调」，不放表单）。
+       独立 form：它写的是 `Config/Waf.toml`（WAF 配置），与上面写数据库 Setting 的站点设置不是一回事，
        混在一个表单里会让「保存」同时触发两套落盘逻辑，排查困难。 *@
-    <div class="explanation">
-        <div class="title"><h4>@T("抓取开关")</h4><span class="up"></span></div>
-    </div>
-    <div class="ds-default-table">
-        <form method="post" action="@Model.areaRoute/config/savecrawl" name="formCrawl">
-            <dl>
-                <dt>@T("搜索引擎与 AI")</dt>
-                <dd>
-                    <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
-                        <input type="checkbox" name="allowSearchBots" value="1" @if (Model.searchBotsAllowed) {<text>checked</text>}>
-                        <span>@T("搜索引擎抓取（Google / Bing 等）")</span>
-                    </label>
-                    <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-left:18px;">
-                        <input type="checkbox" name="allowAiBots" value="1" @if (Model.aiBotsAllowed) {<text>checked</text>}>
-                        <span>@T("AI 抓取（GPTBot / PerplexityBot 等，GEO）")</span>
-                    </label>
-                    <p class="notic">@T("关掉搜索引擎抓取 = 所有爬虫（含 Google / Bing）拿到 403，整站搜不到；")@T("AI 抓取按需开启：内容站通常想被生成式引擎引用，内部系统 / 付费内容通常不想。")</p>
-                    <p class="notic">@T("保存在 Config/Waf.toml，改完立即生效，无需重启。")</p>
-                </dd>
-            </dl>
-            <dl>
-                <dt></dt>
-                <dd><a href="javascript:void(0)" class="btn" onclick="document.forms['formCrawl'].submit()">@T("保存抓取开关")</a></dd>
-            </dl>
+    <div class="cfg-pane" data-cfg-pane="security" hidden>
+        <form method="post" action="@Model.areaRoute/config/savecrawl" name="formCrawl" id="formCrawl">
+            <div class="layui-tab layui-tab-brief Lan">
+                <div class="ncap-form-default">
+                    <dl>
+                    <dt>@T("搜索引擎与 AI")</dt>
+                    <dd>
+                        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" name="allowSearchBots" value="1" @if (Model.searchBotsAllowed) {<text>checked</text>}>
+                            <span>@T("搜索引擎抓取（Google / Bing 等）")</span>
+                        </label>
+                        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-left:18px;">
+                            <input type="checkbox" name="allowAiBots" value="1" @if (Model.aiBotsAllowed) {<text>checked</text>}>
+                            <span>@T("AI 抓取（GPTBot / PerplexityBot 等，GEO）")</span>
+                        </label>
+                        <p class="notic">@T("关掉搜索引擎抓取 = 所有爬虫（含 Google / Bing）拿到 403，整站搜不到；")@T("AI 抓取按需开启：内容站通常想被生成式引擎引用，内部系统 / 付费内容通常不想。")</p>
+                        <p class="notic">@T("保存在 Config/Waf.toml，改完立即生效，无需重启。")</p>
+                    </dd>
+                </dl>
+                <dl>
+                    <dt></dt>
+                    <dd><a href="javascript:void(0)" class="btn" onclick="document.forms['formCrawl'].submit()">@T("保存抓取开关")</a></dd>
+                </dl>
+            </div>
+        </div>
         </form>
     </div>
     }
@@ -257,8 +266,29 @@
 @* 语言 Tab 切换（不引 layui 的 element 模块，10 行原生 JS 足够）：
    点标题 → 切 `.layui-this` 与 `.layui-tab-item.layui-show`。 *@
 <script>
+    // ————— 页签：站点设置 / 安全（WAF）—————
+    // 纯前端显隐，不刷新 —— 切标签不丢已填内容；两个 pane 各自一个 form，互不干扰。
     (function () {
-        var box = document.querySelector('.layui-tab.layui-tab-brief.Lan');
+        var tabs = document.querySelectorAll('[data-cfg-tab]');
+        if (!tabs.length) return;
+        var panes = document.querySelectorAll('[data-cfg-pane]');
+        Array.prototype.forEach.call(tabs, function (tab) {
+            tab.addEventListener('click', function (e) {
+                e.preventDefault();
+                var key = tab.getAttribute('data-cfg-tab');
+                Array.prototype.forEach.call(tabs, function (t) { t.classList.toggle('current', t === tab); });
+                Array.prototype.forEach.call(panes, function (p) {
+                    p.hidden = p.getAttribute('data-cfg-pane') !== key;
+                });
+            });
+        });
+    })();
+
+    // ————— 语言 Tab 切换（不引 layui 的 element 模块，10 行原生 JS 足够）：
+    // 点标题 → 切 `.layui-this` 与 `.layui-tab-item.layui-show`。
+    // 只取**站点设置** pane 里那一份（安全 pane 里也有 `.layui-tab`，不能让它被选中）。
+    (function () {
+        var box = document.querySelector('[data-cfg-pane="base"] .layui-tab.layui-tab-brief.Lan');
         if (!box) return;
         var titles = box.querySelectorAll('.layui-tab-title > li');
         var panels = box.querySelectorAll('.layui-tab-content > .layui-tab-item');
