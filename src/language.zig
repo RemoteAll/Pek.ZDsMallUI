@@ -211,7 +211,17 @@ pub const Store = struct {
     resources_seeded: bool = false,
     /// `culture_id` → (key → value)
     resources: std.StringHashMapUnmanaged(std.StringHashMapUnmanaged([]const u8)) = .empty,
+    /// `culture_id` → 「键 → 文案」快照（`BUILTIN_STRINGS` 顺序固定）。
+    ///
+    /// 为什么缓存：`buildLangObject` 每请求要对 108 个静态键各调一次 `text()`，
+    /// 而 `text()` 在没命中资源时是 `for (BUILTIN_STRINGS)` **线性扫描** ——
+    /// 默认语言（没有自定义翻译）场景就是 **108×108 ≈ 1.1 万次字符串比较/请求**。
+    /// 缓存的 `text` 全都指向 store 内部字符串或编译期常量，`reload` 时清空即可，不会悬垂。
+    lang_pairs: std.ArrayListUnmanaged(LangPairs) = .empty,
     mutex: zzig.compat.Mutex = .{},
+
+    pub const LangPair = struct { key: []const u8, text: []const u8 };
+    const LangPairs = struct { culture_id: i32, items: []LangPair };
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) Store {
         return .{ .allocator = allocator, .io = io };
@@ -221,12 +231,38 @@ pub const Store = struct {
         self.freeAllLocked();
         self.mutex.lock();
         self.resources.deinit(self.allocator);
+        self.lang_pairs.deinit(self.allocator);
         self.mutex.unlock();
+    }
+
+    /// 「键 → 文案」快照（命中缓存零查表；`reload` 后自动失效）。
+    fn langPairs(self: *Store, culture_id: i32) ![]const LangPair {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        for (self.lang_pairs.items) |entry| {
+            if (entry.culture_id == culture_id) return entry.items;
+        }
+        const items = try self.allocator.alloc(LangPair, BUILTIN_STRINGS.len);
+        errdefer self.allocator.free(items);
+        for (BUILTIN_STRINGS, 0..) |entry, i| {
+            items[i] = .{ .key = entry.publicKey(), .text = self.text(culture_id, entry.key) };
+        }
+        try self.lang_pairs.append(self.allocator, .{ .culture_id = culture_id, .items = items });
+        return items;
+    }
+
+    fn clearLangPairsLocked(self: *Store) void {
+        for (self.lang_pairs.items) |entry| self.allocator.free(entry.items);
+        self.lang_pairs.clearRetainingCapacity();
     }
 
     fn freeAllLocked(self: *Store) void {
         self.mutex.lock();
         defer self.mutex.unlock();
+
+        // 「键 → 文案」快照里的字符串指向下面的 resources / 编译期常量，清空即可
+        self.clearLangPairsLocked();
 
         for (self.languages) |row| {
             self.allocator.free(row.name);
@@ -706,10 +742,15 @@ pub const Store = struct {
     /// 视图写 `@T("控制台")`，zzig 模板在渲染期按这个对象查（取不到就用键名本身）。
     pub fn buildLangObject(self: *const Store, arena: std.mem.Allocator, culture_id: i32) !value.Value {
         var builder = value.ObjectBuilder.init(arena);
-        for (BUILTIN_STRINGS) |entry| {
-            try builder.str(entry.publicKey(), self.text(culture_id, entry.key));
-        }
+        // 走快照（见 `langPairs`）：命中缓存时只是一次线性遍历 + 108 个槽位填充
+        const pairs = try self.langPairsConst(culture_id);
+        for (pairs) |entry| try builder.str(entry.key, entry.text);
         return builder.finish();
+    }
+
+    /// `langPairs` 的 `*const` 版（`buildLangObject` 拿的是 `*const Store`，缓存用内部锁保护）。
+    fn langPairsConst(self: *const Store, culture_id: i32) ![]const LangPair {
+        return @constCast(self).langPairs(culture_id);
     }
 
     /// 更新语言（编辑页保存；只改传入的字段，`IsDefault` 由「设为默认」单独管）。
