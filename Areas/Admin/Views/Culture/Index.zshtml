@@ -67,8 +67,18 @@
                 <td>@row.englishName</td>
                 <td>@row.languageCulture</td>
                 <td>@row.code</td>
-                <td>@if (row.isDefault) {<span>@T("是")</span>} else {<span>@T("否")</span>}</td>
-                <td>@if (row.enabled) {<span>@T("启用")</span>} else {<span>@T("停用")</span>}</td>
+                <td>@if (row.isDefault) {<span class="dsui-status is-on">@T("是")</span>} else {<a class="dsui-status is-plain" href="@Model.areaRoute/culture/setdefault?id=@row.id" title='@T("设为默认语言")'>@T("设为默认")</a>}</td>
+                @* 状态列直接在列表上切：点一下就走 `togglestatus`（GET + 重定向）。
+                   默认语言不渲染链接 —— **不可停用**（前台翻译缺失时靠它兑底），链接样式也就不给，避免误点。 *@
+                <td>
+                    @if (row.isDefault) {
+                    <span class="dsui-status is-on" title='@T("默认语言不可停用")'>@T("启用")</span>
+                    } else if (row.enabled) {
+                    <a class="dsui-status is-on" href="@Model.areaRoute/culture/togglestatus?id=@row.id&amp;enable=0" title='@T("点击停用")'>@T("启用")</a>
+                    } else {
+                    <a class="dsui-status is-off" href="@Model.areaRoute/culture/togglestatus?id=@row.id&amp;enable=1" title='@T("点击启用")'>@T("停用")</a>
+                    }
+                </td>
                 <td>
                     <a href="@Model.areaRoute/culture/editculture?id=@row.id" class="dsui-btn-edit">@T("编辑")</a>
                     <a href="javascript:;" onclick="javascript:dsLayerConfirm('@Model.areaRoute/culture/delete?Ids=@row.id','@T("您确定要删除吗?")',@row.id)" class="dsui-btn-del">@T("删除")</a>
@@ -96,3 +106,53 @@
         dsLayerConfirm(_uri, '@T("您确定要删除吗?")');
     }
 </script>
+<style>
+    /* 状态 / 默认列的可点徽标：只在本页用，不动框架全局样式。
+       色彩成对（青绿=已启用、赭黄=已停用），悬停加深说明「能点」，
+       `cursor:pointer` 只给链接（默认语言那枚是静态 span，不给人可点的错觉）。 */
+    .dsui-status {
+        display: inline-block;
+        padding: 1px 10px;
+        border-radius: 11px;
+        font-size: 12px;
+        line-height: 20px;
+        border: 1px solid transparent;
+        white-space: nowrap;
+    }
+
+    .dsui-status.is-on {
+        color: #0f766e;
+        background: #ccfbf1;
+        border-color: #99f6e4;
+    }
+
+    .dsui-status.is-off {
+        color: #9a3412;
+        background: #ffedd5;
+        border-color: #fed7aa;
+    }
+
+    .dsui-status.is-plain {
+        color: #2563eb;
+        background: #eff6ff;
+        border-color: #bfdbfe;
+        text-decoration: none;
+    }
+
+    a.dsui-status {
+        cursor: pointer;
+        text-decoration: none;
+    }
+
+    a.dsui-status.is-on:hover {
+        background: #99f6e4;
+    }
+
+    a.dsui-status.is-off:hover {
+        background: #fed7aa;
+    }
+
+    a.dsui-status.is-plain:hover {
+        background: #dbeafe;
+    }
+</style>

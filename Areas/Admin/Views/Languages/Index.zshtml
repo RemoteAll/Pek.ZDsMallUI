@@ -77,6 +77,30 @@
     .btn-cancel:hover {
         background-color: #5a6268;
     }
+
+    /* 未翻译行：整行浅黄底 + 值后面一枚小角标。
+       目的只有一个 —— **切了语言就要看得出效果**：译过的行干净，
+       没译的行一眼能数出来，而不是满屏中文让人以为筛选没生效。 */
+    .lang-row-untranslated {
+        background-color: #fffbeb;
+    }
+
+    .lang-row-untranslated:hover {
+        background-color: #fef3c7;
+    }
+
+    .lang-tag-unt {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 0 8px;
+        border-radius: 9px;
+        font-size: 12px;
+        line-height: 18px;
+        color: #92400e;
+        background: #fde68a;
+        border: 1px solid #fcd34d;
+        vertical-align: middle;
+    }
 </style>
 
 <div class="page">
@@ -141,12 +165,15 @@
         </thead>
         <tbody>
             @foreach (var row in Model.rows) {
-            <tr id="ds_row_@row.id">
+            @* `untranslated` = 值等于键：这条还没译（`text()` 无译文时回退成键本身）。
+               不加标记的话，切到英文后满屏中文，看起来像「筛选没生效」——实际是没译文。 *@
+            <tr id="ds_row_@row.id" @if (row.untranslated) {<text>data-untranslated="1" class="lang-row-untranslated"</text>}>
                 <td>@if (row.id > 0) {<input type="checkbox" class="checkitem" name="nav_id[]" value="@row.id">}</td>
                 <td style="width:auto;"><code>@row.key</code></td>
                 <td style="width:100px;">@row.languageName</td>
                 <td class="editable-cell" data-culture-id="@row.cultureId" data-lan-key="@row.key">
                     <span class="display-value">@row.value</span>
+                    @if (row.untranslated) {<span class="lang-tag-unt">@T("未翻译")</span>}
                     <textarea class="edit-value" style="display: none; height:100px;">@row.value</textarea>
                     <div class="edit-actions" style="display: none;">
                         <button class="btn-save">@T("保存")</button>

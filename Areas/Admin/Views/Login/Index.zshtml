@@ -56,5 +56,15 @@
 
     <script src="~/static/plugins/jquery214.min.js"></script>
     <script src="~/static/admin/js/login-md5.js"></script>
+    <script>
+        // 会话过期时后台子页会被 302 到登录页 —— 如果这个登录页出现在**框架页的 iframe 里**，
+        // 用户看到的是「点了一下没反应」（整个窗口还停在后台，只有中间那块换了内容）。
+        // 这里检测到自己被嵌套，就把**整个窗口**跳到登录页，并保留 returnUrl。
+        (function () {
+            try {
+                if (window.top !== window.self) { window.top.location.href = location.href; }
+            } catch (e) { /* 跨域时忽略 */ }
+        })();
+    </script>
 </body>
 </html>

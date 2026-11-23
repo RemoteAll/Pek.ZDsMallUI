@@ -165,12 +165,20 @@
             function activateByHash(raw) {
                 var key = decodeURIComponent((raw || '').replace(/^#/, ''));
                 if (!key) { return false; }
+                var keyPath = key.split('?')[0];
                 var target = null;
                 items.forEach(function (a) {
-                    if (a.getAttribute('data-url') === key || a.getAttribute('data-name') === key) { target = a; }
+                    var url = a.getAttribute('data-url') || '';
+                    if (url === key || a.getAttribute('data-name') === key || url.split('?')[0] === keyPath) { target = a; }
                 });
                 if (!target) { return false; }
-                frame.src = target.getAttribute('data-url');
+                // ★ 只在**换到另一个功能**时才重设 iframe：
+                //   子页自己可以带查询串（例如 SEO 页的 `?full=1` 逐页实测、文章编辑 `?id=3`）。
+                //   以前这里无条件 `frame.src = data-url`，子页加载后又会派发 hashchange，
+                //   于是同一功能内的子视图链接被立刻拉回默认页 —— 表现就是「点了没反应」。
+                var targetUrl = target.getAttribute('data-url');
+                var curPath = (frame.getAttribute('src') || '').split('?')[0];
+                if (curPath !== targetUrl.split('?')[0]) { frame.src = targetUrl; }
                 markSelected(target);
                 var group = target.closest ? target.closest('.menu-group') : null;
                 if (group && group.getAttribute('data-group')) { showGroup(group.getAttribute('data-group')); }

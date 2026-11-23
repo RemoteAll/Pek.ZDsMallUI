@@ -10,10 +10,10 @@
             <div class="subject">
                 <h3>@T("控制台")</h3>
             </div>
-            <ul class="tab-base ds-row">
-                <li><a href="@Model.areaRoute/home/index"><span>@T("框架页")</span></a></li>
-                <li><a href="javascript:void(0)" class="current"><span>@T("服务状态")</span></a></li>
-            </ul>
+            @* 这里原先还有一组页签「框架页 / 服务状态」：
+               「框架页」指向的正是**带左侧菜单 + iframe 的外层框架**，点它等于在 iframe 里再套一层框架，
+               毫无意义；「服务状态」本身就是本页（标题已写明）。2026-11-23 用户指出「这个都不需要有标签吧」→ 删除。
+               口诀：页签只用于**同一实体的并列视图**（列表 / 新增 / 编辑），进页即是单视图的页面不给页签。 *@
         </div>
     </div>
 

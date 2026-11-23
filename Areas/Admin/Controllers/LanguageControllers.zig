@@ -111,7 +111,12 @@ pub const CultureController = struct {
         const enable = std.mem.eql(u8, c.queryValue("enable") orelse "1", "1");
         if (id <= 0) return redirectTo(self, c, "/culture/index", "error=参数 id 无效");
         store.setStatus(id, enable) catch |e| {
-            zzig.Logger.err("[ZDsMallUI] 切换语言状态失败（id={d}）：{s}", .{ id, @errorName(e) });
+            // 默认语言被停用会让前台所有页面失去兜底文案 → 明确告诉操作者该怎么改，
+            // 不要只回一句「保存失败」让人去翻日志（这里不是系统故障，是业务约束）。
+            if (e == error.CannotDisableDefaultLanguage) {
+                return redirectTo(self, c, "/culture/index", "error=默认语言不可停用，请先设为其它语言");
+            }
+            zzig.Logger.err("[ZDsMallUI] 切换语言状态失败（id={d}，enable={}）：{s}", .{ id, enable, @errorName(e) });
             return redirectTo(self, c, "/culture/index", "error=保存失败，详见日志");
         };
         return redirectTo(self, c, "/culture/index", "saved=1");
@@ -283,7 +288,7 @@ pub const LanguagesController = struct {
         const store = self.languages orelse return renderMissing(self, c);
         const user = admin_area.currentUser(c);
 
-        const requested = std.fmt.parseInt(i32, c.queryValue("culture") orelse "", 10) catch 0;
+        const requested = cultureIdParam(c);
         const culture_id = if (requested > 0) requested else self.languageIdFor(user);
 
         // 键集合 = 内置键 ∪ 自定义键（自定义键可在页面上新增/删除）
@@ -295,6 +300,16 @@ pub const LanguagesController = struct {
 
         // 行 = `LocaleStringResource` 行（对齐 C#）+ 内置键中尚未落库的虚拟行（`id = 0`）
         const all_rows = try store.resourceRows(c.arena, culture_id, lan_key, lan_value);
+        // **源语言**（默认语言）本身就是中文原文：它的「值 == 键」是正常的，不是「未翻译」。
+        // 早期版本没区分这一点，导致简体中文页每行都挂了个「未翻译」角标（2026-11-23 用户指出）。
+        // 注意 `Store.byId` 不是 pub，这里走公开的 `all()` 查（语言只有几十条，开销可忽略）。
+        var is_source_lang = true;
+        for (store.all()) |lang_row| {
+            if (lang_row.id == culture_id) {
+                is_source_lang = lang_row.is_default;
+                break;
+            }
+        }
         const page_size_eff = if (page_size == 0) @as(usize, 20) else page_size;
         const pages = if (all_rows.len == 0) @as(usize, 1) else (all_rows.len + page_size_eff - 1) / page_size_eff;
         const cur_page = @min(@max(want_page, 1), pages);
@@ -309,6 +324,9 @@ pub const LanguagesController = struct {
             try builder.str("value", row.value);
             try builder.str("languageName", row.language_name);
             try builder.int("cultureId", row.culture_id);
+            // 值等于键 = 这条还没翻译（`text()` 在没有译文时回退成键本身）。
+            // **源语言不算**：默认语言的键就是中文原文，值==键是正常状态。
+            try builder.boolean("untranslated", !is_source_lang and std.mem.eql(u8, row.value, row.key));
             try rows.append(c.arena, builder.finish());
         }
 
@@ -468,7 +486,7 @@ fn deleteResource(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
         return jsonEnvelope(c, true, 10000, "删除成功");
     }
 
-    const culture_id = std.fmt.parseInt(i32, c.queryValue("culture") orelse "0", 10) catch 0;
+    const culture_id = cultureIdParam(c);
     const key = std.mem.trim(u8, c.queryValue("key") orelse "", " \t\r\n");
     if (culture_id <= 0 or key.len == 0) return redirectTo(self, c, "/languages/index", "error=参数无效");
     store.removeResource(culture_id, key) catch |e| {
@@ -728,4 +746,16 @@ fn jsonEnvelope(c: *router.Ctx, success: bool, code: i32, msg: []const u8) !Acti
     );
     // 复用 `router.Response.json`（200 + application/json），不自己拼 status/content_type
     return .{ .response = router.Response.json(body) };
+}
+
+/// 读取语言 id：**以 `cultureId` 为准**（视图的表单下拉、分页链接、导出/导入都用这个名字），
+/// 旧链接 `culture=N` 继续兼容。
+///
+/// 2026-11-23 修的 bug：`index` 原来只读 `culture`，而视图传的是 `cultureId` ——
+/// 于是「语言」下拉选了 English，URL 带着 `cultureId=2`，控制器却认为没选，
+/// 回退成**当前登录用户的语言**，列表永远是简体中文（用户原话「没有效果，看上去又全部都是中文的」）。
+/// 同一份视图里两套参数名混用，这类缺陷只能靠「读参数统一走一个函数」根治。
+fn cultureIdParam(c: *router.Ctx) i32 {
+    const raw = c.queryValue("cultureId") orelse (c.queryValue("culture") orelse "");
+    return std.fmt.parseInt(i32, raw, 10) catch 0;
 }

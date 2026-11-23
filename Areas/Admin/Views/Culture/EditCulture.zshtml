@@ -29,49 +29,49 @@
                     <td class="required"><label class="validation">@T("标题")</label></td>
                 </tr>
                 <tr class="noborder">
-                    <td class="vatop rowform"><input type="text" value="" name="Name" id="Name" class="infoTableInput w300" value="@Model.row.name"></td>
+                    <td class="vatop rowform"><input type="text" name="Name" id="Name" class="infoTableInput w300" value="@Model.row.name"></td>
                 </tr>
                 <tr>
                     <td class="required"><label class="validation">@T("显示名称")</label></td>
                 </tr>
                 <tr class="noborder">
-                    <td class="vatop rowform"><input type="text" value="" name="DisplayName" id="DisplayName" class="infoTableInput w300" value="@Model.row.displayName"></td>
+                    <td class="vatop rowform"><input type="text" name="DisplayName" id="DisplayName" class="infoTableInput w300" value="@Model.row.displayName"></td>
                 </tr>
                 <tr>
                     <td class="required"><label class="validation">@T("英文名称")</label></td>
                 </tr>
                 <tr class="noborder">
-                    <td class="vatop rowform"><input type="text" value="" name="EnglishName" id="EnglishName" class="infoTableInput w300" value="@Model.row.englishName"></td>
+                    <td class="vatop rowform"><input type="text" name="EnglishName" id="EnglishName" class="infoTableInput w300" value="@Model.row.englishName"></td>
                 </tr>
                 <tr>
                     <td class="required"><label class="validation">@T("语言缩写")</label></td>
                 </tr>
                 <tr class="noborder">
-                    <td class="vatop rowform"><input type="text" value="" name="LanguageCulture" id="LanguageCulture" class="infoTableInput w300" value="@Model.row.languageCulture"></td>
+                    <td class="vatop rowform"><input type="text" name="LanguageCulture" id="LanguageCulture" class="infoTableInput w300" value="@Model.row.languageCulture"></td>
                 </tr>
                 <tr>
                     <td class="required"><label class="validation">@T("语言代码")</label></td>
                 </tr>
                 <tr class="noborder">
-                    <td class="vatop rowform"><input type="text" value="" name="UniqueSeoCode" id="UniqueSeoCode" class="infoTableInput w300" value="@Model.row.code"></td>
+                    <td class="vatop rowform"><input type="text" name="UniqueSeoCode" id="UniqueSeoCode" class="infoTableInput w300" value="@Model.row.code"></td>
                 </tr>
                 <tr>
                     <td><label>@T("旗帜")</label></td>
                 </tr>
                 <tr class="noborder">
-                    <td class="vatop rowform"><input type="text" value="" name="Flag" id="Flag" class="infoTableInput w300" value="@Model.row.flag"></td>
+                    <td class="vatop rowform"><input type="text" name="Flag" id="Flag" class="infoTableInput w300" value="@Model.row.flag"></td>
                 </tr>
                 <tr>
                     <td><label>@T("域名")</label></td>
                 </tr>
                 <tr class="noborder">
-                    <td class="vatop rowform"><input type="text" value="" name="Domain" id="Domain" class="infoTableInput w300" value="@Model.row.domain"></td>
+                    <td class="vatop rowform"><input type="text" name="Domain" id="Domain" class="infoTableInput w300" value="@Model.row.domain"></td>
                 </tr>
                 <tr>
                     <td><label>LCID</label></td>
                 </tr>
                 <tr class="noborder">
-                    <td class="vatop rowform"><input type="text" value="" name="Lcid" id="Lcid" class="infoTableInput w300" value="@Model.row.lcid"></td>
+                    <td class="vatop rowform"><input type="text" name="Lcid" id="Lcid" class="infoTableInput w300" value="@Model.row.lcid"></td>
                 </tr>
                 <tr>
                     <td><label>@T("状态"):</label></td>

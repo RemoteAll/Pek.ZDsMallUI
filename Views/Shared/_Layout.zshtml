@@ -88,15 +88,21 @@
         <span>计算 <!--calc-ms--> ms · 渲染 <!--render-ms--> ms</span>
     </div>
     <style>
+        /* 右下角角标：固定在视口，但**不能压住内容最后一行** ——
+           半透明白底 + 细边框（原来 6% 黑底太淡，字与表格线糊在一起），
+           并给 `.page` 留出底部空间（2026-11-23 版式巡检）。 */
         .server-timing {
             position: fixed; right: 10px; bottom: 8px; z-index: 99;
-            padding: 2px 8px; border-radius: 10px; font-size: 12px;
-            background: rgba(0, 0, 0, .06); color: #6b7280; pointer-events: none;
+            padding: 3px 10px; border-radius: 10px; font-size: 12px;
+            background: rgba(255, 255, 255, .94); border: 1px solid #e5e7eb;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+            color: #6b7280; pointer-events: none;
             font-family: ui-monospace, Consolas, monospace;
         }
         .server-timing .st-sep { margin: 0 5px; color: #c3c7ce; }
         .server-timing .st-app { color: #4b5563; }
         .server-timing .st-zig { color: #b45309; }
+        .page { padding-bottom: 34px; }
     </style>    @await RenderSectionAsync("Scripts", false)
 </body>
 </html>

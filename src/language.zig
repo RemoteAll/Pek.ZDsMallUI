@@ -81,6 +81,16 @@ pub const BUILTIN_STRINGS = [_]Builtin{
     .{ .key = "启用", .en = "Enabled" },
     .{ .key = "停用", .en = "Disabled" },
     .{ .key = "默认", .en = "Default" },
+    .{ .key = "设为默认", .en = "Set as default" },
+    .{ .key = "设为默认语言", .en = "Set as the default language" },
+    .{ .key = "点击启用", .en = "Click to enable" },
+    .{ .key = "点击停用", .en = "Click to disable" },
+    .{ .key = "默认语言不可停用", .en = "The default language cannot be disabled" },
+    .{ .key = "默认语言不可停用，请先设为其它语言", .en = "The default language cannot be disabled; make another language the default first" },
+    .{ .key = "未翻译", .en = "Untranslated" },
+    .{ .key = "语言包管理", .en = "Language resources" },
+    .{ .key = "资源键", .en = "Resource key" },
+    .{ .key = "翻译文本", .en = "Translation" },
     .{ .key = "标准", .en = "Standard" },
     .{ .key = "管理", .en = "Manage" },
     .{ .key = "标题", .en = "Title" },
@@ -265,13 +275,14 @@ pub const Store = struct {
     resources_seeded: bool = false,
     /// `culture_id` → (key → value)
     resources: std.StringHashMapUnmanaged(std.StringHashMapUnmanaged([]const u8)) = .empty,
-    /// `culture_id` → 「键 → 文案」快照（`BUILTIN_STRINGS` 顺序固定）。
-    ///
-    /// 为什么缓存：`buildLangObject` 每请求要对 108 个静态键各调一次 `text()`，
-    /// 而 `text()` 在没命中资源时是 `for (BUILTIN_STRINGS)` **线性扫描** ——
-    /// 默认语言（没有自定义翻译）场景就是 **108×108 ≈ 1.1 万次字符串比较/请求**。
-    /// 缓存的 `text` 全都指向 store 内部字符串或编译期常量，`reload` 时清空即可，不会悬垂。
+    /// `culture_id` → 「键 → 文案」快照（`BUILTIN_STRINGS` + 项目自定义文案）。
     lang_pairs: std.ArrayListUnmanaged(LangPairs) = .empty,
+    /// **项目自定义文案**（`setExtraStrings` 注入）。
+    ///
+    /// 为什么不在 `BUILTIN_STRINGS` 里加：那个表是**通用后台文案**，所有项目共用；
+    /// 工具站的前台文案（「复制」「全选」…）属于项目，塞进去会污染其它项目。
+    /// 项目注入后，视图同样写 `@T("复制")`，DB `LocaleStringResource` 依旧可覆盖。
+    extra: []const Builtin = &.{},
     mutex: zzig.compat.Mutex = .{},
 
     pub const LangPair = struct { key: []const u8, text: []const u8 };
@@ -289,6 +300,24 @@ pub const Store = struct {
         self.mutex.unlock();
     }
 
+    /// 注入项目自定义文案（可多次调用，后一次覆盖前一次）。会清空快照缓存。
+    ///
+    /// **同时落库（只补缺）**：否则后台「语言包」页看不到这些键，运营就改不了；
+    /// 用的仍是 `ON CONFLICT DO NOTHING` —— 运营改过的行**永远不会被回填**。
+    pub fn setExtraStrings(self: *Store, list: []const Builtin) void {
+        self.mutex.lock();
+        self.extra = list;
+        self.clearLangPairsLocked();
+        self.mutex.unlock();
+
+        if (self.db_path) |p| {
+            self.ensureSeedResources(p) catch |e| zzig.Logger.warn(
+                "[ZDsMallUI] 项目文案落库失败（{s}）：后台语言包页看不到这些键",
+                .{@errorName(e)},
+            );
+        }
+    }
+
     /// 「键 → 文案」快照（命中缓存零查表；`reload` 后自动失效）。
     fn langPairs(self: *Store, culture_id: i32) ![]const LangPair {
         self.mutex.lock();
@@ -297,10 +326,17 @@ pub const Store = struct {
         for (self.lang_pairs.items) |entry| {
             if (entry.culture_id == culture_id) return entry.items;
         }
-        const items = try self.allocator.alloc(LangPair, BUILTIN_STRINGS.len);
+        const total = BUILTIN_STRINGS.len + self.extra.len;
+        const items = try self.allocator.alloc(LangPair, total);
         errdefer self.allocator.free(items);
-        for (BUILTIN_STRINGS, 0..) |entry, i| {
+        var i: usize = 0;
+        for (BUILTIN_STRINGS) |entry| {
             items[i] = .{ .key = entry.publicKey(), .text = self.text(culture_id, entry.key) };
+            i += 1;
+        }
+        // 项目自定义文案排在后面：键不重复时顺序无关；若真的重名，后者覆盖前者。
+        for (self.extra, i..) |entry, k| {
+            items[k] = .{ .key = entry.publicKey(), .text = self.text(culture_id, entry.key) };
         }
         try self.lang_pairs.append(self.allocator, .{ .culture_id = culture_id, .items = items });
         return items;
@@ -506,10 +542,22 @@ pub const Store = struct {
                 try stmt.run();
                 rows_written += 1;
             }
+            // 项目自定义文案（`setExtraStrings`）：同一个「只补缺」语句，
+            // 已有行（含运营改过的）一律不动。
+            for (self.extra) |entry| {
+                stmt.reset();
+                try stmt.bindAll(&.{
+                    .{ .int = target.id },
+                    .{ .text = entry.publicKey() },
+                    .{ .text = if (target.english) entry.en else entry.key },
+                });
+                try stmt.run();
+                rows_written += 1;
+            }
         }
         zzig.Logger.info(
-            "[ZDsMallUI] 语言包初始化：{d} 种语言 × {d} 条内置文案已落库（共写入 {d} 条，之后每行可编辑 / 删除）",
-            .{ targets.items.len, BUILTIN_STRINGS.len, rows_written },
+            "[ZDsMallUI] 语言包初始化：{d} 种语言 × {d} 条文案（内置 + 项目）已同步（写入 {d} 行，冲突不改；之后每行可编辑 / 删除）",
+            .{ targets.items.len, BUILTIN_STRINGS.len + self.extra.len, rows_written },
         );
     }
 
@@ -637,7 +685,7 @@ pub const Store = struct {
         try stmt.bindAll(&.{});
         try stmt.run();
 
-        var stmt2 = try db.prepare(self.allocator, "UPDATE Language SET IsDefault = 1 WHERE Id = ?");
+        var stmt2 = try db.prepare(self.allocator, "UPDATE Language SET IsDefault = 1, Status = 1 WHERE Id = ?");
         defer stmt2.finalize();
         try stmt2.bindAll(&.{.{ .int = id }});
         try stmt2.run();
@@ -646,6 +694,9 @@ pub const Store = struct {
     }
 
     /// 启用 / 停用语言（停用后不出现在后台语言下拉）。
+    ///
+    /// **默认语言不允许停用**：前台在翻译缺失时全靠它兑底，停用后所有页面会失去默认文案。
+    /// 列表页的状态列现在是可以直接点的按钮，所以这条约束必须在数据层拦，不能只靠界面隐藏。
     pub fn setStatus(self: *Store, id: i32, enabled: bool) !void {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
@@ -653,12 +704,26 @@ pub const Store = struct {
         var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
+        if (!enabled and try self.isDefaultLanguage(&db, id)) return error.CannotDisableDefaultLanguage;
+
         var stmt = try db.prepare(self.allocator, "UPDATE Language SET Status = ? WHERE Id = ?");
         defer stmt.finalize();
         try stmt.bindAll(&.{ .{ .int = if (enabled) 1 else 0 }, .{ .int = id } });
         try stmt.run();
 
         try self.reload();
+    }
+
+    /// `id` 是不是默认语言（`setStatus` 的保护条件，供单测直接验证）。
+    pub fn isDefaultLanguage(self: *Store, db: *sqlite.Db, id: i32) !bool {
+        var buf = std.heap.ArenaAllocator.init(self.allocator);
+        defer buf.deinit();
+        var stmt = try db.prepare(self.allocator, "SELECT IsDefault FROM Language WHERE Id = ?");
+        defer stmt.finalize();
+        try stmt.bindAll(&.{.{ .int = id }});
+        if (!stmt.hasRow()) return false;
+        const row = try stmt.readRow(buf.allocator());
+        return rowInt(row, "IsDefault") != 0;
     }
 
     /// 新增语言（代码唯一；`order` 决定下拉顺序）。
@@ -857,6 +922,24 @@ pub const Store = struct {
         return 0;
     }
 
+    /// 「**真的翻译过**」的行数：只数「值 ≠ 键」的行。
+    ///
+    /// `translatedCount` 数的是行数 —— 默认语言（中文）的行是 `LanKey = LanValue`，也被算进去，
+    /// 所以不能拿它判断「这个语言翻没翻」。SEO 体检的「多语言索引」用它区分
+    /// 「开了英文但没翻」与「开了英文且已翻」（前者才是重复内容）。
+    pub fn translatedDistinctCount(self: *const Store, culture_id: i32) usize {
+        var n: usize = 0;
+        var buf: [16]u8 = undefined;
+        const culture_key = std.fmt.bufPrint(&buf, "{d}", .{culture_id}) catch return 0;
+        if (self.resources.get(culture_key)) |inner| {
+            var it = inner.iterator();
+            while (it.next()) |entry| {
+                if (!std.mem.eql(u8, entry.key_ptr.*, entry.value_ptr.*)) n += 1;
+            }
+        }
+        return n;
+    }
+
     pub fn text(self: *const Store, culture_id: i32, key: []const u8) []const u8 {
         var buf: [16]u8 = undefined;
         const culture_key = std.fmt.bufPrint(&buf, "{d}", .{culture_id}) catch "";
@@ -869,6 +952,10 @@ pub const Store = struct {
         const lang = self.byId(culture_id);
         const english = if (lang) |row| isEnglish(row.code) else false;
         for (BUILTIN_STRINGS) |entry| {
+            if (std.mem.eql(u8, entry.key, key)) return if (english) entry.en else entry.key;
+        }
+        // 项目自定义文案（`setExtraStrings` 注入）：DB 覆盖优先，其次本表，最后回退键本身。
+        for (self.extra) |entry| {
             if (std.mem.eql(u8, entry.key, key)) return if (english) entry.en else entry.key;
         }
         return key;
