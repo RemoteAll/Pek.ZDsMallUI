@@ -1,73 +1,15 @@
 @{
     Layout = "Shared/_Layout";
 }
-@* 角色 - 新增/编辑（版式照抄 C# `Areas/Admin/Views/Role/EditRole.cshtml`）。 *@
-@* 页面级样式：C# 用的是 `asp-location="true"`（进 head），zzig 原样输出即可（浏览器接受 body 内 style）。 *@
-<style>
-    /* 权限表格：C# `table#tables` 的边框 / 圆角 / 阴影（admin.css 里没有，必须页面内声明） */
-    .perm-table {
-        width: 96%;
-        margin: 6px 0 0;
-        border: 1px solid #e6e6e6;
-        border-radius: 2px;
-        box-shadow: 0 2px 5px 0 rgba(0, 0, 0, .1);
-        border-collapse: separate;
-        border-spacing: 0;
-        background: #fff;
-    }
-    .perm-table th, .perm-table td {
-        border: 1px solid #e6e6e6;
-        line-height: 35px;
-        padding: 0 10px;
-        text-align: left;
-    }
-    .perm-table th {
-        font-weight: bold;
-        color: #666;
-        text-align: center;
-        background: #fafafa;
-    }
-    .perm-table td.perm-group {
-        background: #f5f8fa;
-        font-weight: 600;
-        color: #333;
-    }
-    .perm-table code {
-        background: #f6f8fa;
-        padding: 1px 5px;
-        border-radius: 3px;
-        color: #0b5cad;
-    }
-    .perm-table input[type=checkbox] {
-        width: 16px;
-        height: 16px;
-        vertical-align: sub;
-    }
-    .perm-tip {
-        color: #888;
-        margin-top: 8px;
-        width: 96%;
-    }
-    /* 编辑表单：`ds-default-table` 原本是列表页样式，宽度按内容收缩（实测只有 370px），
-       这里强制拉满；C# 的 layui 表单也是整行铺开。 */
-    table.form-table {
-        width: 98% !important;
-        margin: 20px 1%;
-    }
-    table.form-table td {
-        width: auto;
-    }
-    table.form-table input.infoTableInput {
-        width: 420px !important;
-        max-width: 100%;
-    }
-</style>
+@* 角色 - 新增/编辑。三段式（基础数据 / 功能权限 / 数据权限），
+   功能权限用「分组卡片 + 每行动作 chips + 行级/组级/全局全选」，
+   动作数量由控制器声明决定（导出/审核/上架…随便加，自动换行）。 *@
 <div class="page">
     <div class="fixed-bar">
         <div class="item-title">
             <div class="subject">
                 <h3>@T("角色权限管理")</h3>
-                <h5>系统内置角色不允许改名；权限串格式与 C# 一致（如 `1#3,2#7`）</h5>
+                <h5>@T("功能权限控制「能不能做」，数据权限控制「能看到哪些数据」")</h5>
             </div>
             <ul class="tab-base ds-row">
                 <li><a href="@Model.areaRoute/role/index"><span>@T("管理")</span></a></li>
@@ -85,97 +27,353 @@
 
     <form id="doc_form" method="post" action="@Model.areaRoute/role/save">
         <input type="hidden" name="id" value="@Model.id" />
-        <table class="ds-default-table form-table">
-            <tbody>
-                <tr>
-                    <td class="required"><label class="validation">角色名称</label></td>
-                </tr>
-                <tr class="noborder">
-                    <td class="vatop rowform">
-                        @if (Model.row.isSystem) {
-                        <input type="text" value="@Model.row.name" name="name" id="name" class="infoTableInput w300" readonly>
-                        <span style="color:#888;">系统内置角色不可改名。</span>
-                        } else {
-                        <input type="text" value="@Model.row.name" name="name" id="name" class="infoTableInput w300" required>
+
+        <div class="role-tabs">
+            <a href="javascript:void(0)" class="role-tab active" data-pane="pane-base">@T("基础数据")</a>
+            <a href="javascript:void(0)" class="role-tab" data-pane="pane-perm">@T("功能权限")</a>
+            <a href="javascript:void(0)" class="role-tab" data-pane="pane-data">@T("数据权限")</a>
+        </div>
+
+        @* ————— 基础数据 ————— *@
+        <div class="role-pane active" id="pane-base">
+            <table class="ds-default-table form-table">
+                <tbody>
+                    <tr>
+                        <td class="required"><label class="validation">@T("角色名称")</label></td>
+                    </tr>
+                    <tr class="noborder">
+                        <td class="vatop rowform">
+                            @if (Model.row.isSystem) {
+                            <input type="text" value="@Model.row.name" name="name" id="name" class="infoTableInput w300" readonly>
+                            <span style="color:#888;">@T("系统内置角色不可改名。")</span>
+                            } else {
+                            <input type="text" value="@Model.row.name" name="name" id="name" class="infoTableInput w300" required>
+                            }
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><label class="validation">@T("状态")</label></td>
+                    </tr>
+                    <tr class="noborder">
+                        <td class="vatop rowform onoff">
+                            <label for="enable_1" class="cb-enable @if (Model.row.enable) {<text>selected</text>}"><span>@T("启用")</span></label>
+                            <label for="enable_0" class="cb-disable @if (Model.row.enable == false) {<text>selected</text>}"><span>@T("停用")</span></label>
+                            <input id="enable_1" name="enable" value="1" type="radio" @if (Model.row.enable) {<text>checked</text>}>
+                            <input id="enable_0" name="enable" value="0" type="radio" @if (Model.row.enable == false) {<text>checked</text>}>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><label class="validation">@T("排序（小的在前）")</label></td>
+                    </tr>
+                    <tr class="noborder">
+                        <td class="vatop rowform"><input type="number" value="@Model.row.sort" name="sort" id="sort" class="infoTableInput w100"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        @* ————— 功能权限 ————— *@
+        <div class="role-pane" id="pane-perm">
+            @if (Model.row.permission == "*") {
+            <div class="perm-tip-ok">@T("该角色拥有全部权限（超级管理员，权限串为 *）；如需细调请改用普通角色。")</div>
+            <input type="hidden" name="permission[]" value="*" />
+            }
+            @if (Model.row.permission != "*") {
+            <div class="perm-toolbar">
+                <label class="perm-all-label"><input type="checkbox" id="perm-all"> @T("全部全选")</label>
+                <span class="perm-count">@T("按模块逐个授权，动作数量由控制器声明决定")</span>
+                <a href="javascript:void(0)" id="perm-none">@T("全部取消")</a>
+            </div>
+
+            @foreach (var group in Model.permissionGroups) {
+            <div class="perm-group">
+                <div class="perm-group-head">
+                    <span class="perm-group-name">@group.name</span>
+                    <label class="perm-group-all"><input type="checkbox" class="group-all"> @T("全选本组")</label>
+                </div>
+                @foreach (var item in group.items) {
+                <div class="perm-row">
+                    <span class="perm-res-name" title="@item.key">@item.title</span>
+                    <label class="perm-row-all"><input type="checkbox" class="row-all"> @T("全选")</label>
+                    <span class="perm-acts">
+                        @foreach (var act in item.actions) {
+                        <label class="perm-chip">
+                            <input type="checkbox" name="permission[]" value="@(item.key).@(act.name)" @if (act.check) {<text>checked</text>}>@act.title
+                        </label>
                         }
-                    </td>
-                </tr>
-                <tr>
-                    <td><label class="validation">@T("状态")</label></td>
-                </tr>
-                <tr class="noborder">
-                    <td class="vatop rowform onoff">
-                        <label for="enable_1" class="cb-enable @if (Model.row.enable) {<text>selected</text>}"><span>@T("启用")</span></label>
-                        <label for="enable_0" class="cb-disable @if (Model.row.enable == false) {<text>selected</text>}"><span>@T("停用")</span></label>
-                        <input id="enable_1" name="enable" value="1" type="radio" @if (Model.row.enable) {<text>checked</text>}>
-                        <input id="enable_0" name="enable" value="0" type="radio" @if (Model.row.enable == false) {<text>checked</text>}>
-                    </td>
-                </tr>
-                <tr>
-                    <td><label class="validation">排序（小的在前）</label></td>
-                </tr>
-                <tr class="noborder">
-                    <td class="vatop rowform"><input type="number" value="@Model.row.sort" name="sort" id="sort" class="infoTableInput w100"></td>
-                </tr>
-                <tr>
-                    <td><label class="validation">@T("权限（勾选这个角色能进的页面）")</label></td>
-                </tr>
-                <tr class="noborder">
-                    <td class="vatop rowform">
-                        @if (Model.row.permission == "*") {
-                        <div style="padding:8px 0;color:#1a7f37;">@T("该角色拥有全部权限（超级管理员，权限串为 *）")</div>
-                        <input type="hidden" name="permission[]" value="*" />
-                        }
-                        @if (Model.row.permission != "*") {
-                        @* 版式照抄 C# `Role/EditRole.cshtml` 的 `table#tables`：名称 / 显示名 / 授权三列。
-                           原来用 inline-block + min-width 排复选框，项目一多就挤成一行、行首不齐。 *@
-                        <table class="perm-table">
-                            <thead>
-                                <tr>
-                                    <th style="width:16%;">@T("名称")</th>
-                                    <th style="width:32%;">@T("显示名")</th>
-                                    <th style="width:11%;">@T("查看")</th>
-                                    <th style="width:11%;">@T("编辑")</th>
-                                    <th style="width:11%;">@T("保存")</th>
-                                    <th>@T("删除")</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var group in Model.permissionGroups) {
-                                <tr>
-                                    <td class="perm-group" colspan="6">@group.name</td>
-                                </tr>
-                                @foreach (var item in group.items) {
-                                <tr>
-                                    <td><code>@item.key</code></td>
-                                    <td>@item.title</td>
-                                    @foreach (var act in item.actions) {
-                                    <td class="perm-act">
-                                        @if (act.allowed) {
-                                        <input type="checkbox" name="permission[]" value="@(item.key).@(act.name)" @if (act.check) {<text>checked</text>} title="@act.title">
-                                        } else {
-                                        <span style="color:#ccc;">-</span>
-                                        }
-                                    </td>
-                                    }
-                                </tr>
-                                }
-                                }
-                            </tbody>
-                        </table>
-                        <div class="perm-tip">@T("勾选后，该角色的用户才能进入对应页面；未勾选一律 403。管理员账号不受此限制。")</div>
-                        }
-                    </td>
-                </tr>
-            </tbody>
-            <tfoot>
-                <tr class="tfoot">
-                    <td>
-                        <input type="submit" class="btn" value="@T("保存")">
-                        <a class="btn" href="@Model.areaRoute/role/index">@T("返回")</a>
-                    </td>
-                </tr>
-            </tfoot>
-        </table>
+                    </span>
+                </div>
+                }
+            </div>
+            }
+            <div class="perm-tip">@T("「查看」决定能否进页面，其余动作决定能否写；未勾选一律 403。管理员账号不受此限制。")</div>
+            }
+        </div>
+
+        @* ————— 数据权限 ————— *@
+        <div class="role-pane" id="pane-data">
+            <table class="ds-default-table form-table">
+                <tbody>
+                    <tr>
+                        <td><label class="validation">@T("数据范围")</label></td>
+                    </tr>
+                    <tr class="noborder">
+                        <td class="vatop rowform">
+                            <div class="scope-row">
+                                <select name="dataScope" id="dataScope">
+                                    <option value="0" @if (Model.row.dataScope == 0) {<text>selected</text>}>@T("全部数据")</option>
+                                    <option value="1" @if (Model.row.dataScope == 1) {<text>selected</text>}>@T("本部门及下级")</option>
+                                    <option value="2" @if (Model.row.dataScope == 2) {<text>selected</text>}>@T("本部门")</option>
+                                    <option value="3" @if (Model.row.dataScope == 3) {<text>selected</text>}>@T("仅本人")</option>
+                                    <option value="4" @if (Model.row.dataScope == 4) {<text>selected</text>}>@T("自定义部门")</option>
+                                </select>
+                                <input type="text" name="dataDeptIds" value="@Model.row.dataDeptIds" placeholder="@T("自定义部门编号，逗号分隔（选「自定义部门」时填）")" style="width:360px;">
+                            </div>
+                            <div class="scope-note">
+                                @T("这是给业务查询用的规则：功能权限管「能不能做」，数据范围管「能看到哪些数据」。")
+                                <br>
+                                @T("业务列表需按 AdminArea.dataScopeOf(用户名) 返回的范围加 where 才会生效；管理员与超级管理员不受限制。")
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="role-actions">
+            <input type="submit" class="btn btn-primary" value="@T("保存")">
+            <a class="btn" href="@Model.areaRoute/role/index">@T("返回")</a>
+        </div>
     </form>
 </div>
+
+<style>
+    .role-tabs {
+        display: flex;
+        gap: 4px;
+        border-bottom: 1px solid #e6e6e6;
+        margin: 12px 1% 0;
+    }
+    .role-tab {
+        padding: 9px 18px;
+        color: #555;
+        border-bottom: 2px solid transparent;
+        text-decoration: none;
+    }
+    .role-tab:hover { color: #3297ff; }
+    .role-tab.active {
+        color: #3297ff;
+        border-bottom-color: #3297ff;
+        font-weight: 600;
+    }
+    .role-pane { display: none; }
+    .role-pane.active { display: block; }
+    table.form-table { width: 98% !important; margin: 16px 1%; }
+    table.form-table input.infoTableInput { width: 420px !important; max-width: 100%; }
+    .role-actions { padding: 6px 1% 24px; display: flex; gap: 10px; }
+    .btn-primary { background: #3297ff; border-color: #3297ff; color: #fff; }
+
+    /* 功能权限 */
+    .perm-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin: 14px 1% 6px;
+        padding: 10px 14px;
+        background: #f7fafd;
+        border: 1px solid #e6eef8;
+        border-radius: 4px;
+    }
+    .perm-all-label { font-weight: 600; cursor: pointer; }
+    .perm-count { color: #999; font-size: 12px; }
+    .perm-group {
+        margin: 0 1% 12px;
+        border: 1px solid #e6e6e6;
+        border-radius: 4px;
+        background: #fff;
+    }
+    .perm-group-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 14px;
+        background: #fafbfc;
+        border-bottom: 1px solid #eee;
+    }
+    .perm-group-name { font-weight: 600; color: #333; }
+    .perm-group-all { color: #666; cursor: pointer; font-size: 13px; }
+    .perm-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 7px 14px;
+        border-bottom: 1px dashed #f0f0f0;
+        flex-wrap: wrap;
+    }
+    .perm-row:last-child { border-bottom: none; }
+    .perm-res-name {
+        width: 150px;
+        color: #333;
+        font-size: 13px;
+    }
+    .perm-row-all {
+        width: 70px;
+        color: #888;
+        font-size: 12px;
+        cursor: pointer;
+    }
+    .perm-acts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 12px;
+    }
+    .perm-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 10px;
+        border: 1px solid #e0e6ed;
+        border-radius: 12px;
+        background: #fbfcfe;
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 22px;
+        user-select: none;
+    }
+    .perm-chip:hover { border-color: #3297ff; color: #3297ff; }
+    .perm-chip input, .perm-row-all input, .perm-group-all input, .perm-all-label input {
+        margin: 0;
+        vertical-align: -2px;
+    }
+    .perm-tip, .perm-tip-ok {
+        margin: 8px 1%;
+        color: #888;
+        font-size: 12px;
+    }
+    .perm-tip-ok { color: #1a7f37; font-size: 13px; }
+
+    /* 数据权限 */
+    .scope-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .scope-row select, .scope-row input[type=text] {
+        height: 32px;
+        border: 1px solid #e0e6ed;
+        border-radius: 5px;
+        padding: 0 8px;
+        font-size: 13px;
+    }
+    .scope-note {
+        margin-top: 10px;
+        color: #999;
+        font-size: 12px;
+        line-height: 20px;
+    }
+</style>
+
+<script>
+    (function () {
+        // Tab 切换
+        var tabs = document.querySelectorAll('.role-tab');
+        for (var i = 0; i < tabs.length; i++) {
+            tabs[i].addEventListener('click', function () {
+                var pane = this.getAttribute('data-pane');
+                for (var j = 0; j < tabs.length; j++) tabs[j].classList.remove('active');
+                this.classList.add('active');
+                var panes = document.querySelectorAll('.role-pane');
+                for (var k = 0; k < panes.length; k++) panes[k].classList.remove('active');
+                var target = document.getElementById(pane);
+                if (target) target.classList.add('active');
+            });
+        }
+
+        function rowBoxes(row) {
+            return row.querySelectorAll('input[name="permission[]"]');
+        }
+        function setAll(boxes, checked) {
+            for (var i = 0; i < boxes.length; i++) boxes[i].checked = checked;
+        }
+
+        // 行级「全选」
+        var rowAlls = document.querySelectorAll('.perm-row .row-all');
+        for (var r = 0; r < rowAlls.length; r++) {
+            rowAlls[r].addEventListener('change', function () {
+                var row = this.closest('.perm-row');
+                setAll(rowBoxes(row), this.checked);
+                syncGroup(row.closest('.perm-group'));
+                syncGlobal();
+            });
+        }
+
+        // 组级「全选本组」
+        var groupAlls = document.querySelectorAll('.perm-group .group-all');
+        for (var g = 0; g < groupAlls.length; g++) {
+            groupAlls[g].addEventListener('change', function () {
+                var group = this.closest('.perm-group');
+                var rows = group.querySelectorAll('.perm-row');
+                for (var i = 0; i < rows.length; i++) {
+                    var rowAll = rows[i].querySelector('.row-all');
+                    if (rowAll) rowAll.checked = this.checked;
+                    setAll(rowBoxes(rows[i]), this.checked);
+                }
+                syncGlobal();
+            });
+        }
+
+        // 全局「全部全选 / 全部取消」
+        var allBox = document.getElementById('perm-all');
+        if (allBox) {
+            allBox.addEventListener('change', function () {
+                var boxes = document.querySelectorAll('#pane-perm input[name="permission[]"]');
+                setAll(boxes, this.checked);
+                var rows = document.querySelectorAll('.perm-row .row-all');
+                for (var i = 0; i < rows.length; i++) rows[i].checked = this.checked;
+                var groups = document.querySelectorAll('.perm-group .group-all');
+                for (var j = 0; j < groups.length; j++) groups[j].checked = this.checked;
+            });
+        }
+        var noneBtn = document.getElementById('perm-none');
+        if (noneBtn) {
+            noneBtn.addEventListener('click', function () {
+                var boxes = document.querySelectorAll('#pane-perm input[name="permission[]"]');
+                setAll(boxes, false);
+                var rows = document.querySelectorAll('.perm-row .row-all, .perm-group .group-all');
+                for (var i = 0; i < rows.length; i++) rows[i].checked = false;
+                if (allBox) allBox.checked = false;
+            });
+        }
+
+        function syncGroup(group) {
+            if (!group) return;
+            var boxes = group.querySelectorAll('input[name="permission[]"]');
+            var total = boxes.length, on = 0;
+            for (var i = 0; i < total; i++) if (boxes[i].checked) on++;
+            var gb = group.querySelector('.group-all');
+            if (gb) gb.checked = total > 0 && on === total;
+        }
+        function syncGlobal() {
+            if (!allBox) return;
+            var boxes = document.querySelectorAll('#pane-perm input[name="permission[]"]');
+            var total = boxes.length, on = 0;
+            for (var i = 0; i < total; i++) if (boxes[i].checked) on++;
+            allBox.checked = total > 0 && on === total;
+        }
+
+        // 手工点单个动作时，同步行/组/全局状态
+        var boxes = document.querySelectorAll('#pane-perm input[name="permission[]"]');
+        for (var b = 0; b < boxes.length; b++) {
+            boxes[b].addEventListener('change', function () {
+                var row = this.closest('.perm-row');
+                if (row) {
+                    var rb = row.querySelector('.row-all');
+                    var rboxes = rowBoxes(row);
+                    var on = 0;
+                    for (var i = 0; i < rboxes.length; i++) if (rboxes[i].checked) on++;
+                    if (rb) rb.checked = on === rboxes.length;
+                    syncGroup(row.closest('.perm-group'));
+                }
+                syncGlobal();
+            });
+        }
+
+        syncGlobal();
+    })();
+</script>

@@ -1,4 +1,4 @@
-//! 后台 Area 的**共享上下文**（对齐 C# `Areas/Admin` 的区域级状态）。
+﻿//! 后台 Area 的**共享上下文**（对齐 C# `Areas/Admin` 的区域级状态）。
 //!
 //! 「一个控制器一个文件」（与 C# 一致）：
 //! - [`@import("home.zig")`] → `HomeController`（`/{area}/home/index`）
@@ -649,6 +649,47 @@ pub const AdminArea = struct {
         return self.canAction(c, seg, actionOfPath(c.req.path));
     }
 
+    /// 数据范围（对齐 XCode.Membership `Role.DataScope`），供**业务查询**加 where 用。
+    ///
+    /// `null` = 查不到用户/角色/未接库 → 调用方按「不过滤」处理（避免锁死）。
+    /// 返回的 `dept_ids` 是 `Role.DataDepartmentIds`（自定义范围时的部门编号，逗号分隔）。
+    pub fn dataScopeOf(self: *AdminArea, user_name: []const u8) ?DataScope {
+        const dal = self.dal orelse return null;
+        const s = self.session orelse return null;
+        if (user_name.len == 0) return null;
+
+        // User.RoleID → Role.DataScope / DataDepartmentIds
+        const uref = dal.table("User") catch return null;
+        var uw = zcode.Where.init(s.gpa);
+        defer uw.deinit();
+        _ = uw.eq("Name", .{ .text = user_name }) catch return null;
+        var uq = zcode.Query.init(s.gpa);
+        defer uq.deinit();
+        _ = uq.filterWhere(&uw);
+        _ = uq.take(1);
+        s.resetResults();
+        const users = uref.queryRows(s, &uq) catch return null;
+        if (users.len == 0) return null;
+        const role_id = columnInt(users[0], "RoleID");
+
+        const rref = dal.table("Role") catch return null;
+        var rw = zcode.Where.init(s.gpa);
+        defer rw.deinit();
+        _ = rw.eq("ID", .{ .int = role_id }) catch return null;
+        var rq = zcode.Query.init(s.gpa);
+        defer rq.deinit();
+        _ = rq.filterWhere(&rw);
+        _ = rq.take(1);
+        s.resetResults();
+        const roles = rref.queryRows(s, &rq) catch return null;
+        if (roles.len == 0) return null;
+
+        return .{
+            .scope = columnInt(roles[0], "DataScope"),
+            .dept_ids = columnText(roles[0], "DataDepartmentIds"),
+        };
+    }
+
     /// 取用户的角色权限串（`Role.Permission`）；查不到返回 `null`（= 放行）。
     fn permissionsOf(self: *AdminArea, user_name: []const u8) ?[]const u8 {
         const dal = self.dal orelse return null;
@@ -971,3 +1012,49 @@ test "区域：站内跳转只允许单斜杠相对路径" {
     try testing.expect(safeRedirect("//evil.example") == null);
     try testing.expect(safeRedirect("/a\\b") == null);
 }
+
+/// 数据范围（`Role.DataScope`）：0 全部 / 1 本部门及下级 / 2 本部门 / 3 仅本人 / 4 自定义部门。
+pub const DataScope = struct {
+    scope: i32 = 0,
+    /// 自定义范围时的部门编号（逗号分隔）
+    dept_ids: []const u8 = "",
+
+    pub const ALL: i32 = 0;
+    pub const DEPT_AND_CHILD: i32 = 1;
+    pub const DEPT: i32 = 2;
+    pub const SELF: i32 = 3;
+    pub const CUSTOM: i32 = 4;
+};
+
+/// 从查询结果行里按列名取整数（找不到列返回 0）。
+fn columnInt(row: zcode.sqlite.Row, name: []const u8) i32 {
+    for (row.names, 0..) |n, i| {
+        if (!std.mem.eql(u8, n, name)) continue;
+        if (i >= row.values.len) return 0;
+        return switch (row.values[i]) {
+            .int => |v| @intCast(v),
+            .float => |v| @intFromFloat(v),
+            .text => |t| std.fmt.parseInt(i32, t, 10) catch 0,
+            .boolean => |b| if (b) 1 else 0,
+            else => 0,
+        };
+    }
+    return 0;
+}
+
+/// 从查询结果行里按列名取文本（找不到列返回空串）。
+fn columnText(row: zcode.sqlite.Row, name: []const u8) []const u8 {
+    for (row.names, 0..) |n, i| {
+        if (!std.mem.eql(u8, n, name)) continue;
+        if (i >= row.values.len) return "";
+        return switch (row.values[i]) {
+            .text => |t| t,
+            else => "",
+        };
+    }
+    return "";
+}
+
+
+
+

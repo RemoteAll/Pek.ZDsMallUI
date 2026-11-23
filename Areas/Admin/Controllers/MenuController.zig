@@ -27,7 +27,7 @@ pub const MenuController = struct {
         .url = "{area}/menu/index",
         .icon = "&#xe6a1;",
         .order = 39,
-        .actions = &.{ "index", "edit", "save", "delete" },
+        .actions = &.{ .{ .name = "index" }, .{ .name = "edit" }, .{ .name = "save" }, .{ .name = "delete" } },
     };
     /// `GET /{area}/menu/index`：菜单树列表（目录 + 其下菜单项）。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {

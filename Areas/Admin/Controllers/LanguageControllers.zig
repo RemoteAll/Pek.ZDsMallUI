@@ -23,7 +23,7 @@ pub const CultureController = struct {
         .icon = "&#xe6a3;",
         // 排在「语言包」(93) 之上：语言是语言包的上位概念
         .order = 92,
-        .actions = &.{ "index", "save", "delete" },
+        .actions = &.{ .{ .name = "index" }, .{ .name = "save" }, .{ .name = "delete" } },
     };
     /// `GET /{area}/culture`：语言列表（名称 / 代码 / 状态 / 是否默认）。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
@@ -264,7 +264,7 @@ pub const LanguagesController = struct {
         .url = "{area}/languages/index",
         .icon = "&#xe71f;",
         .order = 93,
-        .actions = &.{ "index", "save", "delete" },
+        .actions = &.{ .{ .name = "index" }, .{ .name = "save" }, .{ .name = "delete" } },
     };
     /// 供路由挂载：删除一条语言包（挂在模块级，见文件末尾 `deleteResource`）。
     pub const deleteResourceCall = deleteResource;

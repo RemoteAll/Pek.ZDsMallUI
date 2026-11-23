@@ -1,4 +1,4 @@
-//! 后台菜单注册（对齐 C# 的 `[DHMenu]` 声明 + 菜单树）。
+﻿//! 后台菜单注册（对齐 C# 的 `[DHMenu]` 声明 + 菜单树）。
 //!
 //! C# 的做法：控制器上标 `[DHMenu(93, ParentMenuName = "Settings", CurrentMenuUrl = "~/{area}/Languages", ...)]`，
 //! 框架在启动时把声明汇总进菜单表，`DashBoard` 视图拿 `List<MenuTree>` 渲染顶部导航 + 左侧菜单。
@@ -55,20 +55,48 @@ pub const Item = struct {
     order: i32 = 0,
     /// 是否可见（`false` = 注册但隐藏，便于灰度）
     visible: bool = true,
-    /// 该菜单可授予的**操作动作**（控制器里的方法名，如 `index`/`edit`/`save`/`delete`）。
+    /// 该菜单可授予的**操作动作**（控制器里的方法名，如 `index`/`edit`/`save`/`delete`/`export`/`approve`）。
     ///
     /// 角色权限按 `{控制器}.{动作}` 授权（如 `article.delete`），空 = 只授予 `index`（只看不改）。
-    /// 声明在控制器上（与 `menu` 同处），后台「角色权限管理」自动按动作列渲染勾选框。
-    actions: []const []const u8 = &.{},
+    /// **动作数量不限**（导出 / 审核 / 上架 / 批量…随便加），视图按 chips 自动换行渲染。
+    actions: []const Action = &.{},
 };
 
-/// 权限判定里的固定规范动作名（视图/控制器共用同一套中文标题）。
+/// 一个可授权的操作动作。
+pub const Action = struct {
+    /// 动作名（写进 `Role.Permission`：`{控制器}.{name}`）
+    name: []const u8,
+    /// 中文标题（空 = 用 `actionTitle(name)` 的内置映射，再兜底用名字本身）
+    title: []const u8 = "",
+};
+
+/// 快捷构造：`.actions = &.{ menu.act("index"), menu.act("export") }`
+pub fn act(name: []const u8) Action {
+    return .{ .name = name };
+}
+
+/// 动作名的内置中文标题（新增动作只在这里补一行；控制器也可以直接给 `Action.title`）。
 pub const ACTION_TITLES = [_]struct { name: []const u8, title: []const u8 }{
     .{ .name = "index", .title = "查看" },
     .{ .name = "edit", .title = "编辑" },
     .{ .name = "save", .title = "保存" },
     .{ .name = "delete", .title = "删除" },
+    .{ .name = "export", .title = "导出" },
+    .{ .name = "import", .title = "导入" },
+    .{ .name = "approve", .title = "审核" },
+    .{ .name = "publish", .title = "上架" },
+    .{ .name = "unpublish", .title = "下架" },
+    .{ .name = "print", .title = "打印" },
 };
+
+/// 动作的显示标题：控制器显式给的 `title` 优先，其次内置映射，最后用名字本身。
+pub fn actionTitle(a: Action) []const u8 {
+    if (a.title.len > 0) return a.title;
+    for (ACTION_TITLES) |t| {
+        if (std.ascii.eqlIgnoreCase(t.name, a.name)) return t.title;
+    }
+    return a.name;
+}
 
 /// 菜单注册表（线程安全：注册在启动期，读取在请求期）。
 pub const Registry = struct {
@@ -368,15 +396,23 @@ test "菜单：重复注册同名项是 upsert，不产生重复" {
     });
 }
 
-/// 深拷贝动作名列表（注册表持有自己的一份，调用方的 `menu` 常量可能来自只读数据段）。
-fn dupeActions(allocator: std.mem.Allocator, actions: []const []const u8) ![]const []const u8 {
+/// 深拷贝动作列表（注册表持有自己的一份，调用方的 `menu` 常量可能来自只读数据段）。
+fn dupeActions(allocator: std.mem.Allocator, actions: []const Action) ![]const Action {
     if (actions.len == 0) return &.{};
-    const out = try allocator.alloc([]const u8, actions.len);
-    for (actions, 0..) |a, i| out[i] = try allocator.dupe(u8, a);
+    const out = try allocator.alloc(Action, actions.len);
+    for (actions, 0..) |a, i| {
+        out[i] = .{
+            .name = try allocator.dupe(u8, a.name),
+            .title = try allocator.dupe(u8, a.title),
+        };
+    }
     return out;
 }
 
-fn freeActions(allocator: std.mem.Allocator, actions: []const []const u8) void {
-    for (actions) |a| allocator.free(a);
+fn freeActions(allocator: std.mem.Allocator, actions: []const Action) void {
+    for (actions) |a| {
+        allocator.free(a.name);
+        allocator.free(a.title);
+    }
     if (actions.len > 0) allocator.free(actions);
 }

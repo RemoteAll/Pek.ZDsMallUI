@@ -27,7 +27,8 @@ pub const RoleController = struct {
         .url = "{area}/role/index",
         .icon = "&#xe67b;",
         .order = 38,
-        .actions = &.{ "index", "edit", "save", "delete" },
+        // 动作**不限 4 个**：导出 / 审核 / 上架…随意加，权限表按 chips 自动换行
+        .actions = &.{ menu_dep.act("index"), menu_dep.act("edit"), menu_dep.act("save"), menu_dep.act("delete") },
     };
     /// `GET /{area}/role/index`：角色列表。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
@@ -86,6 +87,9 @@ pub const RoleController = struct {
         // 权限：界面上是复选框 `permission[]`（可多值），存盘为逗号分隔的控制器段串。
         // 兼容旧的手填方式（单值 `permission` 且不是复选框）。
         const permission = try collectPermissions(c.arena, c);
+        // 数据范围（角色级，对齐 XCode.Membership `Role.DataScope`）
+        const data_scope = std.fmt.parseInt(i32, std.mem.trim(u8, c.formValue("dataScope") orelse "0", " \t\r\n"), 10) catch 0;
+        const data_dept_ids = std.mem.trim(u8, c.formValue("dataDeptIds") orelse "", " \t\r\n");
 
         if (self.dal == null or self.session == null) {
             return renderSaveError(self, c, id, .{ .id = id, .name = name, .sort = sort, .enable = enable, .permission = permission }, "数据库未启用，无法保存角色");
@@ -100,6 +104,8 @@ pub const RoleController = struct {
             .sort = sort,
             .enable = enable,
             .permission = permission,
+            .data_scope = data_scope,
+            .data_dept_ids = data_dept_ids,
         }) catch |err| {
             const message = switch (err) {
                 error.DuplicateName => "角色名称已存在，请换一个",
@@ -150,6 +156,11 @@ const RoleRow = struct {
     is_system: bool = false,
     permission: []const u8 = "",
     sort: i32 = 0,
+    /// 数据范围：0 全部 / 1 本部门及下级 / 2 本部门 / 3 仅本人 / 4 自定义
+    /// （对齐 XCode.Membership `Role.DataScope`，业务查询据此加 where）
+    data_scope: i32 = 0,
+    /// 自定义范围时的部门编号列表（逗号分隔，`Role.DataDepartmentIds`）
+    data_dept_ids: []const u8 = "",
 };
 
 const SaveInput = struct {
@@ -158,6 +169,10 @@ const SaveInput = struct {
     sort: i32,
     enable: bool,
     permission: []const u8,
+    /// 数据范围：0 全部 / 1 本部门及下级 / 2 本部门 / 3 仅本人 / 4 自定义
+    data_scope: i32 = 0,
+    /// 自定义范围时的部门编号（逗号分隔）
+    data_dept_ids: []const u8 = "",
 };
 
 fn buildBase(self: *admin_area.AdminArea, builder: *zzig.web.ObjectBuilder, c: *router.Ctx, title: []const u8) !void {
@@ -186,6 +201,8 @@ fn putRole(builder: *zzig.web.ObjectBuilder, row: RoleRow, id: i32) !void {
     try b.boolean("isSystem", row.is_system);
     try b.str("permission", row.permission);
     try b.int("sort", row.sort);
+    try b.int("dataScope", row.data_scope);
+    try b.str("dataDeptIds", row.data_dept_ids);
     try builder.put("row", b.finish());
 }
 
@@ -259,13 +276,11 @@ fn permissionTree(
             const title = columnText(child, "DisplayName");
 
             var acts: std.ArrayList(zzig.web.Value) = .empty;
-            for (menu_dep.ACTION_TITLES) |at| {
-                const allowed = declDeclares(decls, key, at.name);
+            for (declActions(decls, key)) |a| {
                 var ab = zzig.web.ObjectBuilder.init(arena);
-                try ab.str("name", at.name);
-                try ab.str("title", at.title);
-                try ab.boolean("allowed", allowed);
-                try ab.boolean("check", allowed and admin_area.AdminArea.permissionAllows(current, key, at.name));
+                try ab.str("name", a.name);
+                try ab.str("title", menu_dep.actionTitle(a));
+                try ab.boolean("check", admin_area.AdminArea.permissionAllows(current, key, a.name));
                 try acts.append(arena, ab.finish());
             }
 
@@ -287,21 +302,19 @@ fn permissionTree(
     return groups.toOwnedSlice(arena);
 }
 
-/// 控制器（按 `name` 或 URL 控制器段匹配）是否声明了某个动作。
+/// 控制器（按 `name` 或 URL 控制器段匹配）声明的动作清单。
 /// 没声明任何动作的控制器 = 只有 `index`（只看不改）。
-fn declDeclares(decls: []const menu_dep.Item, key: []const u8, action: []const u8) bool {
+fn declActions(decls: []const menu_dep.Item, key: []const u8) []const menu_dep.Action {
     for (decls) |d| {
         const same = std.ascii.eqlIgnoreCase(d.name, key) or std.ascii.eqlIgnoreCase(controllerOfUrl(d.url), key);
         if (!same) continue;
-        if (d.actions.len == 0) return std.ascii.eqlIgnoreCase(action, "index");
-        for (d.actions) |a| {
-            if (std.ascii.eqlIgnoreCase(a, action)) return true;
-        }
-        return false;
+        if (d.actions.len > 0) return d.actions;
+        break;
     }
-    // 注册表里找不到（库里自带页面可能没走 addMenu）→ 只给查看，避免误放开写操作
-    return std.ascii.eqlIgnoreCase(action, "index");
+    return &only_index;
 }
+
+const only_index = [_]menu_dep.Action{.{ .name = "index" }};
 
 /// `{area}/role/index` → `role`；`{area}/home/dashboard` → `home`；解析不出返回空串。
 fn controllerOfUrl(url: []const u8) []const u8 {
@@ -375,6 +388,8 @@ fn loadRole(self: *admin_area.AdminArea, id: i32) !RoleRow {
         .is_system = columnInt(row, "IsSystem") != 0,
         .permission = try self.allocator.dupe(u8, columnText(row, "Permission")),
         .sort = columnInt(row, "Sort"),
+        .data_scope = columnInt(row, "DataScope"),
+        .data_dept_ids = try self.allocator.dupe(u8, columnText(row, "DataDepartmentIds")),
     };
 }
 
@@ -404,6 +419,8 @@ fn saveRole(self: *admin_area.AdminArea, input: SaveInput) !void {
             zcode.dbtable.field("IsSystem", .{ .int = 0 }),
             zcode.dbtable.field("Sort", .{ .int = input.sort }),
             zcode.dbtable.field("Permission", .{ .text = input.permission }),
+            zcode.dbtable.field("DataScope", .{ .int = input.data_scope }),
+            zcode.dbtable.field("DataDepartmentIds", .{ .text = input.data_dept_ids }),
             // 表上这两列 NOT NULL 且无默认（C# 由拦截器填），`TableRef.insert` 不自动带 → 必须显式传
             zcode.dbtable.field("CreateTime", .{ .datetime = now }),
             zcode.dbtable.field("UpdateTime", .{ .datetime = now }),
@@ -430,6 +447,8 @@ fn saveRole(self: *admin_area.AdminArea, input: SaveInput) !void {
         zcode.dbtable.field("Enable", .{ .int = if (input.enable) 1 else 0 }),
         zcode.dbtable.field("Sort", .{ .int = input.sort }),
         zcode.dbtable.field("Permission", .{ .text = input.permission }),
+        zcode.dbtable.field("DataScope", .{ .int = input.data_scope }),
+        zcode.dbtable.field("DataDepartmentIds", .{ .text = input.data_dept_ids }),
     }, &w2, 0);
 }
 

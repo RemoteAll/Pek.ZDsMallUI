@@ -25,7 +25,7 @@ pub const ConfigController = struct {
         .url = "{area}/config/index",
         .icon = "&#xe614;",
         .order = 20,
-        .actions = &.{ "index", "save" },
+        .actions = &.{ .{ .name = "index" }, .{ .name = "save" } },
     };
     /// `GET /{area}/config/index`：渲染设置页。
     pub fn index(raw: ?*anyopaque, c: *router.Ctx) anyerror!ActionResult {
