@@ -63,6 +63,8 @@ pub const DEFAULT_SETTINGS = [_]SettingsEntry{
     .{ .key = "seoDescribe", .store_key = "SeoDescribe", .default = "" },
     .{ .key = "registration", .store_key = "Registration", .default = "" },
     .{ .key = "copyright", .store_key = "Copyright", .default = "" },
+    // 站点 Logo（前台头部品牌图标；空 = 前台回退成站点名首字母圆标）
+    .{ .key = "logo", .store_key = "Logo", .default = "" },
     .{ .key = "customerTel", .store_key = "CustomerTel", .default = "" },
     .{ .key = "customerEmail", .store_key = "CustomerEmail", .default = "" },
     .{ .key = "urlSuffix", .store_key = "UrlSuffix", .default = ".html" },
@@ -89,6 +91,7 @@ pub fn formKeyToSetting(key: []const u8) ?[]const u8 {
         .{ "SeoDescribe", "SeoDescribe" },
         .{ "Registration", "Registration" },
         .{ "Copyright", "Copyright" },
+        .{ "Logo", "Logo" },
         .{ "CustomerTel", "CustomerTel" },
         .{ "CustomerEmail", "CustomerEmail" },
         .{ "UrlSuffix", "UrlSuffix" },

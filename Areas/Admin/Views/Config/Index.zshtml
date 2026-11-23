@@ -86,6 +86,19 @@
                                 <span class="err"></span>
                             </dd>
                         </dl>
+                        @* Logo：存的是**图片地址**（可手填 CDN 地址，也可用右侧按钮上传到本站）。
+                           前台头部有 Logo 就显示图片，没有则回退成站点名首字母圆标。 *@
+                        <dl>
+                            <dt>@T("站点Logo")</dt>
+                            <dd>
+                                <input id="Logo" name="Logo" value="@Model.logo" class="input-txt" type="text" placeholder="@T("图片地址；或点右侧「上传」")">
+                                <span class="err"></span>
+                                <input id="logoFile" type="file" accept="image/*" style="display:none">
+                                <a href="javascript:void(0)" class="dsui-btn-edit" id="logoUploadBtn">@T("上传图片")</a>
+                                <p class="logo-tip">@T("建议正方形 PNG/SVG，高度 32~64 像素；留空则用站点名首字母。")</p>
+                                <img id="logoPreview" class="logo-preview" alt="" src="@Model.logo">
+                            </dd>
+                        </dl>
                     </div>
                 </div>
                 @* 每种已启用语言一个 Tab：字段名 `{语言ID}.字段` → `SiteInfoLan` 表（对齐 C#） *@
@@ -227,5 +240,51 @@
                 });
             })(i);
         }
+    })();
+
+    // ————— 站点 Logo 上传 —————
+    // 复用 UEditor 的图片上传接口（`/fileuploader?action=uploadimage`，返回
+    // `{"state":"SUCCESS","url":"/upload/....png"}`），成功只回填 URL + 预览，
+    // **不自动保存** —— 与其它字段一致，仍由底部「保存」统一提交。
+    (function () {
+        var btn = document.getElementById('logoUploadBtn');
+        var file = document.getElementById('logoFile');
+        var input = document.getElementById('Logo');
+        var preview = document.getElementById('logoPreview');
+        if (!btn || !file || !input) { return; }
+
+        function refresh() {
+            var url = (input.value || '').trim();
+            if (!preview) { return; }
+            if (url) { preview.src = url; preview.style.display = ''; }
+            else { preview.removeAttribute('src'); preview.style.display = 'none'; }
+        }
+        input.addEventListener('change', refresh);
+        refresh();
+
+        btn.addEventListener('click', function () { file.click(); });
+        file.addEventListener('change', function () {
+            var picked = file.files && file.files[0];
+            if (!picked) { return; }
+            var body = new FormData();
+            body.append('upfile', picked);
+            btn.textContent = '上传中…';
+            fetch('/fileuploader?action=uploadimage', { method: 'POST', body: body, credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data && (data.state === 'SUCCESS' || data.state === 'SUCCESS ') && data.url) {
+                        input.value = data.url;
+                        refresh();
+                        btn.textContent = '已上传（记得保存）';
+                    } else {
+                        btn.textContent = '上传图片';
+                        alert('上传失败：' + ((data && (data.state || data.message)) || '未知原因'));
+                    }
+                })
+                .catch(function (err) {
+                    btn.textContent = '上传图片';
+                    alert('上传失败：' + err);
+                });
+        });
     })();
 </script>

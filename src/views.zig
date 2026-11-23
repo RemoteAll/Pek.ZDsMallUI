@@ -404,7 +404,9 @@ test "视图：内置源直接渲染（磁盘无副本，对齐 C# 预编译视�
         .fail => |message| std.debug.print("[builtin-view-test] {s}\n", .{message}),
     }
     try testing.expect(outcome == .html);
-    try testing.expect(std.mem.indexOf(u8, outcome.html, "ncap-form-default") != null);
+    // 欢迎页已改造为「服务状态卡」版式（原先的快捷入口表单页 ncap-form-default 已移除），
+    // 基线同步改为断言新版式的标志性容器。
+    try testing.expect(std.mem.indexOf(u8, outcome.html, "svc-grid") != null);
 }
 
 test "视图：磁盘文件优先于内置源（项目覆盖）" {

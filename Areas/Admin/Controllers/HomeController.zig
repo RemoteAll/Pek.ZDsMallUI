@@ -11,6 +11,7 @@ const zzig = @import("zzig");
 const area_mod = @import("../../../src/deps.zig").area;
 const admin_area = @import("AdminArea.zig");
 const version = @import("../../../src/deps.zig").version;
+const sysinfo = @import("../../../src/deps.zig").sysinfo;
 
 const router = zzig.web.router;
 const ActionResult = zzig.web.controller.ActionResult;
@@ -133,15 +134,13 @@ pub const HomeController = struct {
         try menu_config.str("url", try std.fmt.allocPrint(arena, "{s}/config/index", .{route}));
         try menu_config.str("desc", "站点名称、SEO、客服、页脚与自定义 HTML");
 
-        var menu_login = zzig.web.ObjectBuilder.init(arena);
-        try menu_login.str("name", "登录页");
-        try menu_login.str("url", try std.fmt.allocPrint(arena, "{s}/login/index", .{route}));
-        try menu_login.str("desc", "后台登录入口（账号由 AdminBackend 提供）");
-
         var menu_ueditor = zzig.web.ObjectBuilder.init(arena);
         try menu_ueditor.str("name", "UEditor 配置");
         try menu_ueditor.str("url", "/fileuploader?action=config");
         try menu_ueditor.str("desc", "富文本编辑器后端配置（JSON，前端初始化用）");
+
+        // 快捷入口：只放**登录后真正会用**的页面。
+        // 「登录页」不再列出 —— 已登录的管理员点它只会回到登录页（自己的账号已登录，没有任何操作价值）。
 
         var builder = zzig.web.ObjectBuilder.init(arena);
         try builder.str("title", try std.fmt.allocPrint(arena, "管理后台 - {s}", .{display_name}));
@@ -153,14 +152,48 @@ pub const HomeController = struct {
         try builder.str("uploadPrefix", self.upload_prefix);
         try builder.str("version", version.VERSION);
         try builder.str("dashboardUrl", try std.fmt.allocPrint(arena, "{s}/home/dashboard", .{route}));
-        try builder.list("menus", &.{ menu_config.finish(), menu_login.finish(), menu_ueditor.finish() });
+        try builder.list("menus", &.{ menu_config.finish(), menu_ueditor.finish() });
         try builder.boolean("hasMenus", true);
+
+        // 服务状态（欢迎页的卡片区）：进程资源快照。取数失败不影响页面（视图显示「—」）。
+        const snap = sysinfo.collect(arena, self.io);
+        try builder.boolean("statOk", snap.ok);
+        try builder.int("statPid", @intCast(snap.pid));
+        try builder.int("statThreads", @intCast(snap.threads));
+        try builder.int("statHandles", @intCast(snap.handles));
+        try builder.str("statRss", try sysinfo.formatBytes(arena, snap.rss_bytes));
+        try builder.str("statCpu", try std.fmt.allocPrint(arena, "{d:.1}%", .{snap.cpu_percent}));
+        try builder.str("statUptime", try sysinfo.formatUptime(arena, snap.up_seconds));
+        try builder.str("statStartAt", try formatUnix(arena, snap.start_unix));
+        try builder.str("statIoRead", try sysinfo.formatBytes(arena, snap.io_read_bytes));
+        try builder.str("statIoWrite", try sysinfo.formatBytes(arena, snap.io_write_bytes));
+        try builder.str("statEnv", @tagName(@import("builtin").os.tag));
 
         // 左侧菜单分组：由**菜单注册表**生成（`ui.addMenu(...)` 注册的项会自动出现），
         // 这里不再硬编码分组 —— `AdminArea.renderView` 会注入 `groups`（含项目追加的菜单）。
         return builder.finish();
     }
 };
+
+
+/// unix 秒 → `2026-11-23 09:29:42`（本地时区；0 表示未知）。
+fn formatUnix(arena: std.mem.Allocator, unix_seconds: i64) ![]const u8 {
+    if (unix_seconds <= 0) return arena.dupe(u8, "—");
+    const seconds: u64 = @intCast(unix_seconds);
+    const epoch = std.time.epoch.EpochSeconds{ .secs = seconds };
+    const day = epoch.getEpochDay();
+    const year_day = day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const seconds_day = epoch.getDaySeconds();
+    return std.fmt.allocPrint(arena, "{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        seconds_day.getHoursIntoDay(),
+        seconds_day.getMinutesIntoHour(),
+        seconds_day.getSecondsIntoMinute(),
+    });
+}
 
 /// 构造左侧二级菜单项（`name` / `url` / `icon`）。
 fn menuItem(arena: std.mem.Allocator, name: []const u8, url: []const u8, icon: []const u8) !zzig.web.Value {

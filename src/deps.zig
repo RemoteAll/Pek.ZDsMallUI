@@ -19,5 +19,6 @@ pub const menu_db = @import("menu_db.zig");
 pub const password = @import("password.zig");
 pub const sqlite_backend = @import("sqlite_backend.zig");
 pub const sqlite_session_store = @import("sqlite_session_store.zig");
+pub const sysinfo = @import("sysinfo.zig");
 pub const views = @import("views.zig");
 pub const version = @import("version.zig");

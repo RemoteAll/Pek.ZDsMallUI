@@ -237,7 +237,11 @@
                 subItems.forEach(function (x) { x.classList.remove('open'); });
             });
 
-            // 初始状态：地址栏带 hash 就直接打开对应子页；否则展开第一组并高亮欢迎页
+            // 初始状态：地址栏带 hash 就直接打开对应子页；否则展开第一组并高亮欢迎页。
+            // `__landingUrl` 告诉子页「我是不是默认落地页」——默认页不得往地址栏写 hash，
+            // 保持 `/admin/home/index` 干净（诉求：默认进入不该出现 `#/admin/home/dashboard`）；
+            // 其它子页仍写 hash，在子页里点新增/编辑、翻页后刷新仍停在原地。
+            window.__landingUrl = items.length > 0 ? (items[0].getAttribute('data-url') || '') : '';
             if (!activateByHash(location.hash)) {
                 if (groups.length > 0) { showGroup(groups[0].getAttribute('data-group')); }
                 if (items.length > 0) { items[0].classList.add('selected'); }

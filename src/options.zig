@@ -1130,7 +1130,8 @@ test "门面：起服务后四个入口都可访问（端到端冒烟）" {
     // 欢迎页（iframe 内容）：区域名与快捷入口在这里
     const dashboard = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/home/dashboard" });
     try testing.expectEqual(std.http.Status.ok, dashboard.status);
-    try testing.expect(std.mem.indexOf(u8, dashboard.body, "Biz") != null);
+    // 欢迎页改成服务状态卡后不再输出区域名，基线改为断言状态卡容器
+    try testing.expect(std.mem.indexOf(u8, dashboard.body, "svc-grid") != null);
 
     // 设置页
     const config = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/config/index" });

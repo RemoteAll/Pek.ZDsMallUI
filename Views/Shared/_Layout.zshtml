@@ -50,6 +50,18 @@
                 if (!isAreaPage) { return; }
 
                 if (window.parent && window.parent !== window) {
+                    // 默认落地页（框架页首项，通常是欢迎页）**不写 hash**：
+                    // 地址栏保持 `/admin/home/index` 干净；刷新依旧落到同一页，功能不受影响。
+                    // 非默认子页照旧写 hash —— 子在页里点新增/编辑、翻页后刷新仍停在原地。
+                    var landing = '';
+                    try { landing = window.parent.__landingUrl || ''; } catch (e) { landing = ''; }
+                    if (landing && current === landing) {
+                        if (window.parent.location.hash) {
+                            window.parent.history.replaceState(null, '', window.parent.location.pathname + window.parent.location.search);
+                            window.parent.dispatchEvent(new window.Event('hashchange'));
+                        }
+                        return;
+                    }
                     var target = '#' + current;
                     if (window.parent.location.hash !== target) {
                         // replaceState 不触发 hashchange，手动派发一次让框架页同步菜单高亮
@@ -66,7 +78,15 @@
         })();
     </script>
     <!-- 服务端耗时（右下角小角标）：渲染入口 → 输出完，不含网络 -->
-    <div class="server-timing" title="服务端渲染耗时：renderView 入口 → 视图输出完成，不含网络与前置取数">渲染 <!--render-ms--> ms</div>
+    @* 右下角角标顺带显示「程序版本 + 编译用 Zig 版本」：运维一眼看到跑的是哪一版，
+       也便于对外展示本项目由 ziglang 编译（零依赖、单文件）。 *@
+    <div class="server-timing" title="服务端渲染耗时：renderView 入口 → 视图输出完成，不含网络与前置取数；左侧为程序版本与编译用 Zig 版本">
+        <span class="st-app">v@Model.version</span>
+        <span class="st-sep">·</span>
+        <span class="st-zig">Zig @Model.zigVersion</span>
+        <span class="st-sep">·</span>
+        <span>渲染 <!--render-ms--> ms</span>
+    </div>
     <style>
         .server-timing {
             position: fixed; right: 10px; bottom: 8px; z-index: 99;
@@ -74,6 +94,9 @@
             background: rgba(0, 0, 0, .06); color: #6b7280; pointer-events: none;
             font-family: ui-monospace, Consolas, monospace;
         }
+        .server-timing .st-sep { margin: 0 5px; color: #c3c7ce; }
+        .server-timing .st-app { color: #4b5563; }
+        .server-timing .st-zig { color: #b45309; }
     </style>    @await RenderSectionAsync("Scripts", false)
 </body>
 </html>

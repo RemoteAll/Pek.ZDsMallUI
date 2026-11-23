@@ -87,6 +87,12 @@ pub const AdminArea = struct {
     /// 业务想用自己命名的表（如 `SysUser`）就 `setTables`，不必改框架源码。
     /// 详见 `src/membership_tables.zig`（为何只开放这三张、换表时列名仍要兼容）。
     tables: @import("../../../src/membership_tables.zig").Tables = .{},
+    /// **业务应用**的版本号（后台底部展示用）。
+    ///
+    /// 不填时回退到本库的 `version.VERSION`（`0.1.0` 之类）—— 那只是**框架库**的版本，
+    /// 运维看到的「这个站是哪个版本」应当是**应用自己的**版本，故业务项目启动时用
+    /// [`setAppVersion`] 覆盖它（例：`ui.admin().setAppVersion(opts.version)`）。
+    app_version: ?[]const u8 = null,
     /// 已挂载的控制器（生命周期由本对象持有）
     controllers: std.ArrayList(*controller_mod.Controller) = .empty,
     /// 退役的旧快照（读线程可能还在用，延迟到 `deinit` 释放）
@@ -258,6 +264,15 @@ pub const AdminArea = struct {
     /// 约束见 `src/membership_tables.zig`：**列名仍要兼容**（登录、权限、数据范围都按列名读写）。
     pub fn setTables(self: *AdminArea, tables: @import("../../../src/membership_tables.zig").Tables) void {
         self.tables = tables;
+    }
+
+    /// 设置**业务应用**版本号（后台底部展示；不设则回退框架库版本）。
+    ///
+    /// ```zig
+    /// ui.admin().setAppVersion(app_version);
+    /// ```
+    pub fn setAppVersion(self: *AdminArea, version: []const u8) void {
+        self.app_version = version;
     }
 
     /// 当前用户的后台界面语言：用户偏好 → 默认语言 → 0。
@@ -869,7 +884,9 @@ pub fn renderView(
     const started = nowMillis();
     // 与用户语言相关的装配统一放这里：所有后台页面的 `@Model.lang.*` 都能用
     const localized = withLanguage(self, c.arena, currentUser(c), model) catch model;
-    return switch (self.views.render(c.arena, self.areaName(), controller, view, localized)) {
+    // 构建信息（程序版本 / Zig 版本）无条件注入：后台底部要展示，且与是否启用多语言无关
+    const decorated = withBuildInfo(self, c.arena, localized) catch localized;
+    return switch (self.views.render(c.arena, self.areaName(), controller, view, decorated)) {
         .html => |html| .{ .response = adminHtml(c.arena, try injectRenderMs(c.arena, html, nowMillis() - started)) },
         .fail => |message| blk: {
             zzig.Logger.err("[ZDsMallUI] {s}", .{message});
@@ -922,6 +939,25 @@ fn injectRenderMs(arena: std.mem.Allocator, html: []const u8, ms: i64) ![]const 
 pub fn langObject(self: *AdminArea, arena: std.mem.Allocator, user_name: []const u8) !zzig.web.Value {
     const store = self.languages orelse return .{ .object = &.{} };
     return store.buildLangObject(arena, self.languageIdFor(user_name));
+}
+
+/// 注入**构建信息**（`version` / `zigVersion`）—— 后台底部展示用。
+///
+/// 与 `withLanguage` 分开：多语言库没启用时 `withLanguage` 会原样返回 model，
+/// 而版本号任何情况下都该显示。
+fn withBuildInfo(self: *AdminArea, arena: std.mem.Allocator, model: zzig.web.Value) !zzig.web.Value {
+    var builder = zzig.web.ObjectBuilder.init(arena);
+    switch (model) {
+        .object => |fields| {
+            for (fields) |field| try builder.put(field.name, field.value);
+        },
+        else => {},
+    }
+    // 业务应用版本优先（见 `app_version`）；没设时才是框架库自己的版本
+    const app_version = self.app_version orelse @import("../../../src/version.zig").VERSION;
+    try builder.put("version", .{ .string = app_version });
+    try builder.put("zigVersion", .{ .string = @import("../../../src/version.zig").ZIG_VERSION });
+    return builder.finish();
 }
 
 fn withLanguage(

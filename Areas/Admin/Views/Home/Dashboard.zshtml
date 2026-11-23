@@ -1,57 +1,167 @@
 @{
-    Layout = null;
+    Layout = "Shared/_Layout";
 }
-@* 后台**欢迎页**（iframe 内显示；对应 C# `Areas/Admin/Views/Main/Index.cshtml` 的位置）。
-   沿用 C# 原版 `admin.css` 的 `.page / .fixed-bar / .ncap-form-default` 版式。 *@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta content="width=device-width, initial-scale=1" name="viewport">
-    <title>@T("欢迎页") - @Model.displayName</title>
-    <link rel="stylesheet" href="~/static/admin/css/admin.css">
-    <link rel="stylesheet" href="~/static/plugins/js/layui/css/layui.css">
-</head>
-<body>
-    <div class="page">
-        <div class="fixed-bar">
-            <div class="item-title">
-                <div class="subject">
-                    <h3>@Model.displayName</h3>
-                    <h5>@T("当前用户")：@Model.userName</h5>
+@* 控制台欢迎页：**服务状态卡**（参考星尘面板的版式）。
+   指标来自 `src/sysinfo.zig`（Windows 走 psapi/kernel32，Linux 读 /proc/self），
+   取数失败时卡片显示「—」，不影响页面其它部分。 *@
+<div class="page">
+    <div class="fixed-bar">
+        <div class="item-title">
+            <div class="subject">
+                <h3>@T("控制台")</h3>
+            </div>
+            <ul class="tab-base ds-row">
+                <li><a href="@Model.areaRoute/home/index"><span>@T("框架页")</span></a></li>
+                <li><a href="javascript:void(0)" class="current"><span>@T("服务状态")</span></a></li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="svc-wrap">
+        <div class="svc-card">
+            <div class="svc-head">
+                <h4>@T("服务状态")</h4>
+                @* 能渲染出本页即说明进程活着；取数失败时各卡片显「—」（后端已兜底），
+                   故此处不用可选布尔做分支（@if 只接受布尔）。 *@
+                <span class="svc-badge ok"><i></i>@T("运行中")</span>
+            </div>
+
+            <div class="svc-grid">
+                <div class="svc-item">
+                    <b class="svc-value svc-text">@Model.displayName</b>
+                    <span class="svc-label">@T("服务名")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value">@Model.statUptime</b>
+                    <span class="svc-label">@T("运行时长")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value">@Model.statCpu</b>
+                    <span class="svc-label">@T("进程 CPU（平均）")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value">@Model.statRss</b>
+                    <span class="svc-label">@T("进程内存")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value">@Model.statThreads</b>
+                    <span class="svc-label">@T("线程数")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value">@Model.statHandles</b>
+                    <span class="svc-label">@T("句柄 / 文件描述符")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value">@Model.statPid</b>
+                    <span class="svc-label">@T("进程 ID")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value svc-text">@Model.statStartAt</b>
+                    <span class="svc-label">@T("启动时间")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value">@Model.statIoRead</b>
+                    <span class="svc-label">@T("累计磁盘读")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value">@Model.statIoWrite</b>
+                    <span class="svc-label">@T("累计磁盘写")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value svc-text">@Model.statEnv</b>
+                    <span class="svc-label">@T("运行平台")</span>
+                </div>
+                <div class="svc-item">
+                    <b class="svc-value svc-text">@Model.version</b>
+                    <span class="svc-label">@T("版本")</span>
                 </div>
             </div>
         </div>
 
-        <div class="ncap-form-default">
-            <dl>
-                <dt>@T("站点名称")</dt>
-                <dd>@Model.siteName</dd>
-            </dl>
-            <dl>
-                <dt>@T("当前区域")</dt>
-                <dd><code>@Model.areaName</code>（<code>@Model.areaRoute</code> @T("路由前缀，可随配置改名")）</dd>
-            </dl>
-            <dl>
-                <dt>@T("上传目录")</dt>
-                <dd>@Model.uploadPrefix</dd>
-            </dl>
-            <dl>
-                <dt>@T("后台版本")</dt>
-                <dd>@Model.version</dd>
-            </dl>
-            @if (Model.hasMenus) {
-            <dl>
-                <dt>@T("快捷入口")</dt>
-                <dd>
-                    @foreach (var menu in Model.menus) {
-                    <a href="@menu.url" class="btn" title="@menu.desc" style="margin:0 8px 8px 0;">@menu.name</a>
-                    }
-                </dd>
-            </dl>
-            }
+        <div class="svc-card">
+            <div class="svc-head">
+                <h4>@T("快捷入口")</h4>
+                <span class="svc-hint">@T("当前用户：")@Model.userName</span>
+            </div>
+            <div class="svc-links">
+                @foreach (var m in Model.menus) {
+                <a class="svc-link" href="@m.url">
+                    <b>@m.name</b>
+                    <span>@m.desc</span>
+                </a>
+                }
+            </div>
         </div>
     </div>
-</body>
-</html>
+
+    <style asp-location="true">
+        .svc-wrap { padding: 16px 10px 28px; }
+        .svc-card {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 4px rgba(0, 21, 41, .08);
+            padding: 16px 18px 18px;
+            margin-bottom: 16px;
+        }
+        .svc-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .svc-head h4 { font-size: 15px; font-weight: 600; color: #1f2d3d; }
+        .svc-hint { font-size: 12px; color: #909399; }
+        .svc-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 14px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .svc-badge i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        .svc-badge.ok { color: #1a7f37; background: #e8f7ec; }
+        .svc-badge.bad { color: #c0392b; background: #fdecea; }
+
+        .svc-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+            gap: 10px;
+        }
+        .svc-item {
+            background: #f7f8fa;
+            border-radius: 8px;
+            padding: 14px 8px;
+            text-align: center;
+            min-height: 74px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .svc-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1f2d3d;
+            line-height: 1.2;
+            word-break: break-all;
+        }
+        /* 文本类指标用小一号，避免「服务名 / 启动时间」撑破格子 */
+        .svc-value.svc-text { font-size: 15px; }
+        .svc-label { margin-top: 6px; font-size: 12px; color: #909399; }
+
+        .svc-links { display: flex; flex-wrap: wrap; gap: 10px; }
+        .svc-link {
+            flex: 1 1 220px;
+            display: block;
+            padding: 12px 14px;
+            border: 1px solid #ebeef5;
+            border-radius: 8px;
+            background: #fbfcfe;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        .svc-link:hover { border-color: #3297ff; box-shadow: 0 2px 8px rgba(50, 151, 255, .12); }
+        .svc-link b { display: block; font-size: 13px; color: #1f2d3d; margin-bottom: 4px; }
+        .svc-link span { font-size: 12px; color: #909399; }
+    </style>
+</div>
