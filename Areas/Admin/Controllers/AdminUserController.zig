@@ -23,7 +23,9 @@ pub const AdminUserController = struct {
         .title_key = "管理员管理",
         .url = "{area}/adminuser/index",
         .icon = "&#xe67d;",
-        .order = 37,
+        // 排在设置组末尾（站点设置 20 / 菜单管理 39 / 多语言 92 / 语言包 93 之后）：
+        // 日常先调站点与内容，账号权限属于低频运维操作。
+        .order = 94,
         .actions = &.{ .{ .name = "index" }, .{ .name = "edit" }, .{ .name = "save" }, .{ .name = "delete" } },
     };
     /// `GET /{area}/adminuser/index`：管理员列表。

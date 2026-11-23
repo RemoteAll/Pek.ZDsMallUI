@@ -26,7 +26,8 @@ pub const RoleController = struct {
         .title_key = "角色权限管理",
         .url = "{area}/role/index",
         .icon = "&#xe67b;",
-        .order = 38,
+        // 紧跟在管理员管理（94）之后：两者都是低频运维项，一起放末尾。
+        .order = 95,
         // 动作**不限 4 个**：导出 / 审核 / 上架…随意加，权限表按 chips 自动换行
         .actions = &.{ menu_dep.act("index"), menu_dep.act("edit"), menu_dep.act("save"), menu_dep.act("delete") },
     };
