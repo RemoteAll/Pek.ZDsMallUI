@@ -269,7 +269,7 @@ pub const Store = struct {
 
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null }) catch |e| {
+        var db = sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 }) catch |e| {
             zzig.Logger.warn("[ZDsMallUI] 多语言库打开失败（{s}，路径 {s}）", .{ @errorName(e), db_path });
             return e;
         };
@@ -361,7 +361,7 @@ pub const Store = struct {
     fn ensureSeedResources(self: *Store, db_path: []const u8) !void {
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         const Target = struct { id: i32, english: bool };
@@ -448,7 +448,7 @@ pub const Store = struct {
     fn ensureSeedLanguages(self: *Store, db_path: []const u8) !void {
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         _ = try db.exec(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault, Flag, Domain, Lcid, Remark) VALUES ('简体中文', '简体中文', 'Chinese (Simplified)', 'zh-CN', 'zh', 1, 1, 1, '', '', 0, '')");
@@ -461,7 +461,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "UPDATE Language SET IsDefault = 0");
@@ -482,7 +482,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "UPDATE Language SET Status = ? WHERE Id = ?");
@@ -506,7 +506,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault) VALUES (?, ?, ?, ?, ?, 1, ?, 0)");
@@ -529,7 +529,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         const sql =
@@ -581,7 +581,7 @@ pub const Store = struct {
             if (sqlite.Lib.load(self.allocator)) |loaded| {
                 var lib_val = loaded;
                 defer lib_val.deinit();
-                if (sqlite.Db.openWithOptions(&lib_val, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null })) |db_in| {
+                if (sqlite.Db.openWithOptions(&lib_val, db_path, .{ .busy_timeout_ms = 5000 })) |db_in| {
                     var db = db_in;
                     defer db.close();
                     if (db.prepare(self.allocator, "SELECT Id, LanKey, LanValue FROM LocaleStringResource WHERE CultureId = ? ORDER BY LanKey")) |stmt_in| {
@@ -632,7 +632,7 @@ pub const Store = struct {
         if (id <= 0) return false;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE Id = ?");
@@ -728,7 +728,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         const sql =
@@ -757,7 +757,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE CultureId = ? AND [LanKey] = ?");
@@ -775,7 +775,7 @@ pub const Store = struct {
         const db_path = self.db_path orelse return;
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
-        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000, .journal_mode = null, .synchronous = null });
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
         var stmt = try db.prepare(self.allocator, "DELETE FROM LocaleStringResource WHERE CultureId = ?");
