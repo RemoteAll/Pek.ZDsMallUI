@@ -10,7 +10,6 @@ const zzig = @import("zzig");
 
 const area_mod = @import("../../../src/deps.zig").area;
 const admin_area = @import("AdminArea.zig");
-const version = @import("../../../src/deps.zig").version;
 const sysinfo = @import("../../../src/deps.zig").sysinfo;
 
 const router = zzig.web.router;
@@ -150,7 +149,9 @@ pub const HomeController = struct {
         try builder.str("areaName", self.areaName());
         try builder.str("areaRoute", route);
         try builder.str("uploadPrefix", self.upload_prefix);
-        try builder.str("version", version.VERSION);
+        // ★ 不要在这里写 `version` / `zigVersion`：`renderView` 的 `withBuildInfo` 会统一注入
+        //   （**应用版本优先**，没设才用框架库版本）。这里再写一次会出现两个同名键，
+        //   视图取到第一个 —— 2026-11-23 实测仪表盘与后台底部都显示成框架库的 0.1.0。
         try builder.str("dashboardUrl", try std.fmt.allocPrint(arena, "{s}/home/dashboard", .{route}));
         try builder.list("menus", &.{ menu_config.finish(), menu_ueditor.finish() });
         try builder.boolean("hasMenus", true);
