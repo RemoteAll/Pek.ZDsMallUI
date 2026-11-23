@@ -200,6 +200,41 @@ pub const Language = struct {
     remark: []const u8 = "",
 };
 
+/// 预置语言（首次建表 / 老库补齐时写入）。
+pub const SeedLanguage = struct {
+    name: []const u8,
+    display_name: []const u8,
+    english_name: []const u8,
+    /// `LanguageCulture`（如 `zh-CN`）
+    culture: []const u8,
+    /// `UniqueSeoCode`（URL 前缀，如 `zh`）
+    code: []const u8,
+    /// **默认只有简体中文为 true**：其余语言摆在表里等运营按需开启。
+    status: bool,
+    order: i32,
+    is_default: bool,
+};
+
+/// 预置语言清单：一次性把常见语言摆进 `Language` 表，**默认只启用简体中文**。
+///
+/// 为什么预置而不是「让人一条条新建」：语言表几乎是静态配置，手工建 10 条既费时又容易
+/// 把 `LanguageCulture` / `UniqueSeoCode` 写错（这两个直接决定 URL 前缀与 `hreflang`）；
+/// 预置停用语言**不产生任何开销** —— 语言包只为 `Status = 1` 的语言落库内置文案。
+///
+/// 顺序即后台列表顺序，`order` 也用它。
+pub const SEED_LANGUAGES = [_]SeedLanguage{
+    .{ .name = "简体中文", .display_name = "简体中文", .english_name = "Chinese (Simplified)", .culture = "zh-CN", .code = "zh", .status = true, .order = 1, .is_default = true },
+    .{ .name = "English", .display_name = "English", .english_name = "English", .culture = "en-US", .code = "en", .status = false, .order = 2, .is_default = false },
+    .{ .name = "繁體中文", .display_name = "繁體中文", .english_name = "Chinese (Traditional)", .culture = "zh-TW", .code = "zh-TW", .status = false, .order = 3, .is_default = false },
+    .{ .name = "日本語", .display_name = "日本語", .english_name = "Japanese", .culture = "ja-JP", .code = "ja", .status = false, .order = 4, .is_default = false },
+    .{ .name = "한국어", .display_name = "한국어", .english_name = "Korean", .culture = "ko-KR", .code = "ko", .status = false, .order = 5, .is_default = false },
+    .{ .name = "Deutsch", .display_name = "Deutsch", .english_name = "German", .culture = "de-DE", .code = "de", .status = false, .order = 6, .is_default = false },
+    .{ .name = "Français", .display_name = "Français", .english_name = "French", .culture = "fr-FR", .code = "fr", .status = false, .order = 7, .is_default = false },
+    .{ .name = "Español", .display_name = "Español", .english_name = "Spanish", .culture = "es-ES", .code = "es", .status = false, .order = 8, .is_default = false },
+    .{ .name = "Русский", .display_name = "Русский", .english_name = "Russian", .culture = "ru-RU", .code = "ru", .status = false, .order = 9, .is_default = false },
+    .{ .name = "Português", .display_name = "Português", .english_name = "Portuguese", .culture = "pt-BR", .code = "pt", .status = false, .order = 10, .is_default = false },
+};
+
 /// 语言包读取结果（`culture_id` → 键值）。线程安全：整体替换快照，读路径无锁。
 pub const Store = struct {
     allocator: std.mem.Allocator,
@@ -371,9 +406,16 @@ pub const Store = struct {
         self.mutex.unlock();
 
         if (empty) {
-            // 首次部署：补两种语言，保证后台能选（下次读取生效）
+            // 首次部署：把预置语言摆好（**只有简体中文启用**），保证后台能选（下次读取生效）
             try self.ensureSeedLanguages(db_path);
             try self.reload();
+        } else {
+            // 老库：补齐预置清单里缺失的语言（只补缺、不覆盖已改过的启用状态）
+            const added = self.ensureMissingSeedLanguages(db_path) catch |err| blk: {
+                zzig.Logger.warn("[ZDsMallUI] 补齐预置语言失败（{s}）：语言列表保持现状", .{@errorName(err)});
+                break :blk false;
+            };
+            if (added) try self.reload();
         }
 
         // 语言包：表为空时把内置文案**落库一次**。
@@ -453,26 +495,22 @@ pub const Store = struct {
     }
 
     fn setBuiltinLanguages(self: *Store) !void {
-        const rows = [_]Language{
-            .{ .id = 1, .name = "简体中文", .display_name = "简体中文", .english_name = "Chinese (Simplified)", .language_culture = "zh-CN", .code = "zh", .status = true, .order = 1, .is_default = true },
-            .{ .id = 2, .name = "English", .display_name = "English", .english_name = "English", .language_culture = "en-US", .code = "en", .status = true, .order = 2, .is_default = false },
-        };
         var langs: std.ArrayList(Language) = .empty;
-        for (rows) |row| {
+        for (SEED_LANGUAGES) |row| {
             try langs.append(self.allocator, .{
-                .id = row.id,
+                .id = @intCast(row.order),
                 .name = try self.allocator.dupe(u8, row.name),
                 .display_name = try self.allocator.dupe(u8, row.display_name),
                 .english_name = try self.allocator.dupe(u8, row.english_name),
-                .language_culture = try self.allocator.dupe(u8, row.language_culture),
+                .language_culture = try self.allocator.dupe(u8, row.culture),
                 .code = try self.allocator.dupe(u8, row.code),
                 .status = row.status,
                 .order = row.order,
                 .is_default = row.is_default,
-                .flag = try self.allocator.dupe(u8, row.flag),
-                .domain = try self.allocator.dupe(u8, row.domain),
-                .lcid = row.lcid,
-                .remark = try self.allocator.dupe(u8, row.remark),
+                .flag = try self.allocator.dupe(u8, ""),
+                .domain = try self.allocator.dupe(u8, ""),
+                .lcid = 0,
+                .remark = try self.allocator.dupe(u8, ""),
             });
         }
         self.mutex.lock();
@@ -480,16 +518,91 @@ pub const Store = struct {
         self.mutex.unlock();
     }
 
-    /// 首次部署写入 zh-CN / en-US 两条语言记录（幂等：已有任意语言就跳过）。
+    /// 首次部署写入预置语言（幂等：已有任意语言就跳过）。
+    ///
+    /// **只有简体中文是启用状态**，其余一律停用 —— 「要不要英文版 / 日文版」是运营决策，
+    /// 表里先把候选语言摆好，运营在「语言包」页点一下开关即可，不用一条条手工新建。
     fn ensureSeedLanguages(self: *Store, db_path: []const u8) !void {
         var lib = try sqlite.Lib.load(self.allocator);
         defer lib.deinit();
         var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
         defer db.close();
 
-        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault, Flag, Domain, Lcid, Remark) VALUES ('简体中文', '简体中文', 'Chinese (Simplified)', 'zh-CN', 'zh', 1, 1, 1, '', '', 0, '')");
-        _ = try db.exec(self.allocator, "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault, Flag, Domain, Lcid, Remark) VALUES ('English', 'English', 'English', 'en-US', 'en', 1, 2, 0, '', '', 0, '')");
-        zzig.Logger.info("[ZDsMallUI] 已初始化多语言：简体中文（默认）+ English", .{});
+        var inserted: usize = 0;
+        for (SEED_LANGUAGES) |row| {
+            if (try self.insertSeedLanguage(&db, row)) inserted += 1;
+        }
+        zzig.Logger.info(
+            "[ZDsMallUI] 已初始化多语言：{d} 种预置语言（仅「简体中文」启用，其余在「语言包」里按需开启）",
+            .{inserted},
+        );
+    }
+
+    /// 老库补齐：把预置清单里**缺失**的语言补上（状态一律停用）。
+    ///
+    /// 只补缺、不覆盖 —— 已存在的语言（哪怕运营改过启用状态或名称）一律不动。
+    /// 返回是否真的插过（插过就要 reload 一次）。
+    fn ensureMissingSeedLanguages(self: *Store, db_path: []const u8) !bool {
+        var lib = try sqlite.Lib.load(self.allocator);
+        defer lib.deinit();
+        var db = try sqlite.Db.openWithOptions(&lib, db_path, .{ .busy_timeout_ms = 5000 });
+        defer db.close();
+
+        var existing = std.StringHashMapUnmanaged(void).empty;
+        defer {
+            var it = existing.iterator();
+            while (it.next()) |kv| self.allocator.free(kv.key_ptr.*);
+            existing.deinit(self.allocator);
+        }
+        var arena_state = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+
+        if (db.prepare(self.allocator, "SELECT UniqueSeoCode FROM Language")) |stmt_in| {
+            var stmt = stmt_in;
+            defer stmt.finalize();
+            try stmt.bindAll(&.{});
+            while (stmt.hasRow()) {
+                const row = try stmt.readRow(arena);
+                const code = rowText(row, "UniqueSeoCode");
+                if (code.len == 0) continue;
+                const key = try self.allocator.dupe(u8, code);
+                try existing.put(self.allocator, key, {});
+            }
+        } else |err| {
+            zzig.Logger.warn("[ZDsMallUI] 补齐预置语言：读语言表失败（{s}）", .{@errorName(err)});
+            return false;
+        }
+
+        var inserted: usize = 0;
+        for (SEED_LANGUAGES) |row| {
+            if (existing.contains(row.code)) continue;
+            if (try self.insertSeedLanguage(&db, row)) inserted += 1;
+        }
+        if (inserted > 0) {
+            zzig.Logger.info("[ZDsMallUI] 语言表补齐预置语言 {d} 种（默认停用，按需在「语言包」开启）", .{inserted});
+        }
+        return inserted > 0;
+    }
+
+    fn insertSeedLanguage(self: *Store, db: *sqlite.Db, row: SeedLanguage) !bool {
+        var stmt = try db.prepare(
+            self.allocator,
+            "INSERT INTO Language (Name, DisplayName, EnglishName, LanguageCulture, UniqueSeoCode, Status, DisplayOrder, IsDefault, Flag, Domain, Lcid, Remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', 0, '')",
+        );
+        defer stmt.finalize();
+        try stmt.bindAll(&.{
+            .{ .text = row.name },
+            .{ .text = row.display_name },
+            .{ .text = row.english_name },
+            .{ .text = row.culture },
+            .{ .text = row.code },
+            .{ .int = if (row.status) 1 else 0 },
+            .{ .int = row.order },
+            .{ .int = if (row.is_default) 1 else 0 },
+        });
+        try stmt.run();
+        return true;
     }
 
     /// 设为默认语言（写库后重载；同一时刻只有一个默认）。
@@ -713,6 +826,18 @@ pub const Store = struct {
     ///
     /// `key` 就是**中文资源键**（如「控制台」）：DB 命中用译文，否则英文语言给 `en`、中文语言给键本身。
     /// 对齐 C# 「某语言没这个键就用键名」。
+    /// 该语言已录入的**自定义翻译条数**（`0` = 还没翻译过）。
+    ///
+    /// 只读内存快照，**不查库**（可放在请求路径上）。用途：多语言站点在「某语言还没翻译」时
+    /// 不应该把该语言的页面交给搜索引擎索引 —— 否则会出现「`lang=en` 但正文全中文」，
+    /// 属于 hreflang 标注错误 + 重复内容（2026-11-23 实测 `/en/base64` 正是这种状态）。
+    pub fn translatedCount(self: *const Store, culture_id: i32) usize {
+        var buf: [16]u8 = undefined;
+        const culture_key = std.fmt.bufPrint(&buf, "{d}", .{culture_id}) catch return 0;
+        if (self.resources.get(culture_key)) |inner| return inner.count();
+        return 0;
+    }
+
     pub fn text(self: *const Store, culture_id: i32, key: []const u8) []const u8 {
         var buf: [16]u8 = undefined;
         const culture_key = std.fmt.bufPrint(&buf, "{d}", .{culture_id}) catch "";
