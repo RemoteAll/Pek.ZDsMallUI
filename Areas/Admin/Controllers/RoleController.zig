@@ -72,7 +72,7 @@ pub const RoleController = struct {
         try putRole(&builder, row, id);
         // 权限勾选树：来自 `Menu` 表（目录分组 + 菜单项），勾选值 = 该菜单 URL 的**控制器段**
         // （与 `AdminArea.canAccess` 同一口径，所以勾完立刻生效）
-        try builder.list("permissionGroups", permissionTree(self, arena, row.permission) catch &.{});
+        try builder.list("permissionGroups", permissionTree(self, arena, row.permission, row.data_scope_map) catch &.{});
         return admin_area.renderView(self, c, "Role", "Edit", builder.finish());
     }
 
@@ -90,6 +90,8 @@ pub const RoleController = struct {
         // 数据范围（角色级，对齐 XCode.Membership `Role.DataScope`）
         const data_scope = std.fmt.parseInt(i32, std.mem.trim(u8, c.formValue("dataScope") orelse "0", " \t\r\n"), 10) catch 0;
         const data_dept_ids = std.mem.trim(u8, c.formValue("dataDeptIds") orelse "", " \t\r\n");
+        // 按资源覆盖：表单名 `dataScopeOverride[article]`，值为空 = 继承角色级
+        const data_scope_map = try collectScopeOverrides(c.arena, c);
 
         if (self.dal == null or self.session == null) {
             return renderSaveError(self, c, id, .{ .id = id, .name = name, .sort = sort, .enable = enable, .permission = permission }, "数据库未启用，无法保存角色");
@@ -106,6 +108,7 @@ pub const RoleController = struct {
             .permission = permission,
             .data_scope = data_scope,
             .data_dept_ids = data_dept_ids,
+            .data_scope_map = data_scope_map,
         }) catch |err| {
             const message = switch (err) {
                 error.DuplicateName => "角色名称已存在，请换一个",
@@ -161,6 +164,8 @@ const RoleRow = struct {
     data_scope: i32 = 0,
     /// 自定义范围时的部门编号列表（逗号分隔，`Role.DataDepartmentIds`）
     data_dept_ids: []const u8 = "",
+    /// 按资源覆盖的数据范围（存 `Role.Ex4`，格式 `article=3;order=1`；未列出的资源用角色级 `data_scope`）
+    data_scope_map: []const u8 = "",
 };
 
 const SaveInput = struct {
@@ -173,6 +178,8 @@ const SaveInput = struct {
     data_scope: i32 = 0,
     /// 自定义范围时的部门编号（逗号分隔）
     data_dept_ids: []const u8 = "",
+    /// 按资源覆盖（`article=3;order=1`，存 `Role.Ex4`）
+    data_scope_map: []const u8 = "",
 };
 
 fn buildBase(self: *admin_area.AdminArea, builder: *zzig.web.ObjectBuilder, c: *router.Ctx, title: []const u8) !void {
@@ -203,6 +210,7 @@ fn putRole(builder: *zzig.web.ObjectBuilder, row: RoleRow, id: i32) !void {
     try b.int("sort", row.sort);
     try b.int("dataScope", row.data_scope);
     try b.str("dataDeptIds", row.data_dept_ids);
+    try b.str("dataScopeMap", row.data_scope_map);
     try builder.put("row", b.finish());
 }
 
@@ -245,6 +253,7 @@ fn permissionTree(
     self: *admin_area.AdminArea,
     arena: std.mem.Allocator,
     current: []const u8,
+    scope_map: []const u8,
 ) ![]const zzig.web.Value {
     const dal = self.dal orelse return &.{};
     const s = self.session orelse return &.{};
@@ -284,10 +293,15 @@ fn permissionTree(
                 try acts.append(arena, ab.finish());
             }
 
+            // 该资源的数据范围覆盖（`article=3` → hasScopeOverride + scopeOverride）
+            const ov = scopeOverrideOf(scope_map, key);
+
             var b = zzig.web.ObjectBuilder.init(arena);
             try b.str("key", key);
             try b.str("title", if (title.len == 0) key else title);
             try b.boolean("checked", permissionHas(current, key));
+            try b.boolean("hasScopeOverride", ov.has);
+            try b.int("scopeOverride", ov.value);
             try b.list("actions", try acts.toOwnedSlice(arena));
             try items.append(arena, b.finish());
         }
@@ -390,6 +404,7 @@ fn loadRole(self: *admin_area.AdminArea, id: i32) !RoleRow {
         .sort = columnInt(row, "Sort"),
         .data_scope = columnInt(row, "DataScope"),
         .data_dept_ids = try self.allocator.dupe(u8, columnText(row, "DataDepartmentIds")),
+        .data_scope_map = try self.allocator.dupe(u8, columnText(row, "Ex4")),
     };
 }
 
@@ -421,6 +436,7 @@ fn saveRole(self: *admin_area.AdminArea, input: SaveInput) !void {
             zcode.dbtable.field("Permission", .{ .text = input.permission }),
             zcode.dbtable.field("DataScope", .{ .int = input.data_scope }),
             zcode.dbtable.field("DataDepartmentIds", .{ .text = input.data_dept_ids }),
+            zcode.dbtable.field("Ex4", .{ .text = input.data_scope_map }),
             // 表上这两列 NOT NULL 且无默认（C# 由拦截器填），`TableRef.insert` 不自动带 → 必须显式传
             zcode.dbtable.field("CreateTime", .{ .datetime = now }),
             zcode.dbtable.field("UpdateTime", .{ .datetime = now }),
@@ -449,6 +465,7 @@ fn saveRole(self: *admin_area.AdminArea, input: SaveInput) !void {
         zcode.dbtable.field("Permission", .{ .text = input.permission }),
         zcode.dbtable.field("DataScope", .{ .int = input.data_scope }),
         zcode.dbtable.field("DataDepartmentIds", .{ .text = input.data_dept_ids }),
+        zcode.dbtable.field("Ex4", .{ .text = input.data_scope_map }),
     }, &w2, 0);
 }
 
@@ -493,6 +510,9 @@ fn renderSaveError(
     try builder.boolean("ready", self.dal != null and self.session != null);
     try builder.str("error", message);
     try putRole(&builder, row, id);
+    // 校验失败回到表单时同样要给出勾选树：视图里的 `@foreach (Model.permissionGroups)`
+    // 一旦为 null 会直接渲染失败（整页 500），所以这里与 edit() 保持同一套模型。
+    try builder.list("permissionGroups", permissionTree(self, c.arena, row.permission, row.data_scope_map) catch &.{});
     return admin_area.renderView(self, c, "Role", "Edit", builder.finish());
 }
 
@@ -520,4 +540,42 @@ fn columnText(row: anytype, name: []const u8) []const u8 {
         .text => |v| v,
         else => "",
     };
+}
+
+/// 收集按资源覆盖的数据范围：表单名 `dataScopeOverride[article]`，值为 `0..4`（空 = 继承角色级）。
+/// 输出格式 `article=3;order=1`（存 `Role.Ex4`）。
+fn collectScopeOverrides(arena: std.mem.Allocator, c: *router.Ctx) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    for (c.form) |field| {
+        const prefix = "dataScopeOverride[";
+        if (!std.mem.startsWith(u8, field.name, prefix)) continue;
+        if (!std.mem.endsWith(u8, field.name, "]")) continue;
+        const key = std.mem.trim(u8, field.name[prefix.len .. field.name.len - 1], " \t\r\n");
+        const val = std.mem.trim(u8, field.value, " \t\r\n");
+        if (key.len == 0 or val.len == 0) continue;
+        _ = std.fmt.parseInt(i32, val, 10) catch continue; // 只收 0..4 的数字
+        if (out.items.len > 0) try out.append(arena, ';');
+        try out.appendSlice(arena, key);
+        try out.append(arena, '=');
+        try out.appendSlice(arena, val);
+    }
+    return out.toOwnedSlice(arena);
+}
+
+/// 资源级范围覆盖：`map` 形如 `article=3;order=1`。
+const ScopeOverride = struct { has: bool, value: i32 };
+
+fn scopeOverrideOf(map: []const u8, key: []const u8) ScopeOverride {
+    var it = std.mem.splitScalar(u8, map, ';');
+    while (it.next()) |raw| {
+        const one = std.mem.trim(u8, raw, " \t\r\n");
+        if (one.len == 0) continue;
+        const eq = std.mem.indexOfScalar(u8, one, '=') orelse continue;
+        const k = std.mem.trim(u8, one[0..eq], " \t\r\n");
+        const v = std.mem.trim(u8, one[eq + 1 ..], " \t\r\n");
+        if (!std.ascii.eqlIgnoreCase(k, key)) continue;
+        const n = std.fmt.parseInt(i32, v, 10) catch continue;
+        return .{ .has = true, .value = n };
+    }
+    return .{ .has = false, .value = 0 };
 }

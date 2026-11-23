@@ -136,6 +136,65 @@
                             </div>
                         </td>
                     </tr>
+                    <tr>
+                        <td><label class="validation">@T("按资源覆盖（留空 = 继承上面的默认范围）")</label></td>
+                    </tr>
+                    <tr class="noborder">
+                        <td class="vatop rowform">
+                            @* 不同资源的敏感度不一样：文章可以「本部门」，订单可能必须「仅本人」。
+                               逐项覆盖存 `Role.Ex4`（`article=3;order=1`），判定走 `AdminArea.dataScopeFor(user, key)`。 *@
+                            <table class="perm-table scope-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:24%;">@T("资源")</th>
+                                        <th style="width:20%;">@T("默认")</th>
+                                        <th>@T("数据范围")</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var group in Model.permissionGroups) {
+                                    @foreach (var item in group.items) {
+                                    <tr>
+                                        <td><code>@item.key</code> <span style="color:#888;">@item.title</span></td>
+                                        <td class="scope-default">@T("继承")</td>
+                                        <td>
+                                            <select name="dataScopeOverride[@item.key]">
+                                                <option value="">@T("继承默认")</option>
+                                                @if (item.hasScopeOverride && item.scopeOverride == 0) {
+                                                <option value="0" selected>@T("全部数据")</option>
+                                                } else {
+                                                <option value="0">@T("全部数据")</option>
+                                                }
+                                                @if (item.hasScopeOverride && item.scopeOverride == 1) {
+                                                <option value="1" selected>@T("本部门及下级")</option>
+                                                } else {
+                                                <option value="1">@T("本部门及下级")</option>
+                                                }
+                                                @if (item.hasScopeOverride && item.scopeOverride == 2) {
+                                                <option value="2" selected>@T("本部门")</option>
+                                                } else {
+                                                <option value="2">@T("本部门")</option>
+                                                }
+                                                @if (item.hasScopeOverride && item.scopeOverride == 3) {
+                                                <option value="3" selected>@T("仅本人")</option>
+                                                } else {
+                                                <option value="3">@T("仅本人")</option>
+                                                }
+                                                @if (item.hasScopeOverride && item.scopeOverride == 4) {
+                                                <option value="4" selected>@T("自定义部门")</option>
+                                                } else {
+                                                <option value="4">@T("自定义部门")</option>
+                                                }
+                                            </select>
+                                        </td>
+                                    </tr>
+                                    }
+                                    }
+                                </tbody>
+                            </table>
+                            <div class="scope-note">@T("只对填了的资源生效；没填的跟随上面的角色默认范围。")</div>
+                        </td>
+                    </tr>
                 </tbody>
             </table>
         </div>

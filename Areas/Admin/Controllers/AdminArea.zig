@@ -687,7 +687,22 @@ pub const AdminArea = struct {
         return .{
             .scope = columnInt(roles[0], "DataScope"),
             .dept_ids = columnText(roles[0], "DataDepartmentIds"),
+            .scope_map = columnText(roles[0], "Ex4"),
         };
+    }
+
+    /// **指定资源**的数据范围：优先取 `Role.Ex4` 里按资源的覆盖，没有就回落角色级 `DataScope`。
+    ///
+    /// 用法（业务列表）：
+    /// ```zig
+    /// const scope = ui.admin_area.dataScopeFor(user, "article") orelse DataScope{};
+    /// // scope.effective("article") → 0..4，据此加 where
+    /// ```
+    pub fn dataScopeFor(self: *AdminArea, user_name: []const u8, resource: []const u8) ?DataScope {
+        const base = self.dataScopeOf(user_name) orelse return null;
+        var out = base;
+        out.scope = base.effective(resource);
+        return out;
     }
 
     /// 取用户的角色权限串（`Role.Permission`）；查不到返回 `null`（= 放行）。
@@ -1018,12 +1033,28 @@ pub const DataScope = struct {
     scope: i32 = 0,
     /// 自定义范围时的部门编号（逗号分隔）
     dept_ids: []const u8 = "",
+    /// 按资源的覆盖（`Role.Ex4`：`article=3;order=1`）
+    scope_map: []const u8 = "",
 
     pub const ALL: i32 = 0;
     pub const DEPT_AND_CHILD: i32 = 1;
     pub const DEPT: i32 = 2;
     pub const SELF: i32 = 3;
     pub const CUSTOM: i32 = 4;
+
+    /// 某个资源的生效范围：有覆盖用覆盖，否则用角色级。
+    pub fn effective(self: DataScope, resource: []const u8) i32 {
+        var it = std.mem.splitScalar(u8, self.scope_map, ';');
+        while (it.next()) |raw| {
+            const one = std.mem.trim(u8, raw, " \t\r\n");
+            if (one.len == 0) continue;
+            const eq = std.mem.indexOfScalar(u8, one, '=') orelse continue;
+            const k = std.mem.trim(u8, one[0..eq], " \t\r\n");
+            if (!std.ascii.eqlIgnoreCase(k, resource)) continue;
+            return std.fmt.parseInt(i32, std.mem.trim(u8, one[eq + 1 ..], " \t\r\n"), 10) catch self.scope;
+        }
+        return self.scope;
+    }
 };
 
 /// 从查询结果行里按列名取整数（找不到列返回 0）。
@@ -1054,7 +1085,3 @@ fn columnText(row: zcode.sqlite.Row, name: []const u8) []const u8 {
     }
     return "";
 }
-
-
-
-
