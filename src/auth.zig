@@ -345,11 +345,19 @@ pub const Auth = struct {
         return next.run(c);
     }
 
-    /// 是否需要登录：区域内的页面（`/{area}/…`），但登录相关动作豁免。
+    /// 是否需要登录：区域内的页面（`/{area}/…`）与**上传入口**，但登录相关动作豁免。
+    ///
+    /// 上传入口为什么也算：`/fileuploader` 是 UEditor 的服务端，**不在 `/{area}/` 前缀下** ——
+    /// 只靠区域前缀守卫时它就成了一块公网匿名可写的口子（2026-11-23 实测：未登录
+    /// `GET /fileuploader?action=config` 直接 200，而 POST 就能建文件）。
+    /// 只拦**入口**：`/Upload/downloads/…`（已上传文件的下载）保持公开，否则后台文章里的图打不开。
     pub fn isGuardedPath(self: *Auth, path: []const u8) bool {
         const login_prefix = std.fmt.allocPrint(self.allocator, "/{s}/login", .{self.area_segment}) catch return false;
         defer self.allocator.free(login_prefix);
         if (zzig.ascii.startsWithIgnoreCase(path, login_prefix)) return false;
+
+        if (zzig.ascii.startsWithIgnoreCase(path, "/fileuploader")) return true;
+        if (zzig.ascii.startsWithIgnoreCase(path, "/upload/fileuploader")) return true;
 
         const area_prefix = std.fmt.allocPrint(self.allocator, "/{s}/", .{self.area_segment}) catch return false;
         defer self.allocator.free(area_prefix);
@@ -582,4 +590,10 @@ test "鉴权：require_login 时后台页面跳登录页并带 returnUrl" {
     var login_ctx = try router.Ctx.build(arena, .{ .method = "GET", .path = "/biz/login/index" });
     const allowed = try auth.invokeForTest(&login_ctx, next);
     try testing.expectEqualStrings("reached", allowed.body);
+
+    // 上传入口同样要守卫（它不在 /{area}/ 前缀下，只靠区域前缀会漏成匿名可写口子）
+    try testing.expect(auth.isGuardedPath("/fileuploader"));
+    try testing.expect(auth.isGuardedPath("/Upload/fileuploader"));
+    // 已上传文件的公开下载不拦（否则后台文章里的图打不开）
+    try testing.expectEqual(false, auth.isGuardedPath("/Upload/downloads/images/x.png"));
 }
