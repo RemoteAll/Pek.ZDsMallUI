@@ -179,6 +179,14 @@ pub const DsMallUi = struct {
     menus: menu_mod.Registry,
     /// `Menu` 表连接（接库后菜单以表为准；`addMenu` 注册时同步写表）
     menu_store: ?menu_db_mod.Store = null,
+    /// 内嵌静态资源的内存 gzip 副本（含 `data_gzip` 时由本对象持有，`deinit` 释放）
+    embedded_gz: std.ArrayListUnmanaged([]u8) = .empty,
+    /// 是否把内置后台静态资源注册为**嵌入资源**（优先于磁盘下发）
+    ///
+    /// 生产默认开：2026-11-24 线上发现落盘的 >32 KB 资源会被平台写成
+    /// 「长度不变、内容前移 32768 字节」的坏文件（字体 OTS 拒绝 → 菜单图标全变方框）。
+    /// 内嵌下发完全不读磁盘；开发模式请传 `false`（改磁盘文件立即生效）。
+    embed_admin_assets: bool = true,
 
     /// 构造门面（默认配置）。
     pub fn builder(allocator: std.mem.Allocator, io: std.Io) Builder {
@@ -213,6 +221,8 @@ pub const DsMallUi = struct {
         self.service.deinit();
         if (self.memory_backend) |mem| mem.deinit();
         if (self.database_path) |path| self.allocator.free(path);
+        for (self.embedded_gz.items) |gz| self.allocator.free(gz);
+        self.embedded_gz.deinit(self.allocator);
 
         self.allocator.free(self.web_root);
         self.allocator.free(self.upload_root);
@@ -334,11 +344,83 @@ pub const DsMallUi = struct {
         // WAF 必须在最前注册：后面匹配到的路由（含登录页、上传、静态）全部生效
         if (self.waf_instance) |w| try app.useMiddleware(w.middleware());
 
+        // 内置后台静态资源**从内存下发**（`StaticFiles` 里嵌入优先于磁盘）。
+        // 理由：生产上有平台会把落盘的 >32 KB 文件写成等长但错位的坏字节，磁盘副本不可信。
+        if (self.embed_admin_assets) try self.registerEmbeddedAssets(app);
+
         // 伪静态后缀（官网类）：`/x.html` → `/x`，精确路由优先、参数路由次之
         try app.router.addSuffixes(self.pseudo_suffixes);
 
         try self.upload_controller.mount(app);
         try self.admin_area.mount(app);
+    }
+
+    /// 把内置后台静态资源注册为**嵌入资源**（`StaticFiles` 中嵌入优先于磁盘）。
+    ///
+    /// ★ 2026-11-24 事故（线上图标全变方框）最终处置：服务器上 >32 KB 的落盘资源
+    /// （`iconfont.woff/ttf/css`、`admin.css`、`jquery214.min.js`、`layui.css`）**长度不变、
+    /// 内容整体前移 32768 字节**，浏览器解码字体直接失败。启动时的磁盘自愈只有在
+    /// 「文件 I/O 本身可信」时才有效；内嵌下发完全不读磁盘，才不会再被平台写坏。
+    ///
+    /// gzip 变体在内存里生成一次（纯 CPU，无文件 I/O），供 `Accept-Encoding: gzip` 直接下发。
+    fn registerEmbeddedAssets(self: *DsMallUi, app: *zzig.web.App) !void {
+        const Item = struct {
+            path: []const u8,
+            data: []const u8,
+            data_gz: []const u8 = "",
+        };
+        var items: std.ArrayListUnmanaged(Item) = .empty;
+        defer items.deinit(self.allocator);
+        // ★ 路径必须在 `embedAssets` 之后才能释放：`defer` 写在循环体里会在**当次迭代结束**时执行，
+        //   而 `embedAssets` 是循环结束后才读 `Item.path` → 提前释放会让键变成垃圾（2026-11-24 踩过：
+        //   内嵌 22 条只剩 17 个键、请求永远落回磁盘）。
+        var path_bufs: std.ArrayListUnmanaged([]u8) = .empty;
+        defer {
+            for (path_bufs.items) |path| self.allocator.free(path);
+            path_bufs.deinit(self.allocator);
+        }
+
+        for (ADMIN_STATIC_ASSETS) |asset| {
+            const path = try std.fmt.allocPrint(self.allocator, "/{s}", .{asset.relative});
+            try path_bufs.append(self.allocator, path);
+            try items.append(self.allocator, .{
+                .path = path,
+                .data = asset.source,
+                .data_gz = try self.embeddedGzip(asset.relative, asset.source),
+            });
+        }
+        // `ueconfig.json` 与两个后台脚本同样内嵌（体积小，但顺手一起兜住）
+        const extras = [_]struct { path: []const u8, relative: []const u8, data: []const u8 }{
+            .{ .path = "/ueconfig.json", .relative = "ueconfig.json", .data = UE_CONFIG_JSON },
+            .{ .path = "/static/admin/js/admin-config.js", .relative = "static/admin/js/admin-config.js", .data = ADMIN_CONFIG_JS },
+            .{ .path = "/static/admin/js/login-md5.js", .relative = "static/admin/js/login-md5.js", .data = LOGIN_MD5_JS },
+        };
+        for (extras) |extra| {
+            try items.append(self.allocator, .{
+                .path = extra.path,
+                .data = extra.data,
+                .data_gz = try self.embeddedGzip(extra.relative, extra.data),
+            });
+        }
+
+        try app.statics.embedAssets(items.items);
+        zzig.Logger.info(
+            "[ZDsMallUI] 内置静态资源已内嵌下发：{d} 个（图标字体/CSS/JS 不再依赖磁盘副本）",
+            .{items.items.len},
+        );
+    }
+
+    /// 生成内嵌资源的内存 gzip 变体（不可压缩类型/太小 → 返回空串）。
+    /// 返回的缓冲由 `DsMallUi` 持有并在 `deinit` 释放。
+    fn embeddedGzip(self: *DsMallUi, relative: []const u8, data: []const u8) ![]const u8 {
+        if (!isCompressible(relative) or data.len < 256) return "";
+        const gz = zzig.Http.gzipCompressAlloc(self.allocator, data, .default) catch |err| {
+            zzig.Logger.warn("[ZDsMallUI] 内嵌资源预压缩失败（{s}）：{s}", .{ relative, @errorName(err) });
+            return "";
+        };
+        errdefer self.allocator.free(gz);
+        try self.embedded_gz.append(self.allocator, gz);
+        return gz;
     }
 
     /// 启动准备：清理历史落盘的视图副本 + 把 `ueconfig.json` / 后台脚本落地（**只补缺失，不覆盖**）。
@@ -509,6 +591,16 @@ pub const Builder = struct {
     app_root: ?[]const u8 = null,
     /// 模型文件（默认 `Model.xml`，与 C# 同构）：项目目录下存在则用它，否则用库内置模型。
     model_path: []const u8 = sqlite_backend_mod.DEFAULT_MODEL_FILE,
+    /// 内置后台静态资源是否注册为**嵌入资源**（优先于磁盘）。
+    /// 生产默认开；`--dev`（改磁盘文件即生效）时传 `false`。
+    embed_admin_assets: bool = true,
+
+    /// 内置静态资源是否内嵌下发（见 `ADMIN_STATIC_ASSETS` 的 2026-11-24 事故说明）。
+    pub fn embedAdminAssets(self: Builder, enabled: bool) Builder {
+        var copy = self;
+        copy.embed_admin_assets = enabled;
+        return copy;
+    }
 
     /// 站点物理根（默认 `wwwroot`；**业务系统按自己的配置改成任意路径**）。
     pub fn webRoot(self: Builder, root: []const u8) Builder {
@@ -850,6 +942,7 @@ pub const Builder = struct {
             .admin_area = undefined,
             .upload_controller = undefined,
             .pseudo_suffixes = self.pseudo_suffixes,
+            .embed_admin_assets = self.embed_admin_assets,
             .memory_backend = memory,
             .login_guard = login_guard_mod.Guard.init(self.allocator, self.login_guard_options),
             .languages = languages,
@@ -1341,6 +1434,38 @@ test "门面：storage 打不开时必须报错，绝不回退内存" {
         ui.deinit();
         try testing.expect(false);
     } else |_| {}
+}
+
+test "门面：内置静态资源内嵌优先于磁盘" {
+    var fixture = try Fixture.init("embed-assets");
+    defer fixture.deinit();
+    const arena = fixture.arena_state.allocator();
+
+    const web_root = try std.fmt.allocPrint(arena, "{s}/wwwroot", .{fixture.dir});
+    const views_root = try std.fmt.allocPrint(arena, "{s}/Views", .{fixture.dir});
+    const areas_root = try std.fmt.allocPrint(arena, "{s}/Areas", .{fixture.dir});
+
+    const ui = try DsMallUi.builder(testing.allocator, testing.io)
+        .webRoot(web_root)
+        .viewsRoot(views_root)
+        .areasRoot(areas_root)
+        .build();
+    defer ui.deinit();
+    _ = try ui.materializeDefaults();
+
+    var app = try zzig.web.App.init(testing.allocator, testing.io, .{ .wwwroot = web_root });
+    defer app.deinit();
+    try ui.mount(&app);
+    try testing.expect(app.statics.embeddedCount() > 0);
+
+    // 把磁盘副本改成坏内容（模拟线上「等长但错位」的坏文件）→ 仍应下发内嵌资源
+    const css_path = try std.fmt.allocPrint(arena, "{s}/static/admin/css/admin.css", .{web_root});
+    try zzig.fsio.writeFile(testing.io, css_path, "BROKEN-DISK-COPY");
+    const resp = try app.dispatch(arena, .{ .method = "GET", .path = "/static/admin/css/admin.css" });
+    try testing.expectEqual(std.http.Status.ok, resp.status);
+    // 走内嵌时是内存 body（file == null）；若退回磁盘会变成流式文件 → 这条断言同时守住优先级
+    try testing.expect(resp.file == null);
+    try testing.expect(std.mem.startsWith(u8, resp.body, "@charset"));
 }
 
 test "门面：起服务后四个入口都可访问（端到端冒烟）" {
