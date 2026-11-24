@@ -160,6 +160,24 @@
                 </dd>
             </dl>
             <dl>
+                <dt>@T("IPv4 探测入口")</dt>
+                <dd>
+                    <input id="ProbeIpv4Url" name="ProbeIpv4Url" value="@Model.probeIpv4Url" class="input-txt" type="text"
+                           placeholder="http://203.0.113.10:8080">
+                    <span class="err"></span>
+                    <p class="notic">@T("IP 查询页「双栈探测」用：IPv4 入口的基地址（含协议与端口，不要带路径）。留空 = 不做探测")</p>
+                </dd>
+            </dl>
+            <dl>
+                <dt>@T("IPv6 探测入口")</dt>
+                <dd>
+                    <input id="ProbeIpv6Url" name="ProbeIpv6Url" value="@Model.probeIpv6Url" class="input-txt" type="text"
+                           placeholder="http://[2001:db8::1]:8080">
+                    <span class="err"></span>
+                    <p class="notic">@T("IPv6 入口的基地址（含协议与端口，IPv6 要加方括号）。留空 = 只探测 IPv4 那一侧")</p>
+                </dd>
+            </dl>
+            <dl>
                 <dt>@T("公司名称")</dt>
                 <dd>
                     <input id="companyname" name="companyname" value="@Model.company" class="input-txt" type="text">

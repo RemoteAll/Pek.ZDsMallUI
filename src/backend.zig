@@ -73,6 +73,8 @@ pub const DEFAULT_SETTINGS = [_]SettingsEntry{
     .{ .key = "headerCustomHtml", .store_key = "HeaderCustomHtml", .default = "" },
     .{ .key = "footerCustomHtml", .store_key = "FooterCustomHtml", .default = "" },
     .{ .key = "curDomainUrl", .store_key = "CurDomainUrl", .default = "" },
+    .{ .key = "probeIpv4Url", .store_key = "ProbeIpv4Url", .default = "" },
+    .{ .key = "probeIpv6Url", .store_key = "ProbeIpv6Url", .default = "" },
     // 后台登录 JWT 密钥（`HS256:<长随机串>`）。
     // 语义：**空 = 不改**（首次为空时由业务启动逻辑生成并写入自己的配置文件）。
     .{ .key = "jwtSecret", .store_key = "JwtSecret", .default = "" },
@@ -103,6 +105,8 @@ pub fn formKeyToSetting(key: []const u8) ?[]const u8 {
         .{ "HeaderCustomHtml", "HeaderCustomHtml" },
         .{ "FooterCustomHtml", "FooterCustomHtml" },
         .{ "CurDomainUrl", "CurDomainUrl" },
+        .{ "ProbeIpv4Url", "ProbeIpv4Url" },
+        .{ "ProbeIpv6Url", "ProbeIpv6Url" },
         .{ "JwtSecret", "JwtSecret" },
         .{ "companyname", "Company" },
         // C# 视图的 `id="sessiontimeout"` / `id="refreshuserperiod"`（全小写）
