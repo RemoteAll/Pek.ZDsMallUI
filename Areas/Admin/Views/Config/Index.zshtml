@@ -260,14 +260,58 @@
             </div>
         </div>
         </form>
+
+        @* 后台登录密钥：**属于站点设置表单**（`form="form1"`，提交时与其它设置一起走 updatebase），
+           但放在「安全」标签里 —— 保密项集中在安全页，视野上不跟站点文案混。
+           不回显明文：只显示「已设置（末 4 位）」；**留空 = 不改**（后端对 JwtSecret 空值跳过）。 *@
+        <div class="layui-tab layui-tab-brief Lan">
+            <div class="ncap-form-default">
+                <dl>
+                    <dt>@T("后台登录密钥")</dt>
+                    <dd>
+                        <input type="password" name="JwtSecret" form="form1" value="" class="input-txt" autocomplete="new-password"
+                               placeholder="@T("留空 = 不改；要重置就点右侧「随机生成」再保存")">
+                        <a href="javascript:void(0)" class="btn" style="margin-left:8px;" id="jwt-gen">@T("随机生成")</a>
+                        <p class="notic">
+                            @if (Model.jwtSecretSet) {
+                            <span>@T("当前：已设置（末 4 位 ")<code>@Model.jwtSecretTail</code>@T("）")</span>
+                            } else {
+                            <span style="color:#b45309;">@T("当前：未设置（首次启动会自动生成并写入配置文件；届时重启后会话会保留）")</span>
+                            }
+                        </p>
+                        <p class="notic">@T("用于签发后台登录令牌（HS256）。改动后**需重启**才生效；所有已登录会话会失效，属预期。")</p>
+                        <p class="notic">@T("该值会写回服务器配置文件 Config/PekTools.toml，请确保该文件仅运维可读。")</p>
+                    </dd>
+                </dl>
+                <dl>
+                    <dt></dt>
+                    <dd><a href="javascript:void(0)" class="btn" onclick="document.forms['form1'].submit()">@T("保存密钥")</a></dd>
+                </dl>
+            </div>
+        </div>
     </div>
     }
 </div>
 @* 语言 Tab 切换（不引 layui 的 element 模块，10 行原生 JS 足够）：
    点标题 → 切 `.layui-this` 与 `.layui-tab-item.layui-show`。 *@
 <script>
-    // ————— 页签：站点设置 / 安全（WAF）—————
-    // 纯前端显隐，不刷新 —— 切标签不丢已填内容；两个 pane 各自一个 form，互不干扰。
+    // ————— 「随机生成」：只在浏览器本地生成一串 `HS256:<hex>` 填进输入框 ————
+    // 生成后**必须手动点保存**才生效（与其它字段一致，不做“点一下立刻写入”的隐式提交）。
+    (function () {
+        var btn = document.getElementById('jwt-gen');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            var buf = new Uint8Array(48);
+            (window.crypto || window.msCrypto).getRandomValues(buf);
+            var hex = Array.prototype.map.call(buf, function (b) {
+                return ('00' + b.toString(16)).slice(-2);
+            }).join('');
+            var input = document.querySelector('input[name="JwtSecret"]');
+            if (input) { input.value = 'HS256:' + hex; }
+        });
+    })();
+
+    // ————— 页签：站点设置 / 安全（WAF）—————    // 纯前端显隐，不刷新 —— 切标签不丢已填内容；两个 pane 各自一个 form，互不干扰。
     (function () {
         var tabs = document.querySelectorAll('[data-cfg-tab]');
         if (!tabs.length) return;

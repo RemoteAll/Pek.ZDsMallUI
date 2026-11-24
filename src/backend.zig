@@ -73,6 +73,9 @@ pub const DEFAULT_SETTINGS = [_]SettingsEntry{
     .{ .key = "headerCustomHtml", .store_key = "HeaderCustomHtml", .default = "" },
     .{ .key = "footerCustomHtml", .store_key = "FooterCustomHtml", .default = "" },
     .{ .key = "curDomainUrl", .store_key = "CurDomainUrl", .default = "" },
+    // 后台登录 JWT 密钥（`HS256:<长随机串>`）。
+    // 语义：**空 = 不改**（首次为空时由业务启动逻辑生成并写入自己的配置文件）。
+    .{ .key = "jwtSecret", .store_key = "JwtSecret", .default = "" },
     // 公司名称（C# 视图 `name="companyname"`，实体属性 `Company`）
     .{ .key = "company", .store_key = "Company", .default = "" },
     // 会话超时（秒，0 = 不超时）与刷新用户周期（秒）—— C# `DHSetting.SessionTimeout` / `RefreshUserPeriod`
@@ -100,6 +103,7 @@ pub fn formKeyToSetting(key: []const u8) ?[]const u8 {
         .{ "HeaderCustomHtml", "HeaderCustomHtml" },
         .{ "FooterCustomHtml", "FooterCustomHtml" },
         .{ "CurDomainUrl", "CurDomainUrl" },
+        .{ "JwtSecret", "JwtSecret" },
         .{ "companyname", "Company" },
         // C# 视图的 `id="sessiontimeout"` / `id="refreshuserperiod"`（全小写）
         .{ "sessiontimeout", "SessionTimeout" },

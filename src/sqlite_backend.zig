@@ -570,6 +570,9 @@ pub const SqliteBackend = struct {
 
         for (form) |field| {
             const target = backend_mod.formKeyToSetting(field.name) orelse continue;
+            // **敏感项：空值 = 不改**（后台不回显密钥，留空就该保留原值）。
+            // 否则：管理员只改个站点名也会把密钥清空 → 下次启动又生成新密钥，所有会话失效。
+            if (std.mem.eql(u8, target, "JwtSecret") and std.mem.trim(u8, field.value, " \t\r\n").len == 0) continue;
             if (!dirty) {
                 const existing = try self.getSettingLocked(tmp_state.allocator(), target);
                 if (existing == null or !std.mem.eql(u8, existing.?, field.value)) dirty = true;

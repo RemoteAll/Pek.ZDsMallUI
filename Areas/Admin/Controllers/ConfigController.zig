@@ -144,6 +144,19 @@ pub const ConfigController = struct {
         try builder.put("hasWaf", .{ .boolean = waf_cfg != null });
         try builder.put("searchBotsAllowed", .{ .boolean = if (waf_cfg) |cfg| cfg.allowSearchBots else true });
         try builder.put("aiBotsAllowed", .{ .boolean = if (waf_cfg) |cfg| cfg.allowAiBots else false });
+
+        // 后台登录密钥：**只回显状态与末 4 位**（不明文回显；输入框留空 = 不改）
+        const jwt = if (settings == .object) blk: {
+            for (settings.object) |field| {
+                if (std.mem.eql(u8, field.name, "jwtSecret")) {
+                    if (field.value == .string) break :blk field.value.string;
+                }
+            }
+            break :blk "";
+        } else "";
+        const jwt_trimmed = std.mem.trim(u8, jwt, " \t\r\n");
+        try builder.put("jwtSecretSet", .{ .boolean = jwt_trimmed.len > 0 });
+        try builder.put("jwtSecretTail", .{ .string = if (jwt_trimmed.len >= 4) jwt_trimmed[jwt_trimmed.len - 4 ..] else "" });
         return builder.finish();
     }
 
