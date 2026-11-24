@@ -456,7 +456,11 @@ fn parseAfterColon(line: []const u8) u64 {
 fn uptimeSeconds(allocator: std.mem.Allocator, io: std.Io) ?f64 {
     const text = zzig.fsio.readFileAlloc(io, allocator, "/proc/uptime", 128) catch return null;
     defer allocator.free(text);
-    const first = std.mem.tokenizeScalar(u8, text, ' ').next() orelse return null;
+    // ★ 不能把 `tokenizeScalar(...)` 的临时值直接 `.next()`：Zig 0.17 的
+    //   `TokenIterator.next(self: *Self)` 要可变指针，临时值是 const → 交叉到 Linux 才编到这里，
+    //   Windows 目标不编这段，所以宿主 `zig build` 一直是绿的（2026-11-24 打包时才发现）。
+    var it = std.mem.tokenizeScalar(u8, text, ' ');
+    const first = it.next() orelse return null;
     return std.fmt.parseFloat(f64, first) catch null;
 }
 
