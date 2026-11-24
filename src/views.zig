@@ -459,7 +459,15 @@ test "视图：非默认区域回退到 Admin 模板渲染" {
 
     var model_builder = zzig.web.ObjectBuilder.init(arena);
     try model_builder.str("siteName", "示例站点");
+    // 配置页新增了 `@if (Model.hasWaf)` 与 `@foreach (Model.languageTabs)`：
+    // 模型缺键时 `@if` 拿到 null 会直接渲染失败（`@if` 条件必须是布尔值）。
+    try model_builder.boolean("hasWaf", false);
+    try model_builder.list("languageTabs", &.{});
     const outcome = views.render(arena, "Biz", "Config", "Index", model_builder.finish());
+    switch (outcome) {
+        .html => {},
+        .fail => |message| std.debug.print("[fallback-view-test] {s}\n", .{message}),
+    }
     try testing.expect(outcome == .html);
     try testing.expect(std.mem.indexOf(u8, outcome.html, "示例站点") != null);
     try testing.expect(std.mem.indexOf(u8, outcome.html, "</html>") != null);

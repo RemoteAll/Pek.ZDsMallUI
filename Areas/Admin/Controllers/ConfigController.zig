@@ -23,7 +23,7 @@ pub const ConfigController = struct {
         .name = "site_settings",
         .title_key = "站点设置",
         .url = "{area}/config/index",
-        .icon = "&#xe614;",
+        .icon = "&#xe6e0;",
         .order = 20,
         .actions = &.{ .{ .name = "index" }, .{ .name = "save" } },
     };

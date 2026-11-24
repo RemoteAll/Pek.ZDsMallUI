@@ -25,7 +25,7 @@ pub const MenuController = struct {
         .name = "menu",
         .title_key = "菜单管理",
         .url = "{area}/menu/index",
-        .icon = "&#xe6a1;",
+        .icon = "&#xe6d9;",
         .order = 39,
         .actions = &.{ .{ .name = "index" }, .{ .name = "edit" }, .{ .name = "save" }, .{ .name = "delete" } },
     };

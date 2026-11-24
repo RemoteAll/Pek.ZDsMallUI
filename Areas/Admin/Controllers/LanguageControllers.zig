@@ -20,7 +20,7 @@ pub const CultureController = struct {
         .name = "culture",
         .title_key = "多语言",
         .url = "{area}/culture/index",
-        .icon = "&#xe6a3;",
+        .icon = "&#xe659;",
         // 排在「语言包」(93) 之上：语言是语言包的上位概念
         .order = 92,
         .actions = &.{ .{ .name = "index" }, .{ .name = "save" }, .{ .name = "delete" } },
@@ -267,7 +267,7 @@ pub const LanguagesController = struct {
         .name = "languages",
         .title_key = "语言包",
         .url = "{area}/languages/index",
-        .icon = "&#xe71f;",
+        .icon = "&#xe8ed;",
         .order = 93,
         .actions = &.{ .{ .name = "index" }, .{ .name = "save" }, .{ .name = "delete" } },
     };

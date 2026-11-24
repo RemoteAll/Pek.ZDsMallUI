@@ -84,8 +84,8 @@
                     <span>@T("您好")，@Model.userName</span>
                     <div class="sub-meun">
                         <dl>
-                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe68e;</i>@T("访问首页")</a></dd>
-                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe640;</i>@T("清除缓存")</a></dd>
+                            <dd><a href="~/" target="_blank"><i class="iconfont">&#xe6ca;</i>@T("访问首页")</a></dd>
+                            <dd><a href="@Model.areaRoute/home/clearcache"><i class="iconfont">&#xe6d1;</i>@T("清除缓存")</a></dd>
                             @if (Model.hasLanguages) {
                             <dd class="has-child">
                                 @* 地球图标：iconfont 是商品分类图标库、没有 globe，所以用同风格内联 SVG
@@ -101,7 +101,7 @@
                             </dd>
                             }
                             <dd><a href="@Model.areaRoute/home/modifypw" target="main-frame"><i class="iconfont">&#xe67b;</i>@T("修改密码")</a></dd>
-                            <dd><a href="javascript:dsLayerConfirm('@Model.areaRoute/login/logout','@T("您确定退出吗?")','logout')"><i class="iconfont">&#xe70c;</i>@T("安全退出")</a></dd>
+                            <dd><a href="javascript:dsLayerConfirm('@Model.areaRoute/login/logout','@T("您确定退出吗?")','logout')"><i class="iconfont">&#xe764;</i>@T("安全退出")</a></dd>
                         </dl>
                     </div>
                 </li>

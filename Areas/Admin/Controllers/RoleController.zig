@@ -25,7 +25,7 @@ pub const RoleController = struct {
         .name = "role",
         .title_key = "角色权限管理",
         .url = "{area}/role/index",
-        .icon = "&#xe67b;",
+        .icon = "&#xe768;",
         // 紧跟在管理员管理（94）之后：两者都是低频运维项，一起放末尾。
         .order = 95,
         // 动作**不限 4 个**：导出 / 审核 / 上架…随意加，权限表按 chips 自动换行

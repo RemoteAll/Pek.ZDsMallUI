@@ -350,26 +350,15 @@ pub const DsMallUi = struct {
 
         const config_path = try std.fmt.allocPrint(self.allocator, "{s}/ueconfig.json", .{self.web_root});
         defer self.allocator.free(config_path);
-        if (!zzig.fsio.exists(self.io, config_path)) {
-            try zzig.fsio.writeFile(self.io, config_path, UE_CONFIG_JSON);
-            written += 1;
-        }
+        if (try ensureAssetFile(self.io, self.allocator, config_path, UE_CONFIG_JSON)) written += 1;
 
         const script_path = try std.fmt.allocPrint(self.allocator, "{s}/static/admin/js/admin-config.js", .{self.web_root});
         defer self.allocator.free(script_path);
-        if (!zzig.fsio.exists(self.io, script_path)) {
-            if (std.fs.path.dirname(script_path)) |parent| try zzig.fsio.makePath(self.io, parent);
-            try zzig.fsio.writeFile(self.io, script_path, ADMIN_CONFIG_JS);
-            written += 1;
-        }
+        if (try ensureAssetFile(self.io, self.allocator, script_path, ADMIN_CONFIG_JS)) written += 1;
 
         const login_script_path = try std.fmt.allocPrint(self.allocator, "{s}/static/admin/js/login-md5.js", .{self.web_root});
         defer self.allocator.free(login_script_path);
-        if (!zzig.fsio.exists(self.io, login_script_path)) {
-            if (std.fs.path.dirname(login_script_path)) |parent| try zzig.fsio.makePath(self.io, parent);
-            try zzig.fsio.writeFile(self.io, login_script_path, LOGIN_MD5_JS);
-            written += 1;
-        }
+        if (try ensureAssetFile(self.io, self.allocator, login_script_path, LOGIN_MD5_JS)) written += 1;
 
         const style_path = try std.fmt.allocPrint(self.allocator, "{s}/static/admin/css/admin-ui.css", .{self.web_root});
         defer self.allocator.free(style_path);
@@ -383,11 +372,7 @@ pub const DsMallUi = struct {
         for (ADMIN_STATIC_ASSETS) |asset| {
             const target = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ self.web_root, asset.relative });
             defer self.allocator.free(target);
-            if (!zzig.fsio.exists(self.io, target)) {
-                if (std.fs.path.dirname(target)) |parent| try zzig.fsio.makePath(self.io, parent);
-                try zzig.fsio.writeFile(self.io, target, asset.source);
-                written += 1;
-            }
+            if (try ensureAssetFile(self.io, self.allocator, target, asset.source)) written += 1;
             // 预压缩：`StaticFiles` 在客户端支持时优先下发同名 `.gz`
             // （主文件已存在也要补 —— 否则升级后拿不到压缩收益；内容以磁盘为准）
             try writeGzipSibling(self.allocator, self.io, target, asset.relative);
@@ -951,6 +936,62 @@ pub const Builder = struct {
     }
 };
 
+/// 确保内置资源在磁盘上**可用**：缺失则写入；已存在但明显是损坏副本则重写。
+///
+/// 返回 `true` 表示写/修过（计入 `materializeDefaults` 的返回值）。
+///
+/// ★ 2026-11-24 线上事故：服务器上 `iconfont.woff` / `iconfont.ttf` / `admin.css` 等
+/// **>32 KB 的文件长度不变、内容整体前移 32768 字节**（字体 sfntVersion 非法 → 浏览器拒绝加载 →
+/// 后台菜单图标全变方框、CSS 也会 `ERR_CONTENT_DECODING_FAILED`）。
+/// 当时 `materializeDefaults` 只是「缺失才写」→ 坏文件永远不会被替换，升级多少次都还是坏的。
+/// 判定口径：**长度与内置源一致但字节不同 = 损坏副本 → 重写**；长度不同视为「消费方换皮/旧版本」→ 保留
+/// （`ADMIN_STATIC_ASSETS` 注释里的覆盖约定不变）。
+fn ensureAssetFile(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    target: []const u8,
+    source: []const u8,
+) !bool {
+    const existed = zzig.fsio.exists(io, target);
+    if (existed and !(try assetLooksCorrupt(io, allocator, target, source))) return false;
+
+    if (std.fs.path.dirname(target)) |parent| try zzig.fsio.makePath(io, parent);
+    try zzig.fsio.writeFile(io, target, source);
+    if (existed) {
+        zzig.Logger.warn(
+            "[ZDsMallUI] 内置静态资源与内置内容不一致（长度 {d} 相同），判定为损坏副本并已重写：{s}",
+            .{ source.len, target },
+        );
+    }
+    // 回读校验：把「写盘环节出问题」在启动时暴露出来，不再出现「部署成功、线上全是坏资源」。
+    if (zzig.fsio.readFileAlloc(io, allocator, target, source.len) catch null) |check| {
+        defer allocator.free(check);
+        if (!std.mem.eql(u8, check, source)) {
+            zzig.Logger.err(
+                "[ZDsMallUI] 静态资源写入后回读不一致：{s}（写入 {d} 字节，回读 {d} 字节且内容不同）",
+                .{ target, source.len, check.len },
+            );
+        }
+    } else {
+        zzig.Logger.err("[ZDsMallUI] 静态资源写入后无法回读：{s}", .{target});
+    }
+    return true;
+}
+
+/// 已有文件是否是「长度相同、内容不同」的损坏副本（详见 [`ensureAssetFile`]）。
+/// 读不出来（权限/被占用）或长度不同一律按「不是损坏副本」处理 —— 宁可不覆盖消费方的换皮文件。
+fn assetLooksCorrupt(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    target: []const u8,
+    source: []const u8,
+) !bool {
+    const existing = zzig.fsio.readFileAlloc(io, allocator, target, source.len) catch return false;
+    defer allocator.free(existing);
+    if (existing.len != source.len) return false;
+    return !std.mem.eql(u8, existing, source);
+}
+
 /// 文本类资源才值得预压缩（图片/字体已压缩，再压反而变大）。
 fn isCompressible(relative: []const u8) bool {
     const exts = [_][]const u8{ ".css", ".js", ".json", ".svg", ".html", ".htm", ".xml", ".txt", ".map" };
@@ -1113,6 +1154,47 @@ test "门面：视图不落盘、静态资源落地且幂等" {
 
     const second = try ui.materializeDefaults();
     try testing.expectEqual(@as(usize, 0), second);
+}
+
+test "门面：损坏的内置静态资源被重写、换皮文件保留" {
+    var fixture = try Fixture.init("repair");
+    defer fixture.deinit();
+    const arena = fixture.arena_state.allocator();
+
+    const web_root = try std.fmt.allocPrint(arena, "{s}/wwwroot", .{fixture.dir});
+    const views_root = try std.fmt.allocPrint(arena, "{s}/Views", .{fixture.dir});
+    const areas_root = try std.fmt.allocPrint(arena, "{s}/Areas", .{fixture.dir});
+
+    const ui = try DsMallUi.builder(testing.allocator, testing.io)
+        .webRoot(web_root)
+        .viewsRoot(views_root)
+        .areasRoot(areas_root)
+        .build();
+    defer ui.deinit();
+    _ = try ui.materializeDefaults();
+
+    const woff_path = try std.fmt.allocPrint(arena, "{s}/static/plugins/iconfont/iconfont.woff", .{web_root});
+
+    // 1) 模拟线上损坏：长度不变、内容整体前移 32 KB（与 2026-11-24 事故一致）
+    {
+        const original = try zzig.fsio.readFileAlloc(testing.io, arena, woff_path, 4 * 1024 * 1024);
+        const broken = try arena.dupe(u8, original);
+        const shift = @min(@as(usize, 32768), broken.len);
+        std.mem.copyForwards(u8, broken[0 .. broken.len - shift], broken[shift..]);
+        try zzig.fsio.writeFile(testing.io, woff_path, broken);
+        try testing.expect(!std.mem.startsWith(u8, broken, "wOFF"));
+    }
+    const repaired = try ui.materializeDefaults();
+    try testing.expectEqual(@as(usize, 1), repaired);
+    const now = try zzig.fsio.readFileAlloc(testing.io, arena, woff_path, 4 * 1024 * 1024);
+    try testing.expect(std.mem.startsWith(u8, now, "wOFF"));
+
+    // 2) 换皮（长度不同）必须保留，不能被内置资源覆盖
+    try zzig.fsio.writeFile(testing.io, woff_path, "/* custom skin */");
+    const again = try ui.materializeDefaults();
+    try testing.expectEqual(@as(usize, 0), again);
+    const kept = try zzig.fsio.readFileAlloc(testing.io, arena, woff_path, 4096);
+    try testing.expectEqualStrings("/* custom skin */", kept);
 }
 
 test "门面：起服务后四个入口都可访问（端到端冒烟）" {

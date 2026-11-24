@@ -23,7 +23,7 @@ pub const HomeController = struct {
         .name = "welcome",
         .title_key = "欢迎页",
         .url = "{area}/home/dashboard",
-        .icon = "&#xe6a7;",
+        .icon = "&#xe6ca;",
         .order = 10,
     };
     /// `GET /{area}/home/index`：后台**框架页**（顶部 + 左侧 + iframe）。
