@@ -92,13 +92,18 @@ pub const ConfigController = struct {
         var cfg = waf.currentConfig();
         cfg.allowSearchBots = formOn(c, "allowSearchBots");
         cfg.allowAiBots = formOn(c, "allowAiBots");
+        // 跨站来源校验（CSRF）总开关：与抓取开关同属安全策略（同一表单，带 `wafSecurity=1` 标记）。
+        // **只在带标记时更新**：旧版「只含抓取开关」的提交（脚本 / 书签）不会把 CSRF 静默关掉。
+        // 注意：`/api` 等机器接口由项目侧 `csrfSkipPrefixes` / `setForcedSkipCsrfPrefixes` 单独豁免，
+        // 不受本开关影响 —— 这个开关管的是后台表单与页面表单。
+        if (c.formValue("wafSecurity") != null) cfg.csrfGuard = formOn(c, "csrfGuard");
 
         waf.applyConfig(cfg) catch |err| {
-            zzig.Logger.err("[ZDsMallUI] 保存抓取开关失败（searchBots={} aiBots={}）：{s}", .{ cfg.allowSearchBots, cfg.allowAiBots, @errorName(err) });
+            zzig.Logger.err("[ZDsMallUI] 保存安全开关失败（searchBots={} aiBots={} csrf={}）：{s}", .{ cfg.allowSearchBots, cfg.allowAiBots, cfg.csrfGuard, @errorName(err) });
             const message = try std.fmt.allocPrint(c.arena, "保存失败：{s}（详见日志）", .{@errorName(err)});
             return admin_area.renderPrompt(self, c, message, false, null);
         };
-        zzig.Logger.info("[ZDsMallUI] 抓取开关已更新：allowSearchBots={} allowAiBots={}（用户 {s}）", .{ cfg.allowSearchBots, cfg.allowAiBots, admin_area.currentUser(c) });
+        zzig.Logger.info("[ZDsMallUI] 安全开关已更新：allowSearchBots={} allowAiBots={} csrfGuard={}（用户 {s}）", .{ cfg.allowSearchBots, cfg.allowAiBots, cfg.csrfGuard, admin_area.currentUser(c) });
 
         if (admin_area.isAjax(c)) {
             return .{ .response = try controller_mod.jsonResult(c.arena, 0, "保存成功", null) };
@@ -144,6 +149,7 @@ pub const ConfigController = struct {
         try builder.put("hasWaf", .{ .boolean = waf_cfg != null });
         try builder.put("searchBotsAllowed", .{ .boolean = if (waf_cfg) |cfg| cfg.allowSearchBots else true });
         try builder.put("aiBotsAllowed", .{ .boolean = if (waf_cfg) |cfg| cfg.allowAiBots else false });
+        try builder.put("csrfEnabled", .{ .boolean = if (waf_cfg) |cfg| cfg.csrfGuard else true });
 
         // 后台登录密钥：**只回显状态与末 4 位**（不明文回显；输入框留空 = 不改）
         const jwt = if (settings == .object) blk: {

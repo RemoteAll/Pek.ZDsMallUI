@@ -254,6 +254,7 @@
        混在一个表单里会让「保存」同时触发两套落盘逻辑，排查困难。 *@
     <div class="cfg-pane" data-cfg-pane="security" hidden>
         <form method="post" action="@Model.areaRoute/config/savecrawl" name="formCrawl" id="formCrawl">
+            <input type="hidden" name="wafSecurity" value="1">
             <div class="layui-tab layui-tab-brief Lan">
                 <div class="ncap-form-default">
                     <dl>
@@ -272,8 +273,19 @@
                     </dd>
                 </dl>
                 <dl>
+                    <dt>@T("跨站请求校验（CSRF）")</dt>
+                    <dd>
+                        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" name="csrfGuard" value="1" @if (Model.csrfEnabled) {<text>checked</text>}>
+                            <span>@T("校验非安全方法的 Sec-Fetch-Site / Origin")</span>
+                        </label>
+                        <p class="notic">@T("建议保持开启：它保护的是**后台表单与页面表单**（防其它站点借你的登录态提交）。")</p>
+                        <p class="notic">@T("/api 等机器接口（给其它站点/脚本调用的）已默认豁免 CSRF，不受本开关影响；那部分靠接口限流与 IP 名单防护。")</p>
+                    </dd>
+                </dl>
+                <dl>
                     <dt></dt>
-                    <dd><a href="javascript:void(0)" class="btn" onclick="document.forms['formCrawl'].submit()">@T("保存抓取开关")</a></dd>
+                    <dd><a href="javascript:void(0)" class="btn" onclick="document.forms['formCrawl'].submit()">@T("保存安全开关")</a></dd>
                 </dl>
             </div>
         </div>
