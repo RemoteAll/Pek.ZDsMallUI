@@ -163,6 +163,8 @@ pub const DsMallUi = struct {
     memory_backend: ?*backend_mod.MemoryBackend = null,
     /// 内置 SQLite 数据源（`storage` 启用时由本对象拥有；供库内与项目侧内部读写）
     sqlite_backend_ptr: ?*sqlite_backend_mod.SqliteBackend = null,
+    /// 实际使用的 SQLite 库文件路径（纯内存模式为 `null`）。运维排查「没生成 .db」时直接看这一项。
+    database_path: ?[]const u8 = null,
     /// 登录防爆破守卫（进程内计数，随本对象释放）
     login_guard: login_guard_mod.Guard,
     /// 图形验证码存储（`captcha_enabled` 为真时存在；登录失败达阈值后要求输入）
@@ -190,6 +192,13 @@ pub const DsMallUi = struct {
         return self.sqlite_backend_ptr;
     }
 
+    /// 实际使用的 SQLite 库文件路径（未启用 `storage` 时为 `null`）。
+    ///
+    /// 只用于日志 / 运维展示：`null` 意味着当前是纯内存模式（不落盘）。
+    pub fn databasePath(self: *const DsMallUi) ?[]const u8 {
+        return self.database_path;
+    }
+
     /// 释放控制器、视图缓存与自有字符串。
     pub fn deinit(self: *DsMallUi) void {
         self.login_guard.deinit();
@@ -203,6 +212,7 @@ pub const DsMallUi = struct {
         self.ui_views.deinit();
         self.service.deinit();
         if (self.memory_backend) |mem| mem.deinit();
+        if (self.database_path) |path| self.allocator.free(path);
 
         self.allocator.free(self.web_root);
         self.allocator.free(self.upload_root);
@@ -685,7 +695,10 @@ pub const Builder = struct {
 
     /// 启用 SQLite 持久化（库文件 `{dir}/{Area}.db`，首启自动建表 + 种子账号）。
     ///
-    /// 驱动加载失败（没有 `sqlite3.dll`）时**自动回退内存并打 ERR 日志**，不会让服务起不来。
+    /// ★ 启用了本方法就**不允许回退内存**：驱动加载失败（缺 `libsqlite3`）、目录不可写、库损坏
+    /// 一律让 `build()` 返回错误（日志写明原因与修复方向）。只有完全不调 `storage` 的
+    /// 纯内存模式（测试 / 示例）才会用内存后端。
+    /// 用户 2026-11-24 原话：「回退到内存这条路是永远不允许的」。
     pub fn storage(self: Builder, dir: []const u8) Builder {
         var copy = self;
         copy.storage_dir = dir;
@@ -729,9 +742,13 @@ pub const Builder = struct {
         // 数据源：外部 > SQLite（`storage`，默认落 `Data/{Area}.db`）> 内存
         var memory: ?*backend_mod.MemoryBackend = null;
         var sqlite_backend: ?*sqlite_backend_mod.SqliteBackend = null;
+        var database_path: ?[]const u8 = null;
+        errdefer if (database_path) |path| self.allocator.free(path);
         const admin_backend: backend_mod.AdminBackend = if (self.external_backend) |external| external else blk: {
             if (self.storage_dir) |dir| {
-                const db_path = try std.fs.path.join(self.allocator, &.{ dir, try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area}) });
+                const db_name = try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area});
+                defer self.allocator.free(db_name);
+                const db_path = try std.fs.path.join(self.allocator, &.{ dir, db_name });
                 defer self.allocator.free(db_path);
                 // 模型候选顺序（**程序目录优先**）：
                 //   ① `{程序目录}/Model.xml` —— 随构建/打包安装的**权威副本**（`build.zig` 会装它）；
@@ -770,16 +787,24 @@ pub const Builder = struct {
                     break :blk_model null;
                 };
                 defer if (model_xml) |text| self.allocator.free(text);
-                if (sqlite_backend_mod.SqliteBackend.initWithModelEntities(self.allocator, self.io, db_path, model_xml, entities)) |created| {
-                    sqlite_backend = created;
-                    break :blk created.backend();
-                } else |e| {
+                // ★ 禁止回退内存（用户 2026-11-24 定调：「回退到内存这条路是永远不允许的」）：
+                // 内存数据源意味着账号/密码/站点设置重启即还原，且磁盘上根本不会生成 .db 文件 ——
+                // 运维会把它当「改密码不生效 / 数据丢了」的怪 bug，比启动失败更难排查。
+                // 打不开就**直接失败**，原因与修复方向写进日志。
+                const created = sqlite_backend_mod.SqliteBackend.initWithModelEntities(self.allocator, self.io, db_path, model_xml, entities) catch |e| {
                     zzig.Logger.err(
-                        "[ZDsMallUI] SQLite 后端启动失败（{s}，库 {s}）——回退到内存，重启会丢数据",
+                        "[ZDsMallUI] SQLite 后端启动失败（{s}，库 {s}）——拒绝回退内存（内存模式重启即丢账号/密码/设置）。" ++
+                            "排查：① Linux 是否安装 libsqlite3（apt install libsqlite3-0 / apk add sqlite-libs）；" ++
+                            "② 数据目录是否可写；③ 库文件是否损坏",
                         .{ @errorName(e), db_path },
                     );
-                }
+                    return e;
+                };
+                sqlite_backend = created;
+                database_path = try self.allocator.dupe(u8, db_path);
+                break :blk created.backend();
             }
+            // 只有**没配置 storage**（库的纯内存模式，供测试/示例用）才走内存后端。
             const created = try backend_mod.MemoryBackend.init(self.allocator, self.io);
             memory = created;
             break :blk created.backend();
@@ -798,13 +823,11 @@ pub const Builder = struct {
         if (self.path_base) |base| ui_views.renderer.setPathBase(base);
 
         // 多语言：与业务库同一个 SQLite（`Language` + `LocaleStringResource`）；无 storage 时为内置双语
+        // 路径**复用** `database_path`（由 `DsMallUi` 拥有并释放），不再各自拼一份（旧的拼法会漏 8 字节）。
         var languages = language_mod.Store.init(self.allocator, self.io);
-        if (self.storage_dir) |dir| {
-            const db_path = try std.fs.path.join(self.allocator, &.{ dir, try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area}) });
-            languages.db_path = db_path;
-        }
+        languages.db_path = database_path;
         languages.reload() catch |e| {
-            zzig.Logger.warn("[ZDsMallUI] 多语言初始化失败（{s}）：按内置文案运行", .{@errorName(e)});
+            zzig.Logger.err("[ZDsMallUI] 多语言初始化失败（{s}）：后台语言包/多语言页不可用（按内置文案运行）", .{@errorName(e)});
         };
 
         // 菜单：库自带默认项，项目启动后可继续 `ui.addMenu(...)` 追加
@@ -832,6 +855,7 @@ pub const Builder = struct {
             .languages = languages,
             .menus = menus,
             .sqlite_backend_ptr = sqlite_backend,
+            .database_path = database_path,
             .waf_instance = if (self.waf_base_dir) |base|
                 try pek_zwaf.Waf.loadWithPreset(self.allocator, self.io, base, self.waf_preset orelse pek_zwaf.WafConfig.adminApi())
             else
@@ -853,7 +877,9 @@ pub const Builder = struct {
         var session_store = self.external_session_store;
         if (session_store == null) {
             if (self.storage_dir) |dir| {
-                const db_path = try std.fs.path.join(self.allocator, &.{ dir, try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area}) });
+                const db_name = try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area});
+                defer self.allocator.free(db_name);
+                const db_path = try std.fs.path.join(self.allocator, &.{ dir, db_name });
                 defer self.allocator.free(db_path);
                 if (sqlite_session_mod.SqliteSessionStore.init(self.allocator, db_path)) |created| {
                     ui.session_store = created;
@@ -978,18 +1004,89 @@ fn ensureAssetFile(
     return true;
 }
 
-/// 已有文件是否是「长度相同、内容不同」的损坏副本（详见 [`ensureAssetFile`]）。
-/// 读不出来（权限/被占用）或长度不同一律按「不是损坏副本」处理 —— 宁可不覆盖消费方的换皮文件。
+/// 已有文件是否是损坏副本（详见 [`ensureAssetFile`]）。
+///
+/// 判定顺序（任一成立即判损坏并重写）：
+/// 1. 与内置源逐字节相同 → **不是**损坏；
+/// 2. 长度相同、内容不同 → 损坏（2026-11-24 线上事故的形状）；
+/// 3. 位移副本（内容整体前移/后移）→ 损坏；
+/// 4. 字体文件魔数非法（woff/woff2/ttf/otf）→ 损坏；
+/// 5. 文本资源不是合法 UTF-8，或直接是 gzip 字节 → 损坏。
+///
+/// 长度**不同**但格式与内容都正常的文件按「消费方换皮」保留（覆盖约定不变）。
+/// 读不出来（权限/被占用）一律按「不是损坏副本」处理 —— 宁可下一次再修，也不误删用户文件。
 fn assetLooksCorrupt(
     io: std.Io,
     allocator: std.mem.Allocator,
     target: []const u8,
     source: []const u8,
 ) !bool {
-    const existing = zzig.fsio.readFileAlloc(io, allocator, target, source.len) catch return false;
+    // 换皮文件通常比内置源大：读取上限放宽到 8 MiB，不能因为「读不全」就当成无损。
+    const limit: usize = @max(@as(usize, 8 * 1024 * 1024), source.len);
+    const existing = zzig.fsio.readFileAlloc(io, allocator, target, limit) catch return false;
     defer allocator.free(existing);
-    if (existing.len != source.len) return false;
-    return !std.mem.eql(u8, existing, source);
+
+    if (existing.len == source.len) return !std.mem.eql(u8, existing, source);
+    if (looksLikeShiftedCopy(existing, source)) return true;
+    if (binaryMagicInvalid(target, existing)) return true;
+    if (isTextAsset(target) and (!std.unicode.utf8ValidateSlice(existing) or startsWithGzip(existing))) return true;
+    return false;
+}
+
+/// 内容整体位移（前移/后移）的副本：内置源的开头出现在文件中间，或文件开头出现在内置源内部。
+///
+/// 2026-11-24 线上事故：>32 KB 的静态资源长度不变、内容整体前移 32768 字节。
+/// 用「文件开头 == 内置源第 N 字节起」这种长前缀比对来识别，不会误伤正常的换皮文件。
+fn looksLikeShiftedCopy(existing: []const u8, source: []const u8) bool {
+    const probe_len: usize = @min(@as(usize, 128), @min(existing.len, source.len));
+    if (probe_len < 32) return false;
+
+    // ① 文件里出现内置源开头 → 前面多了一截垃圾（整体后移）
+    if (std.mem.indexOf(u8, existing, source[0..probe_len])) |at| {
+        if (at > 0) {
+            const n = @min(existing.len - at, source.len);
+            if (n >= 1024 and std.mem.eql(u8, existing[at .. at + n], source[0..n])) return true;
+        }
+    }
+    // ② 文件开头出现在内置源内部 → 前面一截被丢掉（整体前移）
+    if (std.mem.indexOf(u8, source, existing[0..probe_len])) |at| {
+        if (at > 0) {
+            const n = @min(existing.len, source.len - at);
+            if (n >= 1024 and std.mem.eql(u8, existing[0..n], source[at .. at + n])) return true;
+        }
+    }
+    return false;
+}
+
+/// 字体类资源的魔数校验（字体二进制格式不合法 = 浏览器必然拒绝加载）。
+/// 非字体扩展名、或文件短到不足以判断时返回 `false`（交给其它规则）。
+fn binaryMagicInvalid(target: []const u8, data: []const u8) bool {
+    if (data.len < 4) return false;
+    const ext = std.fs.path.extension(target);
+    if (std.ascii.eqlIgnoreCase(ext, ".woff")) return !std.mem.eql(u8, data[0..4], "wOFF");
+    if (std.ascii.eqlIgnoreCase(ext, ".woff2")) return !std.mem.eql(u8, data[0..4], "wOF2");
+    if (std.ascii.eqlIgnoreCase(ext, ".otf")) return !std.mem.eql(u8, data[0..4], "OTTO");
+    if (std.ascii.eqlIgnoreCase(ext, ".ttf")) {
+        const head = data[0..4];
+        return !(std.mem.eql(u8, head, "\x00\x01\x00\x00") or
+            std.mem.eql(u8, head, "true") or
+            std.mem.eql(u8, head, "ttcf") or
+            std.mem.eql(u8, head, "OTTO"));
+    }
+    return false;
+}
+
+fn isTextAsset(target: []const u8) bool {
+    const exts = [_][]const u8{ ".css", ".js", ".json", ".svg", ".html", ".htm", ".xml", ".txt", ".map" };
+    const ext = std.fs.path.extension(target);
+    for (exts) |candidate| {
+        if (std.ascii.eqlIgnoreCase(ext, candidate)) return true;
+    }
+    return false;
+}
+
+fn startsWithGzip(data: []const u8) bool {
+    return data.len >= 2 and data[0] == 0x1f and data[1] == 0x8b;
 }
 
 /// 文本类资源才值得预压缩（图片/字体已压缩，再压反而变大）。
@@ -1189,12 +1286,61 @@ test "门面：损坏的内置静态资源被重写、换皮文件保留" {
     const now = try zzig.fsio.readFileAlloc(testing.io, arena, woff_path, 4 * 1024 * 1024);
     try testing.expect(std.mem.startsWith(u8, now, "wOFF"));
 
-    // 2) 换皮（长度不同）必须保留，不能被内置资源覆盖
-    try zzig.fsio.writeFile(testing.io, woff_path, "/* custom skin */");
+    // 2) 「长度不同」的位移副本（前移并截断）同样要修 —— 只按长度判定会漏掉这一类
+    {
+        const original = try zzig.fsio.readFileAlloc(testing.io, arena, woff_path, 4 * 1024 * 1024);
+        try zzig.fsio.writeFile(testing.io, woff_path, original[8192..]);
+        try testing.expect(!std.mem.startsWith(u8, original[8192..], "wOFF"));
+    }
+    const repaired_shifted = try ui.materializeDefaults();
+    try testing.expectEqual(@as(usize, 1), repaired_shifted);
+    const healed = try zzig.fsio.readFileAlloc(testing.io, arena, woff_path, 4 * 1024 * 1024);
+    try testing.expect(std.mem.startsWith(u8, healed, "wOFF"));
+
+    // 3) 换皮（文本资源、长度不同、格式正常）必须保留，不能被内置资源覆盖
+    const css_path = try std.fmt.allocPrint(arena, "{s}/static/admin/css/admin.css", .{web_root});
+    try zzig.fsio.writeFile(testing.io, css_path, "/* custom skin */\nbody{background:#fff}\n");
     const again = try ui.materializeDefaults();
     try testing.expectEqual(@as(usize, 0), again);
-    const kept = try zzig.fsio.readFileAlloc(testing.io, arena, woff_path, 4096);
-    try testing.expectEqualStrings("/* custom skin */", kept);
+    const kept = try zzig.fsio.readFileAlloc(testing.io, arena, css_path, 4096);
+    try testing.expectEqualStrings("/* custom skin */\nbody{background:#fff}\n", kept);
+
+    // 4) 字体文件出现合法换皮（魔数正确、长度不同）也必须保留
+    {
+        var custom_font: [68]u8 = @splat(0);
+        @memcpy(custom_font[0..4], "wOFF");
+        @memcpy(custom_font[4..8], "\x00\x01\x00\x00");
+        try zzig.fsio.writeFile(testing.io, woff_path, &custom_font);
+        const keep_font = try ui.materializeDefaults();
+        try testing.expectEqual(@as(usize, 0), keep_font);
+    }
+}
+
+test "门面：storage 打不开时必须报错，绝不回退内存" {
+    var fixture = try Fixture.init("no-memory-fallback");
+    defer fixture.deinit();
+    const arena = fixture.arena_state.allocator();
+
+    // 让 `storage` 指向一个「父路径是普通文件」的目录 → makePath 必然失败。
+    // 老实现这里会静默回退内存（账号/密码重启即还原、磁盘上不会生成 .db）；
+    // 现在必须把错误抛回去 —— 这是「禁止内存数据源」的护栏（用户 2026-11-24 定调）。
+    const blocker = try std.fmt.allocPrint(arena, "{s}/blocked", .{fixture.dir});
+    try zzig.fsio.writeFile(testing.io, blocker, "x");
+    const web_root = try std.fmt.allocPrint(arena, "{s}/wwwroot", .{fixture.dir});
+    const views_root = try std.fmt.allocPrint(arena, "{s}/Views", .{fixture.dir});
+    const areas_root = try std.fmt.allocPrint(arena, "{s}/Areas", .{fixture.dir});
+
+    const result = DsMallUi.builder(testing.allocator, testing.io)
+        .webRoot(web_root)
+        .viewsRoot(views_root)
+        .areasRoot(areas_root)
+        .storage(blocker)
+        .build();
+    if (result) |ui| {
+        // 起来了就是回退内存 → 判失败
+        ui.deinit();
+        try testing.expect(false);
+    } else |_| {}
 }
 
 test "门面：起服务后四个入口都可访问（端到端冒烟）" {
