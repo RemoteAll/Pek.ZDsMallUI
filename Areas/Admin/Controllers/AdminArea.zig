@@ -41,6 +41,14 @@ const ActionResult = zzig.web.controller.ActionResult;
 /// 默认后台区域名（与 C# 默认 `Admin` 一致）。
 pub const DEFAULT_ADMIN_AREA = area_mod.DEFAULT_AREA;
 
+/// 「本次请求已持有后台会话锁」的 Ctx 状态键（见 [`AdminArea.guarded`] / [`renderView`]）。
+///
+/// 为什么需要这个标记：仓库只有一条共享长连接（`AdminArea.session`），`zcode.Session`
+/// 的 `arena` + 预处理语句缓存都是**单线程语义**，两个请求同时查表会互相 `resetResults`
+/// （实测 10 并发直接 `panic: @memcpy arguments alias`）。所以请求级加锁，
+/// 并用请求状态标记避免「守卫已加锁 → `renderView` 再加一次」的自死锁。
+pub const SESSION_LOCK_STATE = "admin_session_lock";
+
 /// 指定区域的默认首页路由：`Biz` → `/biz/home/index`。
 pub fn homeRoute(allocator: std.mem.Allocator, area_name: []const u8) ![]u8 {
     const prefix = try area_mod.routePrefix(allocator, area_name);
@@ -83,6 +91,15 @@ pub const AdminArea = struct {
     dal: ?*@import("zcode").Dal = null,
     /// 与 `dal` 配套的**长连接**（不能每请求 `openSession`：实测单条 INSERT ~1.1s）。
     session: ?*@import("zcode").Session = null,
+    /// 后台请求的**串行化锁**：共享长连接不可并发使用（`zcode.Session` 单线程语义）。
+    /// 后台流量极低，用一把锁把「同一时刻只处理一个后台请求」钉死，
+    /// 既能消除 `@memcpy arguments alias` 类并发崩溃，又不改变任何业务逻辑。
+    /// 与后端内部的 `mutex` 是两把锁（后者只在单次 DB 操作内持有），不会嵌套死锁。
+    ///
+    /// ★ 必须是 `std.Io.Mutex`（而不是 `compat.Mutex` 那种自旋锁）：服务器跑在 zio
+    ///   协程上，自旋锁在拿不到锁时会阻塞工作线程，持有方又在该线程上等 IO → 死锁
+    ///   （2026-11-27 实测：40 并发后登录页一直不返回）。`std.Io.Mutex` 会把协程挂起。
+    session_mutex: std.Io.Mutex = .init,
     /// 成员域三表的**表名映射**（`User` / `Role` / `Menu`）。默认与 C# `Member.xml` 一致；
     /// 业务想用自己命名的表（如 `SysUser`）就 `setTables`，不必改框架源码。
     /// 详见 `src/membership_tables.zig`（为何只开放这三张、换表时列名仍要兼容）。
@@ -872,6 +889,13 @@ pub const AdminArea = struct {
                 // 后台页「计算」耗时的起点：守卫一进来就开始计时（含区域校验 / RBAC / 取数）
                 request_started_ms = nowMillis();
                 const self = castSelf(raw);
+                // ★ 请求级串行化：共享长连接（`session`）不可并发使用 —— 控制器动作、
+                //   菜单构建（`menuGroups`）都复用它，两个请求同时查表会互相 `resetResults`，
+                //   实测 10 并发 `panic: @memcpy arguments alias`。后台流量低，串行化最稳。
+                self.session_mutex.lockUncancelable(self.io);
+                defer self.session_mutex.unlock(self.io);
+                // 标记本次请求已持锁：`renderView` 见到就不再重复加锁（否则自死锁）
+                c.setState(SESSION_LOCK_STATE, "1") catch {};
                 if (!areaMatches(c, self.areaName())) return .{ .response = router.Response.notFound() };
                 // RBAC：管理员放行；其他人按「角色权限串」校验当前页面
                 if (!self.canAccess(c)) return .{ .response = forbiddenPage() };
@@ -911,6 +935,12 @@ pub fn renderView(
     view: []const u8,
     model: zzig.web.Value,
 ) !ActionResult {
+    // 业务项目自己的控制器（不在 `guarded` 后面）也会调这里渲染：菜单要读共享长连接，
+    // 所以没持锁时在这里补一把（已持锁的库内页面靠 `SESSION_LOCK_STATE` 跳过，避免死锁）。
+    const already_locked = c.stateValue(SESSION_LOCK_STATE) != null;
+    if (!already_locked) self.session_mutex.lockUncancelable(self.io);
+    defer if (!already_locked) self.session_mutex.unlock(self.io);
+
     // 页面底部「服务端耗时」：分两段量。
     //
     // - **计算**：从守卫（区域校验 / RBAC）进入控制器到准备开始渲染，
