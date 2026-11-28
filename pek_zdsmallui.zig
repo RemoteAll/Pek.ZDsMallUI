@@ -41,6 +41,8 @@ pub const area = @import("src/area.zig");
 pub const auth = @import("src/auth.zig");
 pub const backend = @import("src/backend.zig");
 pub const sqlite_backend = @import("src/sqlite_backend.zig");
+/// 配置文件的数据库备份 / 还原（BackupToDatabase 开关 + 同名键回刷，幂等）
+pub const config_backup = @import("src/config_backup.zig");
 pub const sqlite_session_store = @import("src/sqlite_session_store.zig");
 pub const models = @import("src/models.zig");
 pub const multipart = @import("src/multipart.zig");
@@ -50,6 +52,8 @@ pub const base64 = @import("src/base64.zig");
 pub const ueditor = @import("src/ueditor/mod.zig");
 pub const views = @import("src/views.zig");
 pub const language = @import("src/language.zig");
+/// 前台多语言（URL 前缀优先：默认语言不带前缀，其余 /en；含 301 归一与切换链接）
+pub const front_lang = @import("src/front_lang.zig");
 pub const menu = @import("src/menu.zig");
 pub const sysinfo = @import("src/sysinfo.zig");
 pub const version_info = @import("src/version.zig");
