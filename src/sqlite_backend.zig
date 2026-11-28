@@ -177,6 +177,12 @@ pub const SqliteBackend = struct {
         };
         errdefer self.dal.deinit();
 
+        // 表级 `ConnName`（框架里就是 `Log`）必须挂上连接，否则 `syncSchema` 直接
+        // `error.UnknownConnection`、日志写库也会静默丢失（`[zcode] 连接 Log 未挂载`）。
+        // 口径（与 C# `appsettings.json` 一致：`Membership` / `Log` 默认都是本地 SQLite）：
+        // **只补缺、绝不覆盖**调用方已配的连接。
+        try attachMissingModelConnections(&self.dal, conn_str);
+
         const s = self.dal.openSession() catch |e| {
             zzig.Logger.err("[ZDsMallUI] 建立数据库会话失败（{s}）：连接串 {s}", .{ @errorName(e), conn_str });
             return e;
@@ -807,6 +813,70 @@ pub const SqliteBackend = struct {
         return rows[0].values[0].asI64();
     }
 };
+
+/// 把模型里声明了、但没人挂载的**表级连接**补齐（框架里就是 `Log`）。
+///
+/// 背景：`Member.xml` 的 `Log` 表带 `ConnName="Log"`（C# 里 `Log` 是独立库）。若调用方没
+/// `attachConnection("Log", …)`，`syncSchema` 会以 `error.UnknownConnection` 让整个后端起不来，
+/// 日志写库也会退化成 `[zcode] 连接 Log 未挂载`。
+///
+/// 口径（对齐用户级「数据库连接命名」规范：**只补缺、绝不覆盖**，不让运维手工建）：
+/// - 主库是 **SQLite** → 补在主库同目录的 `<连接名>.db`（C# `appsettings.json` 里 `Membership` / `Log`
+///   默认就是本地 SQLite，形态一致）；
+/// - 其它方言（MySQL / PostgreSQL…）→ **沿用主库连接串**并记一条 warn，提示为该连接单独配置
+///   （不猜服务器上的库名；也不能因为「没配」就让服务起不来）。
+fn attachMissingModelConnections(dal: *zcode.Dal, conn_hint: []const u8) !void {
+    const a = dal.gpa;
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    defer seen.deinit(a);
+
+    for (dal.model.tables) |t| {
+        const raw = t.conn_name orelse continue;
+        const name = std.mem.trim(u8, raw, " \t\r\n");
+        if (name.len == 0) continue;
+        if (dal.hasConnection(name)) continue; // 调用方已配：原样保留
+        if (seen.contains(name)) continue;
+        try seen.put(a, name, {});
+
+        const built = try defaultConnectionFor(a, dal, name, conn_hint);
+        defer a.free(built);
+        dal.attachConnection(name, built) catch |e| {
+            zzig.Logger.warn(
+                "[ZDsMallUI] 自动挂载表级连接 {s} 失败（{s}）：请在配置里为它指定连接串",
+                .{ name, @errorName(e) },
+            );
+            return e;
+        };
+        zzig.Logger.info(
+            "[ZDsMallUI] 表级连接 {s} 未配置，已自动挂载到 {s}（要换库就在配置里显式写它的连接串）",
+            .{ name, built },
+        );
+    }
+}
+
+/// 给「模型里声明但调用方没配」的表级连接造一个默认连接串（策略见 [`attachMissingModelConnections`]）。
+fn defaultConnectionFor(
+    a: std.mem.Allocator,
+    dal: *const zcode.Dal,
+    name: []const u8,
+    conn_hint: []const u8,
+) ![]u8 {
+    if (dal.opts.provider != .sqlite) {
+        zzig.Logger.warn(
+            "[ZDsMallUI] 表级连接 {s} 未配置且主库不是 SQLite：暂用主库连接串（数据仍会混在主库）；建议在配置里为它单独指定",
+            .{name},
+        );
+        return a.dupe(u8, conn_hint);
+    }
+    const ds = std.mem.trim(u8, dal.opts.data_source, " \t\r\n");
+    if (ds.len == 0) return a.dupe(u8, conn_hint);
+    const dir = std.fs.path.dirname(ds) orelse ".";
+    const file = try std.fmt.allocPrint(a, "{s}.db", .{name});
+    defer a.free(file);
+    const path = try std.fs.path.join(a, &.{ dir, file });
+    defer a.free(path);
+    return std.fmt.allocPrint(a, "Data Source={s};Provider=SQLite", .{path});
+}
 
 /// 合并三层模型并按 C# 语义补全列属性（详见文件头注释）。
 fn mergeModel(
