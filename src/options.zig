@@ -203,6 +203,14 @@ pub const DsMallUi = struct {
     /// 实际使用的 SQLite 库文件路径（未启用 `storage` 时为 `null`）。
     ///
     /// 只用于日志 / 运维展示：`null` 意味着当前是纯内存模式（不落盘）。
+    /// 是否用了**持久化**数据源（SQLite 文件或外部连接串）；内存后端为 `false`。
+    ///
+    /// 项目侧「禁止以内存数据源启动」的闸门必须用它，**不能只看 `databasePath()`**：
+    /// 连 MySQL/PG 时没有库文件路径，但那是持久化的。
+    pub fn isPersistent(self: *const DsMallUi) bool {
+        return self.sqlite_backend_ptr != null;
+    }
+
     pub fn databasePath(self: *const DsMallUi) ?[]const u8 {
         return self.database_path;
     }
@@ -580,6 +588,11 @@ pub const Builder = struct {
     waf_preset: ?pek_zwaf.WafConfig = null,
     /// 数据目录（`null` = 内存后端；设置后启用 SQLite，库文件为 `{dir}/{Area}.db`）
     storage_dir: ?[]const u8 = null,
+    /// 外部数据库连接串（`Provider=SQLite|MySQL|PostgreSQL|...`）。
+    ///
+    /// 非空时**优先于** `storage`：不再拼 `Data/{Area}.db`，直接用这个连接串建 `zcode.Dal`
+    /// （模型仍是「项目 `Model.xml` ∪ 注入实体」）。线上的 MySQL / PG / SQLServer 走这条。
+    db_connection: []const u8 = "",
     /// 下载扩展名白名单（默认常用类型；`&.{}` = 禁止一切下载）
     download_extensions: []const []const u8 = &controllers.upload.DEFAULT_DOWNLOAD_EXTENSIONS,
     /// 在默认白名单基础上追加的扩展名
@@ -797,6 +810,18 @@ pub const Builder = struct {
         return copy;
     }
 
+    /// 用**任意连接串**启用持久化（`Provider=SQLite|MySQL|PostgreSQL|SQLServer|...`）。
+    ///
+    /// 与 [`storage`] 二选一，给了本项就不再拼 `Data/{Area}.db`。
+    /// 这就是库注释里说的「切库的唯一入口」：**换连接串即可，代码与模型都不用改**。
+    ///
+    /// 注意：连接串含口令，**不要打进日志**；库内部只打印去掉 `Password/Pwd` 的摘要。
+    pub fn connectionString(self: Builder, conn: []const u8) Builder {
+        var copy = self;
+        copy.db_connection = conn;
+        return copy;
+    }
+
     /// 组装（不注入项目实体；等价 `buildWithEntities(.{})`）。
     pub fn build(self: Builder) !*DsMallUi {
         return self.buildInternal(.{});
@@ -837,47 +862,40 @@ pub const Builder = struct {
         var database_path: ?[]const u8 = null;
         errdefer if (database_path) |path| self.allocator.free(path);
         const admin_backend: backend_mod.AdminBackend = if (self.external_backend) |external| external else blk: {
+            // ① 显式连接串（MySQL / PostgreSQL / SQLServer …）：**线上部署走这条**
+            //
+            // 这是库注释里承诺的「切库唯一入口」；模型仍然来自「项目 Model.xml ∪ 注入实体」，
+            // 所以换库不需要改代码、不需要改模型，只换连接串。
+            if (self.db_connection.len > 0) {
+                const model_xml = loadProjectModelXml(&self);
+                defer if (model_xml) |text| self.allocator.free(text);
+                const masked = describeConnection(self.allocator, self.db_connection) catch self.db_connection;
+                const masked_owned = masked.ptr != self.db_connection.ptr;
+                defer if (masked_owned) self.allocator.free(masked);
+                const created = sqlite_backend_mod.SqliteBackend.initWithConnectionEntities(
+                    self.allocator,
+                    self.io,
+                    self.db_connection,
+                    model_xml,
+                    entities,
+                ) catch |e| {
+                    zzig.Logger.err(
+                        "[ZDsMallUI] 数据库连接失败（{s}）：{s} —— 检查 Provider / 主机 / 端口 / 账号 / 库名；" ++
+                            "不支持的 Provider 也会在这里报（支持 SQLite / MySQL / PostgreSQL / SQLServer 等）",
+                        .{ @errorName(e), masked },
+                    );
+                    return e;
+                };
+                sqlite_backend = created;
+                break :blk created.backend();
+            }
             if (self.storage_dir) |dir| {
                 const db_name = try std.fmt.allocPrint(self.allocator, "{s}.db", .{normalized_area});
                 defer self.allocator.free(db_name);
                 const db_path = try std.fs.path.join(self.allocator, &.{ dir, db_name });
                 defer self.allocator.free(db_path);
-                // 模型候选顺序（**程序目录优先**）：
-                //   ① `{程序目录}/Model.xml` —— 随构建/打包安装的**权威副本**（`build.zig` 会装它）；
-                //   ② 显式 `model_path`（默认 cwd 下 `Model.xml`）—— 开发期直接跑源码目录时用；
-                //   ③ `{data_dir}/Model.xml` —— 兼容老部署，只作兜底。
-                //
-                // ★ 2026-11-23 踩过：原来 data_dir 排在程序目录**之前**，而 dev/部署时 `--data-dir` 里
-                // 常留着一份**旧** `Model.xml`（本次是加 `DH_SingleArticle` 之前的那份）。
-                // 结果：库里明明有表、程序也装好了新模型，Dal 却报 `TableNotFound`，
-                // 前台 `/p/{code}` 全 404。经验：模型与 Views/wwwroot 一样，**认程序目录**。
-                var model_candidates: [3][]const u8 = undefined;
-                var candidate_count: usize = 0;
-                var app_index: ?usize = null;
-                if (self.app_root) |app_dir| {
-                    app_index = candidate_count;
-                    model_candidates[candidate_count] = try std.fs.path.join(self.allocator, &.{ app_dir, sqlite_backend_mod.DEFAULT_MODEL_FILE });
-                    candidate_count += 1;
-                }
-                model_candidates[candidate_count] = self.model_path;
-                candidate_count += 1;
-                if (self.storage_dir) |data_dir| {
-                    model_candidates[candidate_count] = try std.fs.path.join(self.allocator, &.{ data_dir, sqlite_backend_mod.DEFAULT_MODEL_FILE });
-                    candidate_count += 1;
-                }
-                // 只有拼出来的（非 `model_path`）需要释放
-                defer {
-                    var i: usize = 0;
-                    while (i < candidate_count) : (i += 1) {
-                        if (app_index != null and i == app_index.?) continue;
-                        if (std.mem.eql(u8, model_candidates[i], self.model_path)) continue;
-                        self.allocator.free(model_candidates[i]);
-                    }
-                }
-                const model_xml = readProjectModel(self.allocator, self.io, model_candidates[0..candidate_count]) catch |e| blk_model: {
-                    zzig.Logger.warn("[ZDsMallUI] 读取项目 Model.xml 失败（{s}），改用内置模型", .{@errorName(e)});
-                    break :blk_model null;
-                };
+                // 模型候选顺序与「连接串模式」共用 `loadProjectModelXml`（程序目录优先）
+                const model_xml = loadProjectModelXml(&self);
                 defer if (model_xml) |text| self.allocator.free(text);
                 // ★ 禁止回退内存（用户 2026-11-24 定调：「回退到内存这条路是永远不允许的」）：
                 // 内存数据源意味着账号/密码/站点设置重启即还原，且磁盘上根本不会生成 .db 文件 ——
@@ -1593,4 +1611,62 @@ test "门面：伪静态 .html 后缀命中动态路由（官网类站点）" {
     // 不存在的页面仍是 404（不会因为加后缀就"命中一切"）
     const missing = try app.dispatch(arena, .{ .method = "GET", .path = "/biz/home/nope.html" });
     try testing.expectEqual(std.http.Status.not_found, missing.status);
+}
+
+/// 读项目 `Model.xml`（候选：程序目录 → 显式 `model_path` → 数据目录）。
+/// 返回**调用方负责释放**的文本；读不到返回 `null`（调用方退到内置模型）。
+fn loadProjectModelXml(self: *const Builder) ?[]const u8 {
+    var candidates: [3][]const u8 = undefined;
+    var owned: [3]bool = .{ false, false, false };
+    var count: usize = 0;
+    if (self.app_root) |app_dir| {
+        if (std.fs.path.join(self.allocator, &.{ app_dir, sqlite_backend_mod.DEFAULT_MODEL_FILE })) |path| {
+            candidates[count] = path;
+            owned[count] = true;
+            count += 1;
+        } else |_| {}
+    }
+    candidates[count] = self.model_path;
+    count += 1;
+    if (self.storage_dir) |data_dir| {
+        if (std.fs.path.join(self.allocator, &.{ data_dir, sqlite_backend_mod.DEFAULT_MODEL_FILE })) |path| {
+            candidates[count] = path;
+            owned[count] = true;
+            count += 1;
+        } else |_| {}
+    }
+    defer for (0..count) |i| {
+        if (owned[i]) self.allocator.free(candidates[i]);
+    };
+    return readProjectModel(self.allocator, self.io, candidates[0..count]) catch |e| blk: {
+        zzig.Logger.warn("[ZDsMallUI] 读取项目 Model.xml 失败（{s}），改用内置模型", .{@errorName(e)});
+        break :blk null;
+    };
+}
+
+/// 连接串脱敏（**日志里绝不能出现口令**）：把 `Password=…` / `Pwd=…` 的值换成 `***`。
+/// 分配失败时返回原串（调用方按指针判断是否需释放）。
+fn describeConnection(allocator: std.mem.Allocator, conn: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var it = std.mem.splitScalar(u8, conn, ';');
+    var first = true;
+    while (it.next()) |part| {
+        const trimmed = std.mem.trim(u8, part, " ");
+        if (trimmed.len == 0) continue;
+        if (!first) try out.append(allocator, ';');
+        first = false;
+        const eq = std.mem.indexOfScalar(u8, trimmed, '=') orelse {
+            try out.appendSlice(allocator, trimmed);
+            continue;
+        };
+        const key = std.mem.trim(u8, trimmed[0..eq], " ");
+        if (std.ascii.eqlIgnoreCase(key, "password") or std.ascii.eqlIgnoreCase(key, "pwd")) {
+            try out.appendSlice(allocator, key);
+            try out.appendSlice(allocator, "=***");
+        } else {
+            try out.appendSlice(allocator, trimmed);
+        }
+    }
+    return out.toOwnedSlice(allocator);
 }
