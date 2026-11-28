@@ -54,6 +54,8 @@ pub const views = @import("src/views.zig");
 pub const language = @import("src/language.zig");
 /// 前台多语言（URL 前缀优先：默认语言不带前缀，其余 /en；含 301 归一与切换链接）
 pub const front_lang = @import("src/front_lang.zig");
+/// 前台站点外壳的三块公共状态（页脚文章缓存 / 随包资源缓存 / 限流阀门）
+pub const front_site = @import("src/front_site.zig");
 pub const menu = @import("src/menu.zig");
 pub const sysinfo = @import("src/sysinfo.zig");
 pub const version_info = @import("src/version.zig");
@@ -131,6 +133,7 @@ test "所有子模块可编译（含其测试）" {
     testing.refAllDecls(views);
     testing.refAllDecls(ueditor);
     testing.refAllDecls(options);
+    testing.refAllDecls(front_site);
     testing.refAllDecls(Areas.Admin.Controllers.AdminArea);
     testing.refAllDecls(Areas.Admin.Controllers.HomeController);
     testing.refAllDecls(Areas.Admin.Controllers.ConfigController);
